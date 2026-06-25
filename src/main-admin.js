@@ -1,5 +1,10 @@
 import { createApp } from 'vue'
 import AdminSettings from './components/AdminSettings.vue'
 
-const app = createApp(AdminSettings)
-app.mount('#files-watermark-admin-settings')
+document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('files-watermark-admin-settings')
+    if (!el) {
+        return
+    }
+    createApp(AdminSettings).mount(el)
+})

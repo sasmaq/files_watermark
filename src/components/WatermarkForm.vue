@@ -2,21 +2,20 @@
   <div class="watermark-form">
     <h3 v-if="title">{{ title }}</h3>
 
-    <!-- Type -->
-    <NcSettingsSection :name="t('files_watermark', 'Watermark type')" :description="t('files_watermark', 'Choose what kind of watermark to apply')">
+    <NcSettingsSection
+      :name="t('files_watermark', 'Watermark type')"
+      :description="t('files_watermark', 'Choose what kind of watermark to apply')"
+    >
       <div class="form-row">
-        <NcSelect
-          v-model="form.type"
-          :options="typeOptions"
-          :placeholder="t('files_watermark', 'Select type')"
-          label="label"
-          track-by="value"
-          :reduce="o => o.value"
-        />
+        <label for="wm-type">{{ t('files_watermark', 'Type') }}</label>
+        <select id="wm-type" v-model="form.type" class="form-select">
+          <option value="text">{{ t('files_watermark', 'Text') }}</option>
+          <option value="image">{{ t('files_watermark', 'Image') }}</option>
+          <option value="combined">{{ t('files_watermark', 'Text + Image') }}</option>
+        </select>
       </div>
     </NcSettingsSection>
 
-    <!-- Text template -->
     <NcSettingsSection
       v-if="form.type !== 'image'"
       :name="t('files_watermark', 'Text template')"
@@ -29,7 +28,6 @@
       />
     </NcSettingsSection>
 
-    <!-- Image path -->
     <NcSettingsSection
       v-if="form.type !== 'text'"
       :name="t('files_watermark', 'Watermark image')"
@@ -42,62 +40,74 @@
       />
     </NcSettingsSection>
 
-    <!-- Style -->
-    <NcSettingsSection :name="t('files_watermark', 'Style')" :description="t('files_watermark', 'Visual appearance of the watermark')">
+    <NcSettingsSection
+      :name="t('files_watermark', 'Style')"
+      :description="t('files_watermark', 'Visual appearance of the watermark')"
+    >
       <div class="form-row">
-        <label>{{ t('files_watermark', 'Font size (pt)') }}</label>
-        <input v-model.number="form.fontSize" type="number" min="6" max="120" class="form-control" />
+        <label for="wm-fontsize">{{ t('files_watermark', 'Font size (pt)') }}</label>
+        <input id="wm-fontsize" v-model.number="form.fontSize" type="number" min="6" max="120" class="form-input" />
       </div>
       <div class="form-row">
-        <label>{{ t('files_watermark', 'Color') }}</label>
-        <input v-model="form.color" type="color" class="form-control form-control--color" />
+        <label for="wm-color">{{ t('files_watermark', 'Color') }}</label>
+        <input id="wm-color" v-model="form.color" type="color" class="form-color" />
       </div>
       <div class="form-row">
-        <label>{{ t('files_watermark', 'Opacity: {n}%', { n: form.opacity }) }}</label>
-        <input v-model.number="form.opacity" type="range" min="0" max="100" class="form-control" />
+        <label for="wm-opacity">{{ t('files_watermark', 'Opacity') }} — {{ form.opacity }}%</label>
+        <input id="wm-opacity" v-model.number="form.opacity" type="range" min="0" max="100" class="form-range" />
       </div>
       <div class="form-row">
-        <label>{{ t('files_watermark', 'Rotation (°)') }}</label>
-        <input v-model.number="form.rotation" type="number" min="-180" max="180" class="form-control" />
+        <label for="wm-rotation">{{ t('files_watermark', 'Rotation (°)') }}</label>
+        <input id="wm-rotation" v-model.number="form.rotation" type="number" min="-180" max="180" class="form-input" />
       </div>
     </NcSettingsSection>
 
-    <!-- Trigger -->
-    <NcSettingsSection :name="t('files_watermark', 'Trigger')" :description="t('files_watermark', 'When to apply the watermark')">
-      <NcSelect
-        v-model="form.trigger"
-        :options="triggerOptions"
-        :placeholder="t('files_watermark', 'Select trigger')"
-        label="label"
-        track-by="value"
-        :reduce="o => o.value"
-      />
+    <NcSettingsSection
+      :name="t('files_watermark', 'Trigger')"
+      :description="t('files_watermark', 'When to apply the watermark')"
+    >
+      <div class="form-row">
+        <label for="wm-trigger">{{ t('files_watermark', 'Trigger') }}</label>
+        <select id="wm-trigger" v-model="form.trigger" class="form-select">
+          <option value="on_demand">{{ t('files_watermark', 'On demand') }}</option>
+          <option value="on_download">{{ t('files_watermark', 'On download') }}</option>
+          <option value="on_share">{{ t('files_watermark', 'On share') }}</option>
+          <option value="on_upload">{{ t('files_watermark', 'On upload') }}</option>
+        </select>
+      </div>
     </NcSettingsSection>
 
-    <!-- Scope (admin-only fields) -->
-    <NcSettingsSection v-if="isAdmin" :name="t('files_watermark', 'Scope')" :description="t('files_watermark', 'Restrict which files are watermarked')">
+    <NcSettingsSection
+      v-if="isAdmin"
+      :name="t('files_watermark', 'Scope')"
+      :description="t('files_watermark', 'Restrict which files are watermarked')"
+    >
       <div class="form-row">
-        <label>{{ t('files_watermark', 'MIME type whitelist') }}</label>
-        <NcTextField
+        <label for="wm-mime">{{ t('files_watermark', 'MIME type whitelist') }}</label>
+        <input
+          id="wm-mime"
           v-model="form.mimeTypes"
-          :label="t('files_watermark', 'MIME types')"
+          type="text"
+          class="form-input"
           :placeholder="t('files_watermark', 'application/pdf,image/jpeg  (blank = all)')"
         />
       </div>
       <div class="form-row">
-        <label>{{ t('files_watermark', 'Folder system-tag ID') }}</label>
-        <NcTextField
+        <label for="wm-tag">{{ t('files_watermark', 'Folder system-tag ID') }}</label>
+        <input
+          id="wm-tag"
           v-model="form.folderTag"
-          :label="t('files_watermark', 'Tag ID')"
+          type="text"
+          class="form-input"
           :placeholder="t('files_watermark', 'Leave blank to apply globally')"
         />
       </div>
     </NcSettingsSection>
 
     <div class="form-actions">
-      <NcButton type="primary" :disabled="saving" @click="$emit('save', { ...form })">
-        <template #icon>
-          <NcLoadingIcon v-if="saving" :size="20" />
+      <NcButton type="primary" :disabled="saving" native-type="button" @click="$emit('save', { ...form })">
+        <template v-if="saving" #icon>
+          <NcLoadingIcon :size="20" />
         </template>
         {{ t('files_watermark', 'Save') }}
       </NcButton>
@@ -109,45 +119,31 @@
 import { reactive, watch } from 'vue'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/dist/Components/NcButton.js'
-import NcSelect from '@nextcloud/vue/dist/Components/NcSelect.js'
 import NcSettingsSection from '@nextcloud/vue/dist/Components/NcSettingsSection.js'
 import NcTextField from '@nextcloud/vue/dist/Components/NcTextField.js'
 import NcLoadingIcon from '@nextcloud/vue/dist/Components/NcLoadingIcon.js'
 
 const props = defineProps({
-  title:      { type: String,  default: '' },
-  modelValue: { type: Object,  default: () => ({}) },
-  isAdmin:    { type: Boolean, default: false },
-  saving:     { type: Boolean, default: false },
+    title:      { type: String,  default: '' },
+    modelValue: { type: Object,  default: () => ({}) },
+    isAdmin:    { type: Boolean, default: false },
+    saving:     { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['save', 'update:modelValue'])
 
-const typeOptions = [
-  { value: 'text',     label: t('files_watermark', 'Text') },
-  { value: 'image',    label: t('files_watermark', 'Image') },
-  { value: 'combined', label: t('files_watermark', 'Text + Image') },
-]
-
-const triggerOptions = [
-  { value: 'on_demand',   label: t('files_watermark', 'On demand') },
-  { value: 'on_download', label: t('files_watermark', 'On download') },
-  { value: 'on_share',    label: t('files_watermark', 'On share') },
-  { value: 'on_upload',   label: t('files_watermark', 'On upload') },
-]
-
 const form = reactive({
-  type:         'text',
-  textTemplate: '{username} — {date}',
-  imagePath:    '',
-  fontSize:     24,
-  color:        '#cccccc',
-  opacity:      80,
-  rotation:     45,
-  trigger:      'on_demand',
-  mimeTypes:    '',
-  folderTag:    '',
-  ...props.modelValue,
+    type:         'text',
+    textTemplate: '{username} — {date}',
+    imagePath:    '',
+    fontSize:     24,
+    color:        '#cccccc',
+    opacity:      80,
+    rotation:     45,
+    trigger:      'on_demand',
+    mimeTypes:    '',
+    folderTag:    '',
+    ...props.modelValue,
 })
 
 watch(form, (val) => emit('update:modelValue', { ...val }))
@@ -155,29 +151,41 @@ watch(form, (val) => emit('update:modelValue', { ...val }))
 
 <style scoped>
 .watermark-form {
-  max-width: 640px;
+    max-width: 640px;
 }
 .form-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
 }
 .form-row label {
-  min-width: 180px;
-  font-weight: 600;
+    min-width: 180px;
+    font-weight: 600;
 }
-.form-control {
-  flex: 1;
+.form-select,
+.form-input {
+    flex: 1;
+    height: 34px;
+    padding: 0 8px;
+    border: 1px solid var(--color-border-dark, #ccc);
+    border-radius: var(--border-radius, 3px);
+    background: var(--color-main-background, #fff);
+    color: var(--color-main-text, #000);
 }
-.form-control--color {
-  width: 48px;
-  height: 36px;
-  padding: 2px;
-  border-radius: 4px;
-  cursor: pointer;
+.form-color {
+    width: 48px;
+    height: 34px;
+    padding: 2px;
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    border: 1px solid var(--color-border-dark, #ccc);
+}
+.form-range {
+    flex: 1;
 }
 .form-actions {
-  margin-top: 24px;
+    margin-top: 24px;
+    padding: 0 0 0 2px;
 }
 </style>
