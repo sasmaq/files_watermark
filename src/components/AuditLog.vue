@@ -1,41 +1,43 @@
 <template>
   <div class="audit-log">
-    <h3>{{ t('files_watermark', 'Watermark Activity Log') }}</h3>
-
-    <div v-if="loading" class="loading">{{ t('files_watermark', 'Loading…') }}</div>
-
-    <div v-else-if="error" class="error">{{ error }}</div>
-
-    <table v-else class="log-table">
-      <thead>
-        <tr>
-          <th>{{ t('files_watermark', 'Date') }}</th>
-          <th>{{ t('files_watermark', 'User') }}</th>
-          <th>{{ t('files_watermark', 'File') }}</th>
-          <th>{{ t('files_watermark', 'Trigger') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="entry in entries" :key="entry.id">
-          <td>{{ entry.createdAt }}</td>
-          <td>{{ entry.userId }}</td>
-          <td>{{ entry.filePath }}</td>
-          <td>{{ entry.trigger }}</td>
-        </tr>
-        <tr v-if="entries.length === 0">
-          <td colspan="4">{{ t('files_watermark', 'No entries yet.') }}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="pagination">
-      <button :disabled="offset === 0" @click="prev">
-        {{ t('files_watermark', '← Previous') }}
-      </button>
-      <button :disabled="entries.length < limit" @click="next">
-        {{ t('files_watermark', 'Next →') }}
-      </button>
+    <div v-if="loading" class="loading-wrapper">
+      <NcLoadingIcon :size="24" />
     </div>
+
+    <NcNoteCard v-else-if="error" type="error">{{ error }}</NcNoteCard>
+
+    <template v-else>
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>{{ t('files_watermark', 'Date') }}</th>
+            <th>{{ t('files_watermark', 'User') }}</th>
+            <th>{{ t('files_watermark', 'File') }}</th>
+            <th>{{ t('files_watermark', 'Trigger') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="entry in entries" :key="entry.id">
+            <td>{{ entry.createdAt }}</td>
+            <td>{{ entry.userId }}</td>
+            <td>{{ entry.filePath }}</td>
+            <td>{{ entry.trigger }}</td>
+          </tr>
+          <tr v-if="entries.length === 0">
+            <td colspan="4" class="empty">{{ t('files_watermark', 'No entries yet.') }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="pagination">
+        <NcButton :disabled="offset === 0" @click="prev">
+          {{ t('files_watermark', '← Previous') }}
+        </NcButton>
+        <NcButton :disabled="entries.length < limit" @click="next">
+          {{ t('files_watermark', 'Next →') }}
+        </NcButton>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -44,6 +46,9 @@ import { ref, onMounted } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/dist/Components/NcButton.js'
+import NcLoadingIcon from '@nextcloud/vue/dist/Components/NcLoadingIcon.js'
+import NcNoteCard from '@nextcloud/vue/dist/Components/NcNoteCard.js'
 
 const entries = ref([])
 const loading = ref(false)
@@ -55,8 +60,9 @@ async function fetchLog() {
   loading.value = true
   error.value   = null
   try {
-    const url = generateUrl('/apps/files_watermark/api/v1/log')
-    const res = await axios.get(url, { params: { limit, offset: offset.value } })
+    const res = await axios.get(generateUrl('/apps/files_watermark/api/v1/log'), {
+      params: { limit, offset: offset.value },
+    })
     entries.value = res.data
   } catch (e) {
     error.value = e?.response?.data?.error ?? e.message
@@ -81,6 +87,7 @@ onMounted(fetchLog)
 .log-table {
   width: 100%;
   border-collapse: collapse;
+  margin-bottom: 12px;
 }
 .log-table th,
 .log-table td {
@@ -90,13 +97,20 @@ onMounted(fetchLog)
 }
 .log-table th {
   background: var(--color-background-dark);
+  font-weight: 600;
+}
+.empty {
+  text-align: center;
+  color: var(--color-text-lighter);
+  padding: 24px;
 }
 .pagination {
-  margin-top: 12px;
   display: flex;
   gap: 8px;
 }
-.error {
-  color: var(--color-error);
+.loading-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
 }
 </style>

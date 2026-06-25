@@ -11,24 +11,27 @@ use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
 use OCP\Files\IRootFolder;
 use OCP\IUserSession;
+use OCP\SystemTag\ISystemTagObjectMapper;
 
 class WatermarkService {
 
-    private const SUPPORTED_PDF   = ['application/pdf'];
-    private const SUPPORTED_IMAGE = ['image/jpeg', 'image/png', 'image/webp'];
+    public const SUPPORTED_PDF   = ['application/pdf'];
+    public const SUPPORTED_IMAGE = ['image/jpeg', 'image/png', 'image/webp'];
+    public const SUPPORTED_ALL   = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 
     public function __construct(
-        private WatermarkConfigMapper $configMapper,
-        private WatermarkLogMapper    $logMapper,
-        private PdfWatermarker        $pdfWatermarker,
-        private ImageWatermarker      $imageWatermarker,
-        private IRootFolder           $rootFolder,
-        private IUserSession          $userSession,
+        private WatermarkConfigMapper  $configMapper,
+        private WatermarkLogMapper     $logMapper,
+        private PdfWatermarker         $pdfWatermarker,
+        private ImageWatermarker       $imageWatermarker,
+        private IRootFolder            $rootFolder,
+        private IUserSession           $userSession,
+        private ISystemTagObjectMapper $tagObjectMapper,
     ) {}
 
     /**
-     * Apply a watermark to a file and return the path of the watermarked temporary copy.
-     * The caller is responsible for deleting the temp file after use.
+     * Apply a watermark and return the path of the watermarked temporary copy.
+     * Caller is responsible for deleting the temp file after use.
      */
     public function watermarkFile(File $file, string $trigger, ?WatermarkConfig $config = null): string {
         $mime = $file->getMimeType();
@@ -38,10 +41,12 @@ class WatermarkService {
             $config = $this->resolveConfig();
         }
 
+        $this->assertMimeAllowed($mime, $config);
+        $this->assertFolderTagMatches($file, $config);
+
         $placeholders = $this->buildPlaceholders($file);
         $tmpPath      = $this->createTempPath($file->getName());
 
-        // Write source to temp so renderers can read from local filesystem
         $srcTmp = $tmpPath . '_src';
         file_put_contents($srcTmp, $file->getContent());
 
@@ -66,12 +71,13 @@ class WatermarkService {
     }
 
     /**
-     * Apply watermark in-place: replaces the file content inside Nextcloud.
+     * Apply watermark in-place — replaces the file content inside Nextcloud.
      */
     public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null): void {
         $tmpPath = $this->watermarkFile($file, $trigger, $config);
         $file->putContent(file_get_contents($tmpPath));
         unlink($tmpPath);
+        @rmdir(dirname($tmpPath));
     }
 
     public function resolveConfig(?string $userId = null): WatermarkConfig {
@@ -102,6 +108,39 @@ class WatermarkService {
         return $config;
     }
 
+    /**
+     * Throws if the MIME type is not in the config's whitelist (when one is configured).
+     */
+    private function assertMimeAllowed(string $mime, WatermarkConfig $config): void {
+        $allowed = $config->getAllowedMimeTypes();
+        if (!empty($allowed) && !in_array($mime, $allowed, true)) {
+            throw new \RuntimeException("MIME type '$mime' is not in the configured whitelist.");
+        }
+    }
+
+    /**
+     * Throws if the file's parent folder does not carry the required system tag.
+     */
+    private function assertFolderTagMatches(File $file, WatermarkConfig $config): void {
+        $tagId = $config->getFolderTag();
+        if ($tagId === null || $tagId === '') {
+            return;
+        }
+
+        $parent = $file->getParent();
+        $taggedFileIds = $this->tagObjectMapper->getObjectIdsForTags(
+            [$tagId],
+            'files',
+            0,
+        );
+
+        if (!in_array((string) $parent->getId(), $taggedFileIds, true)) {
+            throw new \RuntimeException(
+                "File's folder does not have the required system tag (id: $tagId)."
+            );
+        }
+    }
+
     private function buildPlaceholders(File $file): array {
         $user = $this->userSession->getUser();
         return [
@@ -114,8 +153,7 @@ class WatermarkService {
     }
 
     private function assertSupported(string $mime): void {
-        $all = array_merge(self::SUPPORTED_PDF, self::SUPPORTED_IMAGE);
-        if (!in_array($mime, $all, true)) {
+        if (!in_array($mime, self::SUPPORTED_ALL, true)) {
             throw new \RuntimeException("Unsupported file type: $mime");
         }
     }

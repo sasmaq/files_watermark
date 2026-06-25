@@ -119,7 +119,9 @@ npm run lint
 ## Docker
 
 ```bash
-docker run -d -v ./files_watermark:/var/www/html/apps/files_watermark  -p 8080:80 nextcloud:31.0.14-apache
+docker run -d -p 8080:80 nextcloud:31.0.14-apache
+
+docker cp ./ 7c31d03efd61:/var/www/html/apps/files_watermark
 ```
 
 ## License

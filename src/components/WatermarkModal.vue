@@ -1,29 +1,34 @@
 <template>
-  <div class="modal-mask" @click.self="$emit('close')">
-    <div class="modal-container">
-      <h3>{{ t('files_watermark', 'Apply Watermark') }}</h3>
-      <p>{{ t('files_watermark', 'Apply watermark to: {file}', { file: fileName }) }}</p>
+  <NcDialog
+    :name="t('files_watermark', 'Apply Watermark')"
+    :open="true"
+    @update:open="$emit('close')"
+  >
+    <template #default>
+      <p>
+        {{ t('files_watermark', 'Apply watermark to: {file}', { file: fileName }) }}
+      </p>
 
-      <div v-if="applying" class="loading">{{ t('files_watermark', 'Applying watermark…') }}</div>
-      <div v-if="done" class="success">{{ t('files_watermark', 'Watermark applied successfully.') }}</div>
-      <div v-if="applyError" class="error">{{ applyError }}</div>
+      <NcNoteCard v-if="done" type="success">
+        {{ t('files_watermark', 'Watermark applied successfully.') }}
+      </NcNoteCard>
+      <NcNoteCard v-if="applyError" type="error">
+        {{ applyError }}
+      </NcNoteCard>
+    </template>
 
-      <div v-if="!applying && !done" class="modal-actions">
-        <button class="button primary" @click="apply">
-          {{ t('files_watermark', 'Apply') }}
-        </button>
-        <button class="button" @click="$emit('close')">
-          {{ t('files_watermark', 'Cancel') }}
-        </button>
-      </div>
-
-      <div v-if="done" class="modal-actions">
-        <button class="button" @click="$emit('close')">
-          {{ t('files_watermark', 'Close') }}
-        </button>
-      </div>
-    </div>
-  </div>
+    <template #actions>
+      <NcButton v-if="!done" type="primary" :disabled="applying" @click="apply">
+        <template #icon>
+          <NcLoadingIcon v-if="applying" :size="20" />
+        </template>
+        {{ t('files_watermark', 'Apply') }}
+      </NcButton>
+      <NcButton @click="$emit('close')">
+        {{ done ? t('files_watermark', 'Close') : t('files_watermark', 'Cancel') }}
+      </NcButton>
+    </template>
+  </NcDialog>
 </template>
 
 <script setup>
@@ -31,6 +36,10 @@ import { ref } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/dist/Components/NcButton.js'
+import NcDialog from '@nextcloud/vue/dist/Components/NcDialog.js'
+import NcLoadingIcon from '@nextcloud/vue/dist/Components/NcLoadingIcon.js'
+import NcNoteCard from '@nextcloud/vue/dist/Components/NcNoteCard.js'
 
 const props = defineProps({
   filePath: { type: String, required: true },
@@ -47,7 +56,9 @@ async function apply() {
   applying.value   = true
   applyError.value = null
   try {
-    await axios.post(generateUrl('/apps/files_watermark/api/v1/apply'), { path: props.filePath })
+    await axios.post(generateUrl('/apps/files_watermark/api/v1/apply'), {
+      path: props.filePath,
+    })
     done.value = true
   } catch (e) {
     applyError.value = e?.response?.data?.error ?? e.message
@@ -56,29 +67,3 @@ async function apply() {
   }
 }
 </script>
-
-<style scoped>
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-.modal-container {
-  background: var(--color-main-background);
-  border-radius: var(--border-radius-large);
-  padding: 32px;
-  min-width: 360px;
-  max-width: 480px;
-}
-.modal-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 24px;
-}
-.success { color: var(--color-success); }
-.error   { color: var(--color-error); }
-</style>

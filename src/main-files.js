@@ -1,5 +1,6 @@
 import { createApp, h } from 'vue'
 import { registerFileAction, FileAction } from '@nextcloud/files'
+import { t } from '@nextcloud/l10n'
 import WatermarkModal from './components/WatermarkModal.vue'
 
 const SUPPORTED_MIME = [

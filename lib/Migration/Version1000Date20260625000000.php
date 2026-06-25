@@ -73,6 +73,17 @@ class Version1000Date20260625000000 extends SimpleMigrationStep {
                 'length'  => 64,
                 'default' => 'on_demand',
             ]);
+            // Comma-separated MIME types to watermark; empty = all supported types
+            $table->addColumn('mime_types', Types::TEXT, [
+                'notnull' => false,
+                'default' => null,
+            ]);
+            // Nextcloud system-tag ID for per-folder targeting; NULL = apply globally
+            $table->addColumn('folder_tag', Types::STRING, [
+                'notnull' => false,
+                'length'  => 64,
+                'default' => null,
+            ]);
             $table->addColumn('created_at', Types::DATETIME, ['notnull' => true]);
             $table->addColumn('updated_at', Types::DATETIME, ['notnull' => true]);
             $table->setPrimaryKey(['id']);

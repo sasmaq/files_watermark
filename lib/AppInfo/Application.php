@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\AppInfo;
 
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
+use OCA\FilesWatermark\EventListener\ShareCreatedListener;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\Files\Events\Node\NodeWrittenEvent;
+use OCP\Share\Events\ShareCreatedEvent;
 
 class Application extends App implements IBootstrap {
 
@@ -21,6 +23,7 @@ class Application extends App implements IBootstrap {
 
     public function register(IRegistrationContext $context): void {
         $context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
+        $context->registerEventListener(ShareCreatedEvent::class, ShareCreatedListener::class);
     }
 
     public function boot(IBootContext $context): void {

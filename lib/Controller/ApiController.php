@@ -63,6 +63,8 @@ class ApiController extends OCSController {
         string  $color = '#cccccc',
         int     $rotation = 45,
         string  $trigger = 'on_demand',
+        ?string $mimeTypes = null,
+        ?string $folderTag = null,
         ?string $userId = null,
         ?string $groupId = null,
         ?int    $id = null,
@@ -96,6 +98,8 @@ class ApiController extends OCSController {
         $config->setColor($color);
         $config->setRotation(max(-180, min(180, $rotation)));
         $config->setTrigger($trigger);
+        $config->setMimeTypes($mimeTypes);
+        $config->setFolderTag($folderTag);
         $config->setUserId($userId);
         $config->setGroupId($groupId);
         $config->setUpdatedAt(date('Y-m-d H:i:s'));

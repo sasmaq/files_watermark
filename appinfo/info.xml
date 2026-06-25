@@ -29,6 +29,7 @@ Features:
     </dependencies>
     <settings>
         <admin>OCA\FilesWatermark\Settings\AdminSettings</admin>
+        <admin-section>OCA\FilesWatermark\Settings\AdminSection</admin-section>
     </settings>
     <navigations/>
 </info>

@@ -7,9 +7,9 @@ namespace OCA\FilesWatermark\Db;
 use OCP\AppFramework\Db\Entity;
 
 /**
- * @method int|null getUserId()
+ * @method string|null getUserId()
  * @method void setUserId(?string $userId)
- * @method int|null getGroupId()
+ * @method string|null getGroupId()
  * @method void setGroupId(?string $groupId)
  * @method string getType()
  * @method void setType(string $type)
@@ -29,6 +29,10 @@ use OCP\AppFramework\Db\Entity;
  * @method void setRotation(int $rotation)
  * @method string getTrigger()
  * @method void setTrigger(string $trigger)
+ * @method string|null getMimeTypes()
+ * @method void setMimeTypes(?string $mimeTypes)
+ * @method string|null getFolderTag()
+ * @method void setFolderTag(?string $folderTag)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -47,6 +51,10 @@ class WatermarkConfig extends Entity {
     protected string $color = '#cccccc';
     protected int $rotation = 45;
     protected string $trigger = 'on_demand';
+    /** Comma-separated MIME types to watermark; null means all supported types */
+    protected ?string $mimeTypes = null;
+    /** Nextcloud system-tag ID for per-folder targeting; null means global */
+    protected ?string $folderTag = null;
     protected string $createdAt = '';
     protected string $updatedAt = '';
 
@@ -54,6 +62,14 @@ class WatermarkConfig extends Entity {
         $this->addType('opacity', 'integer');
         $this->addType('fontSize', 'integer');
         $this->addType('rotation', 'integer');
+    }
+
+    /** Returns the allowed MIME types as an array, or all supported types if not set. */
+    public function getAllowedMimeTypes(): array {
+        if ($this->mimeTypes === null || trim($this->mimeTypes) === '') {
+            return [];
+        }
+        return array_filter(array_map('trim', explode(',', $this->mimeTypes)));
     }
 
     public function jsonSerialize(): array {
@@ -70,6 +86,8 @@ class WatermarkConfig extends Entity {
             'color'        => $this->color,
             'rotation'     => $this->rotation,
             'trigger'      => $this->trigger,
+            'mimeTypes'    => $this->mimeTypes,
+            'folderTag'    => $this->folderTag,
             'createdAt'    => $this->createdAt,
             'updatedAt'    => $this->updatedAt,
         ];
