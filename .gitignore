@@ -1,0 +1,30 @@
+# PHP dependencies
+/vendor/
+
+# Node dependencies and build output
+/node_modules/
+/js/
+
+# Composer lock (uncomment if you want to track it)
+# composer.lock
+
+# Composer
+composer.phar
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Nextcloud app build artifacts
+/build/
+*.tar.gz
+
+# Environment / secrets
+.env
+.env.local

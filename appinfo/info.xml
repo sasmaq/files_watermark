@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>files_watermark</id>
+    <name>Files Watermark</name>
+    <summary>Apply configurable watermarks to files stored in Nextcloud</summary>
+    <description><![CDATA[
+Protect your documents from unauthorized distribution by applying text or image watermarks to PDFs and images.
+
+Features:
+- Text watermarks with dynamic placeholders ({username}, {email}, {date}, {filename})
+- Image watermarks (logo overlay)
+- Combined text + image watermarks
+- On-demand watermarking via file action menu
+- On-download watermarking (original file untouched)
+- On-share watermarking
+- Admin-configurable global and per-group policies
+- Full audit log of every watermark event
+    ]]></description>
+    <version>1.0.0</version>
+    <licence>agpl</licence>
+    <author mail="admin@example.com">files_watermark contributors</author>
+    <namespace>FilesWatermark</namespace>
+    <category>files</category>
+    <bugs>https://github.com/example/files_watermark/issues</bugs>
+    <dependencies>
+        <php min-version="8.2"/>
+        <nextcloud min-version="31" max-version="31"/>
+    </dependencies>
+    <settings>
+        <admin>OCA\FilesWatermark\Settings\AdminSettings</admin>
+    </settings>
+    <navigations/>
+</info>
