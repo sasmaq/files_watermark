@@ -15,9 +15,9 @@ they are implemented.
 
 ### Images (`ImageWatermarker`)
 
-- [ ] Apply text/image watermark to JPEG, PNG, WEBP via Imagick
-- [ ] GD fallback produces equivalent output when Imagick is absent
-- [ ] Verify opacity and rotation match the configured values
+- [x] Apply text/image watermark to JPEG, PNG, WEBP via Imagick
+- [x] GD fallback produces equivalent output when Imagick is absent
+- [x] Verify opacity and rotation match the configured values
 
 ### Office documents (`OfficeWatermarker`) — *new per SDD*
 
@@ -165,7 +165,8 @@ they are implemented.
 - [ ] `WatermarkServiceTest` — correct renderer delegated per MIME type
 - [ ] `WatermarkConfigMapperTest` — finders + insert/update
 - [x] `PdfWatermarkerTest` — text/image/combined overlays + multi-page + corrupt-PDF handling
-- [ ] `ImageWatermarkerTest`, `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
+- [x] `ImageWatermarkerTest` — JPEG/PNG/WEBP output, GD fallback, opacity + rotation
+- [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
 - [ ] `ApiControllerTest` — auth guard, happy path, error responses per endpoint
 - [ ] `NodeWrittenListenerTest` / `ShareCreatedListenerTest` — trigger gating
 

@@ -151,10 +151,16 @@ class ImageWatermarker {
 
     private function findSystemFont(): ?string {
         $candidates = [
+            // Linux (most Nextcloud servers)
             '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
             '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
             '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
             '/usr/share/fonts/liberation/LiberationSans-Bold.ttf',
+            // macOS (development environments)
+            '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+            '/System/Library/Fonts/Supplemental/Arial.ttf',
+            '/System/Library/Fonts/Geneva.ttf',
+            '/Library/Fonts/Arial.ttf',
         ];
         foreach ($candidates as $path) {
             if (file_exists($path)) {
