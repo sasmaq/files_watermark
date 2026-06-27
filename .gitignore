@@ -27,3 +27,6 @@ Thumbs.db
 # Environment / secrets
 .env
 .env.local
+
+# PHP Unit
+.phpunit.cache

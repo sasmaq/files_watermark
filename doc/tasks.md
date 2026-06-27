@@ -9,9 +9,9 @@ they are implemented.
 
 ### PDF (`PdfWatermarker`)
 
-- [ ] Apply text overlay (tiled diagonal) across all pages of multi-page PDFs
-- [ ] Apply image/logo overlay on PDFs
-- [ ] Handle encrypted / password-protected PDFs gracefully (throw or skip + log)
+- [x] Apply text overlay (tiled diagonal) across all pages of multi-page PDFs
+- [x] Apply image/logo overlay on PDFs
+- [x] Handle encrypted / password-protected PDFs gracefully (throw or skip + log)
 
 ### Images (`ImageWatermarker`)
 
@@ -164,7 +164,8 @@ they are implemented.
 - [ ] `WatermarkServiceTest` — config resolution (user / group / global / default)
 - [ ] `WatermarkServiceTest` — correct renderer delegated per MIME type
 - [ ] `WatermarkConfigMapperTest` — finders + insert/update
-- [ ] `PdfWatermarkerTest`, `ImageWatermarkerTest`, `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
+- [x] `PdfWatermarkerTest` — text/image/combined overlays + multi-page + corrupt-PDF handling
+- [ ] `ImageWatermarkerTest`, `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
 - [ ] `ApiControllerTest` — auth guard, happy path, error responses per endpoint
 - [ ] `NodeWrittenListenerTest` / `ShareCreatedListenerTest` — trigger gating
 

@@ -14,6 +14,9 @@ class PdfWatermarker {
         $pdf = new Fpdi('P', 'pt');
         $pdf->SetPrintHeader(false);
         $pdf->SetPrintFooter(false);
+        // Watermark cells are positioned manually (including beyond the page edge
+        // for the tiled overlay); without this TCPDF would insert spurious pages.
+        $pdf->SetAutoPageBreak(false);
 
         try {
             $pageCount = $pdf->setSourceFile($sourcePath);
@@ -78,10 +81,16 @@ class PdfWatermarker {
         $alpha = round($config->getOpacity() / 100, 2);
         $pdf->SetAlpha($alpha);
 
-        $imgW = $width * 0.3;
-        $imgH = $imgW * 0.5;
-        $x    = ($width - $imgW) / 2;
-        $y    = ($height - $imgH) / 2;
+        // Scale to 30% of the page width while preserving the logo's real aspect ratio.
+        $imgW       = $width * 0.3;
+        $dimensions = @getimagesize($imagePath);
+        if ($dimensions && $dimensions[0] > 0) {
+            $imgH = $imgW * ($dimensions[1] / $dimensions[0]);
+        } else {
+            $imgH = $imgW * 0.5;
+        }
+        $x = ($width - $imgW) / 2;
+        $y = ($height - $imgH) / 2;
         $pdf->Image($imagePath, $x, $y, $imgW, $imgH, '', '', '', false, 300, '', false, false, 0);
 
         $pdf->SetAlpha(1);
