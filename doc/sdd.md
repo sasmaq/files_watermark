@@ -3,14 +3,14 @@
 ## files_watermark — Nextcloud 31 File Watermarking App
 
 **Version:** 1.0.0  
-**Date:** 2026-06-25  
+**Date:** 2026-06-27  
 **Status:** Draft
 
 ---
 
 ## 1. Overview
 
-`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. Watermarks can be embedded on-demand dynamically at download/preview time, protecting documents from unauthorized distribution and providing traceability.
+`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks can be applied through several triggers — on demand, on upload, on download, and on share — and the app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define global and group policies through a management panel, while users adjust their own preferences through a per-user settings panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
 
 ---
 
@@ -69,14 +69,19 @@
 
 | Module | Description |
 | --- | --- |
-| `AppController` | REST API endpoints for watermark configuration and on-demand watermarking |
-| `WatermarkService` | Core watermark application logic; delegates to format-specific renderers |
+| `ApiController` | REST API endpoints for watermark configuration, on-demand watermarking, and audit-log retrieval |
+| `DownloadController` | Streams a watermarked temporary copy at download time; original file untouched |
+| `SettingsController` | Backend for the admin management panel and per-user settings panel |
+| `WatermarkService` | Core watermark application logic; resolves the effective config and delegates to format-specific renderers |
 | `PdfWatermarker` | Applies text/image overlays to PDF files using a PHP PDF library |
-| `ImageWatermarker` | Applies watermarks to JPEG, PNG, WEBP via GD/Imagick |
-| `EventListener` | Hooks into `NodeWrittenEvent` / `BeforeNodeReadEvent` to auto-watermark |
-| `SettingsController` | Admin settings panel backend |
-| `WatermarkConfigMapper` | ORM mapper for persisting watermark templates in the database |
-| `Vue.js frontend` | Admin panel + file-action menu integration |
+| `ImageWatermarker` | Applies watermarks to JPEG, PNG, WEBP via Imagick (GD fallback) |
+| `OfficeWatermarker` | Applies watermarks to Office documents (e.g. via headless conversion / document rendering) |
+| `MetadataWatermarker` | Embeds invisible metadata watermarks where the file format supports it |
+| `NodeWrittenListener` | Listens to `NodeWrittenEvent` to auto-watermark on upload |
+| `ShareCreatedListener` | Listens to `ShareCreatedEvent` to watermark on share |
+| `WatermarkConfigMapper` | ORM mapper for persisting watermark policies/templates in the database |
+| `WatermarkLogMapper` | ORM mapper for the audit log (with pagination) |
+| `Vue.js frontend` | Admin management panel, per-user settings panel, and file-action menu integration |
 
 ---
 
@@ -86,13 +91,19 @@
 
 - **Text watermark**
   - default string (`{username}` + `{datetime}`)
-  - custom string (supports placeholders: `{username}`, `{email}`, `{date}`, `{filename}`)
+  - custom string (supports placeholders: `{username}`, `{email}`, `{date}`, `{datetime}`, `{filename}`)
 
 - **Image watermark**
   - upload a logo/image to overlay on files
 
 - **Combined**
   - text + image simultaneously
+
+- **Invisible metadata watermark** (where the format supports it)
+  - embeds traceability information (e.g. acting user, timestamp) into document/image metadata
+  - applied independently of, or alongside, a visible watermark
+
+**Supported file types:** PDFs, images (JPEG, PNG, WEBP), and Office documents. Unsupported types are skipped with an audit-log entry.
 
 ### 5.2 Placement and Style (Text)
 
@@ -102,10 +113,10 @@
 
 ### 5.3 Trigger Modes
 
-- **On download** — watermark applied to a temporary copy served to the downloader; original file untouched
-
 - **On demand** — user or admin triggers watermarking via the file action menu
-- **On share** — watermark applied when a public link or internal share is created
+- **On upload** — watermark applied automatically when a matching file is written (`NodeWrittenEvent`)
+- **On download** — watermark applied to a temporary copy served to the downloader; original file untouched
+- **On share** — watermark applied when a public link or internal share is created (`ShareCreatedEvent`)
 
 ### 5.4 Scope Configuration (Admin)
 
@@ -129,7 +140,7 @@
 | `id` | INT PK | Auto-increment |
 | `user_id` | VARCHAR(64) | NULL = global/group config |
 | `group_id` | VARCHAR(64) | NULL = user/global config |
-| `type` | ENUM('text','image','combined') | Watermark type |
+| `type` | ENUM('text','image','combined','metadata') | Watermark type |
 | `text_template` | TEXT | Text with placeholders |
 | `image_path` | VARCHAR(512) | Nextcloud path to watermark image |
 | `position` | VARCHAR(32) | Placement identifier |
@@ -137,7 +148,9 @@
 | `font_size` | SMALLINT | pt |
 | `color` | CHAR(7) | Hex color |
 | `rotation` | SMALLINT | Degrees |
-| `trigger` | SET(...) | Comma-separated trigger modes |
+| `trigger` | VARCHAR(64) | Trigger mode (`on_demand`, `on_upload`, `on_download`, `on_share`) |
+| `mime_types` | TEXT | Comma-separated MIME whitelist; empty = all supported types |
+| `folder_tag` | VARCHAR(64) | Nextcloud system-tag ID for per-folder targeting; NULL = apply globally |
 | `created_at` | DATETIME | |
 | `updated_at` | DATETIME | |
 
@@ -163,16 +176,18 @@
 | `POST` | `/apps/files_watermark/api/v1/config` | Create or update config |
 | `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Remove a config |
 | `POST` | `/apps/files_watermark/api/v1/apply` | Apply watermark to a file on demand |
+| `GET` | `/apps/files_watermark/api/v1/download` | Stream a watermarked copy of a file (original untouched) |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
 
-All endpoints require a valid Nextcloud session or app password. Admin-only endpoints enforce the `OC_Group::isInGroup($user, 'admin')` check.
+All endpoints require a valid Nextcloud session or app password. Admin-only endpoints enforce an admin-group check via `\OCP\IGroupManager::isAdmin()`.
 
 ---
 
 ## 8. Frontend (Vue.js)
 
-- **Admin Settings** (`/settings/admin/watermark`) — global policy, group overrides, default template, audit log viewer.
-- **File Action** — context menu entry "Apply Watermark" on individual files or a selection; shows a preview modal before committing.
+- **Admin Settings** (`/settings/admin/watermark`) — global policy, group overrides, default template, MIME/tag scope, audit log viewer.
+- **Personal Settings** (`/settings/user/watermark`) — per-user settings panel for users to manage their own watermark template and preferences within the bounds allowed by admin policy.
+- **File Action** — context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
 
 Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component library and **@nextcloud/axios** for API calls, consistent with Nextcloud 31 app standards.
 
@@ -184,10 +199,13 @@ Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component libra
 | --- | --- |
 | `setasign/fpdi` (PHP) | PDF page import and overlay rendering |
 | `tecnickcom/tcpdf` (PHP) | PDF text/image watermark writing |
-| PHP `GD` extension | Image watermarking fallback |
 | PHP `Imagick` extension | Preferred image watermarking (better quality) |
+| PHP `GD` extension | Image watermarking fallback |
+| LibreOffice / Collabora (headless) | Office document conversion/rendering for watermarking |
+| PHP `exif` / metadata libraries | Reading/writing invisible metadata watermarks |
 | `@nextcloud/vue` | Nextcloud UI component library |
 | `@nextcloud/axios` | Authenticated HTTP client for Vue frontend |
+| `@nextcloud/files` | File-action registration in the Files app |
 
 ---
 
