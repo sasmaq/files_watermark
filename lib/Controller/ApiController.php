@@ -52,6 +52,10 @@ class ApiController extends OCSController {
         return new DataResponse(array_map(fn(WatermarkConfig $c) => $c->jsonSerialize(), $configs));
     }
 
+    private const VALID_TYPES    = ['text', 'image', 'combined'];
+    private const VALID_TRIGGERS = ['on_demand', 'on_download', 'on_upload', 'on_share'];
+    private const VALID_TOKENS   = ['username', 'email', 'date', 'datetime', 'filename'];
+
     #[NoAdminRequired]
     public function saveConfig(
         string  $type,
@@ -69,6 +73,40 @@ class ApiController extends OCSController {
         ?string $groupId = null,
         ?int    $id = null,
     ): DataResponse {
+        if (!in_array($type, self::VALID_TYPES, true)) {
+            return new DataResponse(
+                ['error' => "Invalid type '$type'. Allowed values: " . implode(', ', self::VALID_TYPES) . '.'],
+                Http::STATUS_BAD_REQUEST,
+            );
+        }
+
+        if (!in_array($trigger, self::VALID_TRIGGERS, true)) {
+            return new DataResponse(
+                ['error' => "Invalid trigger '$trigger'. Allowed values: " . implode(', ', self::VALID_TRIGGERS) . '.'],
+                Http::STATUS_BAD_REQUEST,
+            );
+        }
+
+        if (!preg_match('/^#[0-9a-fA-F]{6}$/', $color)) {
+            return new DataResponse(
+                ['error' => "Invalid color '$color'. Must be a 6-digit hex value (e.g. #cccccc)."],
+                Http::STATUS_BAD_REQUEST,
+            );
+        }
+
+        if ($textTemplate !== null) {
+            preg_match_all('/\{([^}]+)\}/', $textTemplate, $matches);
+            $invalid = array_diff($matches[1], self::VALID_TOKENS);
+            if (!empty($invalid)) {
+                $allowed = implode(', ', array_map(fn($t) => '{' . $t . '}', self::VALID_TOKENS));
+                $found   = implode(', ', array_map(fn($t) => '{' . $t . '}', $invalid));
+                return new DataResponse(
+                    ['error' => "Unknown template token(s): $found. Allowed tokens: $allowed."],
+                    Http::STATUS_BAD_REQUEST,
+                );
+            }
+        }
+
         $currentUser = $this->userSession->getUser();
         $isAdmin     = $currentUser && $this->groupManager->isAdmin($currentUser->getUID());
 
@@ -149,6 +187,14 @@ class ApiController extends OCSController {
 
         if (!($node instanceof \OCP\Files\File)) {
             return new DataResponse(['error' => 'Path is not a file'], Http::STATUS_BAD_REQUEST);
+        }
+
+        $mime = $node->getMimeType();
+        if (!in_array($mime, WatermarkService::SUPPORTED_ALL, true)) {
+            return new DataResponse(
+                ['error' => "File type '$mime' is not supported. Supported types: " . implode(', ', WatermarkService::SUPPORTED_ALL) . '.'],
+                Http::STATUS_UNSUPPORTED_MEDIA_TYPE,
+            );
         }
 
         try {

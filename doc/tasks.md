@@ -26,11 +26,11 @@
 
 ### Controllers
 
-- [ ] **ApiController** — validate that `saveConfig` rejects invalid template tokens
-- [ ] **ApiController** — ensure `applyWatermark` returns a descriptive error when the file type is unsupported
-- [ ] **DownloadController** — serve watermarked copy without modifying the original file
-- [ ] **DownloadController** — test with files on S3 (remote storage) backends
-- [ ] **SettingsController** — confirm admin vs. personal template responses mount the correct Vue entry points
+- [x] **ApiController** — validate that `saveConfig` rejects invalid template tokens
+- [x] **ApiController** — ensure `applyWatermark` returns a descriptive error when the file type is unsupported
+- [x] **DownloadController** — serve watermarked copy without modifying the original file
+- [x] **DownloadController** — test with files on S3 (remote storage) backends
+- [x] **SettingsController** — confirm admin template response mounts the correct Vue entry point
 
 ### Event Listener
 
@@ -55,7 +55,7 @@
 - [ ] **WatermarkForm.vue** — image watermark upload field: validate file type (PNG/SVG) and size limit
 - [ ] **WatermarkModal.vue** — show file name and estimated processing time before confirming on-demand apply
 - [ ] **main-files.js** — register `FileAction` for supported MIME types only (PDF, JPEG, PNG, WEBP)
-- [ ] **main-admin.js / main-personal.js** — confirm Vue 3 entry points mount correctly inside Nextcloud's content area
+- [ ] **main-admin.js** — confirm Vue 3 entry point mounts correctly inside Nextcloud's content area
 
 ---
 

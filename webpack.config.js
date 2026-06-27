@@ -5,7 +5,7 @@ const MiniCssExtractPlugin = require('mini-css-extract-plugin')
 module.exports = {
     entry: {
         'admin-settings': path.resolve(__dirname, 'src/main-admin.js'),
-        'files': path.resolve(__dirname, 'src/main-files.js'),
+        'files':          path.resolve(__dirname, 'src/main-files.js'),
     },
     output: {
         path: path.resolve(__dirname, 'js'),
