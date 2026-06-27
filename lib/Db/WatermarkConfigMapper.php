@@ -42,6 +42,27 @@ class WatermarkConfigMapper extends QBMapper {
         return $this->findEntity($qb);
     }
 
+    /**
+     * Returns configs for a user that match the given MIME type, including
+     * configs with no MIME whitelist (meaning they apply to all types).
+     *
+     * @return WatermarkConfig[]
+     */
+    public function findByUserAndMimeType(string $userId, string $mimeType): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+            ->from($this->getTableName())
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+            ->andWhere(
+                $qb->expr()->orX(
+                    $qb->expr()->isNull('mime_types'),
+                    $qb->expr()->eq('mime_types', $qb->createNamedParameter('')),
+                    $qb->expr()->like('mime_types', $qb->createNamedParameter('%' . $mimeType . '%')),
+                )
+            );
+        return $this->findEntities($qb);
+    }
+
     public function findById(int $id): WatermarkConfig {
         $qb = $this->db->getQueryBuilder();
         $qb->select('*')

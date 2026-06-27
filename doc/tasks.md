@@ -40,9 +40,9 @@
 
 ### Database
 
-- [ ] **WatermarkConfigMapper** — add `findByUserAndMimeType` query for fine-grained per-type configs
-- [ ] **WatermarkLogMapper** — add pagination support to `findAll` (offset + limit)
-- [ ] Verify migration creates both tables (`oc_watermark_config`, `oc_watermark_log`) cleanly on MySQL, PostgreSQL, and SQLite
+- [x] **WatermarkConfigMapper** — add `findByUserAndMimeType` query for fine-grained per-type configs
+- [x] **WatermarkLogMapper** — add pagination support to `findAll` (offset + limit)
+- [x] Verify migration creates both tables (`oc_watermark_config`, `oc_watermark_log`) cleanly on MySQL, PostgreSQL, and SQLite
 
 ---
 
