@@ -15,7 +15,15 @@ class PdfWatermarker {
         $pdf->SetPrintHeader(false);
         $pdf->SetPrintFooter(false);
 
-        $pageCount = $pdf->setSourceFile($sourcePath);
+        try {
+            $pageCount = $pdf->setSourceFile($sourcePath);
+        } catch (\Exception $e) {
+            throw new \RuntimeException(
+                'Cannot process PDF: the file may be encrypted, password-protected, or use unsupported compression. ' . $e->getMessage(),
+                0,
+                $e,
+            );
+        }
 
         for ($page = 1; $page <= $pageCount; $page++) {
             $tplIdx = $pdf->importPage($page);

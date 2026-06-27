@@ -38,7 +38,7 @@ class WatermarkService {
         $this->assertSupported($mime);
 
         if ($config === null) {
-            $config = $this->resolveConfig();
+            $config = $this->resolveConfig($this->userSession->getUser()?->getUID());
         }
 
         $this->assertMimeAllowed($mime, $config);

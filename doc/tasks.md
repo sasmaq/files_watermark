@@ -16,13 +16,13 @@
 
 ### Core Services
 
-- [ ] **WatermarkService** — verify config resolution order (user config → global config → defaults)
-- [ ] **WatermarkService** — confirm audit log entry is written on every trigger path (on_upload, on_demand, on_share)
-- [ ] **PdfWatermarker** — test tiled diagonal watermark across multi-page PDFs
-- [ ] **PdfWatermarker** — handle encrypted / password-protected PDFs gracefully (throw or skip with log entry)
-- [ ] **ImageWatermarker** — verify Imagick path produces correct opacity and rotation
-- [ ] **ImageWatermarker** — verify GD fallback produces equivalent output when Imagick is absent
-- [ ] **ImageWatermarker** — add WEBP write support check (GD `imagecreatefromwebp` / `imagewebp`)
+- [x] **WatermarkService** — verify config resolution order (user config → global config → defaults)
+- [x] **WatermarkService** — confirm audit log entry is written on every trigger path (on_upload, on_demand, on_share)
+- [x] **PdfWatermarker** — test tiled diagonal watermark across multi-page PDFs
+- [x] **PdfWatermarker** — handle encrypted / password-protected PDFs gracefully (throw or skip with log entry)
+- [x] **ImageWatermarker** — verify Imagick path produces correct opacity and rotation
+- [x] **ImageWatermarker** — verify GD fallback produces equivalent output when Imagick is absent
+- [x] **ImageWatermarker** — add WEBP write support check (GD `imagecreatefromwebp` / `imagewebp`)
 
 ### Controllers
 
