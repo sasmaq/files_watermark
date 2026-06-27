@@ -234,6 +234,38 @@ class WatermarkServiceTest extends TestCase {
         $this->service->watermarkFile($file, 'on_demand');
     }
 
+    public function testWatermarkInPlaceReplacesFileContent(): void {
+        $config = new WatermarkConfig();
+        $config->setType('image');
+        $config->setTextTemplate('{username}');
+        $config->setTrigger('on_demand');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/png');
+        $file->method('getName')->willReturn('photo.png');
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+        $file->method('getContent')->willReturn('original-bytes');
+
+        // The renderer writes the watermarked output to the destination temp path.
+        $this->imageWatermarker->method('apply')
+            ->willReturnCallback(function (string $src, string $dest): void {
+                file_put_contents($dest, 'watermarked-bytes');
+            });
+
+        // In-place application must push the watermarked bytes back into the file.
+        $file->expects($this->once())->method('putContent')->with('watermarked-bytes');
+
+        $this->service->watermarkInPlace($file, 'on_demand', $config);
+    }
+
     public function testTextWatermarkPassesAllPlaceholdersToRenderer(): void {
         $config = new WatermarkConfig();
         $config->setType('text');

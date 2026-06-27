@@ -58,14 +58,14 @@ they are implemented.
 
 ### Triggers
 
-- [ ] **On demand** — file-action menu apply (in place)
-- [ ] **On upload** — `NodeWrittenListener` on `NodeWrittenEvent`
-  - [ ] Only trigger when config `trigger = on_upload`
-  - [ ] Guard against infinite loop (watermarked write re-triggering the listener)
-- [ ] **On download** — `DownloadController` streams a watermarked temp copy; original untouched
-  - [ ] Temp file cleaned up after the response is sent
-- [ ] **On share** — `ShareCreatedListener` on `ShareCreatedEvent`
-  - [ ] Save `{name}_shared.{ext}` copy in the same folder as the original
+- [x] **On demand** — file-action menu apply (in place)
+- [x] **On upload** — `NodeWrittenListener` on `NodeWrittenEvent`
+  - [x] Only trigger when config `trigger = on_upload`
+  - [x] Guard against infinite loop (watermarked write re-triggering the listener)
+- [x] **On download** — `DownloadController` streams a watermarked temp copy; original untouched
+  - [x] Temp file cleaned up after the response is sent
+- [x] **On share** — `ShareCreatedListener` on `ShareCreatedEvent`
+  - [x] Save `{name}_shared.{ext}` copy in the same folder as the original
 
 ### Permissions
 
@@ -168,7 +168,7 @@ they are implemented.
 - [x] `ImageWatermarkerTest` — JPEG/PNG/WEBP output, GD fallback, opacity + rotation
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
 - [ ] `ApiControllerTest` — auth guard, happy path, error responses per endpoint
-- [ ] `NodeWrittenListenerTest` / `ShareCreatedListenerTest` — trigger gating
+- [x] `NodeWrittenListenerTest` / `ShareCreatedListenerTest` — trigger gating
 
 ### Frontend (Jest)
 
