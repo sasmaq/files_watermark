@@ -233,4 +233,56 @@ class WatermarkServiceTest extends TestCase {
 
         $this->service->watermarkFile($file, 'on_demand');
     }
+
+    public function testTextWatermarkPassesAllPlaceholdersToRenderer(): void {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username} {email} {date} {datetime} {filename}');
+        $config->setOpacity(80);
+        $config->setFontSize(24);
+        $config->setColor('#cccccc');
+        $config->setRotation(45);
+        $config->setTrigger('on_demand');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $user->method('getEMailAddress')->willReturn('alice@example.com');
+        $this->userSession->method('getUser')->willReturn($user);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/png');
+        $file->method('getName')->willReturn('report.png');
+        $file->method('getId')->willReturn(9);
+        $file->method('getPath')->willReturn('/alice/files/report.png');
+        $file->method('getContent')->willReturn('fake');
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        $captured = null;
+        $this->imageWatermarker->expects($this->once())
+            ->method('apply')
+            ->with(
+                $this->anything(),
+                $this->anything(),
+                $this->anything(),
+                $this->callback(function (array $placeholders) use (&$captured): bool {
+                    $captured = $placeholders;
+                    return true;
+                }),
+            );
+
+        $tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
+
+        $this->assertSame('Alice', $captured['username']);
+        $this->assertSame('alice@example.com', $captured['email']);
+        $this->assertSame(date('Y-m-d'), $captured['date']);
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $captured['datetime']);
+        $this->assertSame('report.png', $captured['filename']);
+
+        if (file_exists($tmpPath)) {
+            unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
+        }
+    }
 }

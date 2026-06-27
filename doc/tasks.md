@@ -38,10 +38,10 @@ they are implemented.
 
 ### Visible watermarks
 
-- [ ] Text watermark with placeholders: `{username}`, `{email}`, `{date}`, `{datetime}`, `{filename}`
-- [ ] Image watermark (logo overlay)
-- [ ] Combined text + image
-- [ ] Placement: tiled diagonal, 45° rotation, configurable font size/color/opacity
+- [x] Text watermark with placeholders: `{username}`, `{email}`, `{date}`, `{datetime}`, `{filename}`
+- [x] Image watermark (logo overlay)
+- [x] Combined text + image
+- [x] Placement: tiled diagonal, 45° rotation, configurable font size/color/opacity
 
 ### Invisible metadata watermark (`MetadataWatermarker`) — *new per SDD*
 

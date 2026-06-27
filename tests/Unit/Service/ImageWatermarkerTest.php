@@ -92,6 +92,47 @@ class ImageWatermarkerTest extends TestCase {
         $this->assertGreaterThan(0, $this->changedPixels($source, $dest), 'Logo overlay produced no change');
     }
 
+    public function testCombinedTextAndImageOverlay(): void {
+        $source = $this->createImage('image/png', 'png', 400, 300);
+        $logo   = $this->createImage('image/png', 'png', 120, 90, [255, 0, 0], 'logo');
+        $dest   = $this->tmpDir . '/combined.png';
+
+        $config = $this->makeConfig('combined');
+        $config->setImagePath($logo);
+
+        $this->watermarker->apply($source, $dest, $config, ['username' => 'Alice']);
+
+        $info = getimagesize($dest);
+        $this->assertNotFalse($info);
+        $this->assertGreaterThan(0, $this->changedPixels($source, $dest));
+    }
+
+    public function testFontSizeIsConfigurable(): void {
+        $base = $this->createImage('image/png', 'png', 600, 400);
+
+        $small = $this->tmpDir . '/small.png';
+        $large = $this->tmpDir . '/large.png';
+        $this->watermarker->apply($base, $small, $this->makeConfig('text', 100, 0, 12), ['username' => 'WM']);
+        $this->watermarker->apply($base, $large, $this->makeConfig('text', 100, 0, 48), ['username' => 'WM']);
+
+        $this->assertGreaterThan(
+            $this->totalInk($small),
+            $this->totalInk($large),
+            'A larger font size should add more ink',
+        );
+    }
+
+    public function testColorIsConfigurable(): void {
+        $base = $this->createImage('image/png', 'png', 400, 300);
+
+        $black = $this->tmpDir . '/black.png';
+        $red   = $this->tmpDir . '/red.png';
+        $this->watermarker->apply($base, $black, $this->makeConfig('text', 100, 0, 20, '#000000'), ['username' => 'WM']);
+        $this->watermarker->apply($base, $red, $this->makeConfig('text', 100, 0, 20, '#ff0000'), ['username' => 'WM']);
+
+        $this->assertNotSame(md5_file($black), md5_file($red), 'Different colors should produce different output');
+    }
+
     public function testOpacityScalesWatermarkIntensity(): void {
         $base = $this->createImage('image/png', 'png', 400, 300);
 
@@ -128,14 +169,14 @@ class ImageWatermarkerTest extends TestCase {
         );
     }
 
-    private function makeConfig(string $type, int $opacity = 80, int $rotation = 45): WatermarkConfig {
+    private function makeConfig(string $type, int $opacity = 80, int $rotation = 45, int $fontSize = 20, string $color = '#000000'): WatermarkConfig {
         $config = new WatermarkConfig();
         $config->setType($type);
         $config->setTextTemplate('{username}');
         $config->setPosition('diagonal');
         $config->setOpacity($opacity);
-        $config->setFontSize(20);
-        $config->setColor('#000000');
+        $config->setFontSize($fontSize);
+        $config->setColor($color);
         $config->setRotation($rotation);
         $config->setTrigger('on_demand');
         return $config;
