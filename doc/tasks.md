@@ -57,6 +57,16 @@
 - [x] **main-files.js** — register `FileAction` for supported MIME types only (PDF, JPEG, PNG, WEBP)
 - [x] **main-admin.js** — confirm Vue 3 entry point mounts correctly inside Nextcloud's content area
 
+### File Context Menu Button
+
+- [x] Verify "Apply Watermark" action appears in the right-click context menu for PDF and image files
+- [x] Verify the action is hidden for unsupported file types (e.g. `.txt`, `.docx`)
+- [x] Verify the action is hidden when multiple files are selected (`files.length === 1` guard)
+- [x] Show a spinner / loading state on the file row while watermarking is in progress
+- [x] Refresh the file list (trigger a reload) after watermarking completes so the modified timestamp updates
+- [x] Add a tooltip or inline description to the action explaining what it does
+- [x] Use the app SVG icon (`app.svg`) as the action icon instead of the placeholder inline SVG in `main-files.js`
+
 ---
 
 ## Testing

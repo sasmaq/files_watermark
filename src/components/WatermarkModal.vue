@@ -51,7 +51,7 @@ const props = defineProps({
   fileSize: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'watermarked'])
 
 const applying   = ref(false)
 const done       = ref(false)
@@ -71,6 +71,9 @@ async function apply() {
       path: props.filePath,
     })
     done.value = true
+    emit('watermarked')
+    // Auto-close after showing the success message briefly.
+    setTimeout(() => emit('close'), 1500)
   } catch (e) {
     applyError.value = e?.response?.data?.error ?? e.message
   } finally {
