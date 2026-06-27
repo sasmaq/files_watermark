@@ -8,21 +8,16 @@ use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Files\File;
+use OCP\IUserSession;
 use OCP\Share\Events\ShareCreatedEvent;
 use Psr\Log\LoggerInterface;
 
 /** @template-implements IEventListener<ShareCreatedEvent> */
 class ShareCreatedListener implements IEventListener {
 
-    private const SUPPORTED_MIME = [
-        'application/pdf',
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-    ];
-
     public function __construct(
         private WatermarkService $watermarkService,
+        private IUserSession     $userSession,
         private LoggerInterface  $logger,
     ) {}
 
@@ -38,28 +33,54 @@ class ShareCreatedListener implements IEventListener {
             return;
         }
 
-        if (!in_array($node->getMimeType(), self::SUPPORTED_MIME, true)) {
+        if (!in_array($node->getMimeType(), WatermarkService::SUPPORTED_ALL, true)) {
             return;
         }
 
         try {
-            $config = $this->watermarkService->resolveConfig();
+            $config = $this->watermarkService->resolveConfig(
+                $this->userSession->getUser()?->getUID()
+            );
         } catch (\Throwable) {
             return;
         }
 
-        $triggers = array_map('trim', explode(',', $config->getTrigger()));
-        if (!in_array('on_share', $triggers, true)) {
+        if ($config->getTrigger() !== 'on_share') {
             return;
         }
 
         try {
-            $this->watermarkService->watermarkInPlace($node, 'on_share', $config);
+            $tmpPath = $this->watermarkService->watermarkFile($node, 'on_share', $config);
         } catch (\Throwable $e) {
             $this->logger->error('files_watermark: failed to watermark on share: ' . $e->getMessage(), [
                 'exception' => $e,
                 'path'      => $node->getPath(),
             ]);
+            return;
+        }
+
+        try {
+            $base    = pathinfo($node->getName(), PATHINFO_FILENAME);
+            $ext     = pathinfo($node->getName(), PATHINFO_EXTENSION);
+            $newName = $base . '_shared' . ($ext !== '' ? '.' . $ext : '');
+            $parent  = $node->getParent();
+            $content = file_get_contents($tmpPath);
+
+            if ($parent->nodeExists($newName)) {
+                /** @var File $existing */
+                $existing = $parent->get($newName);
+                $existing->putContent($content);
+            } else {
+                $parent->newFile($newName, $content);
+            }
+        } catch (\Throwable $e) {
+            $this->logger->error('files_watermark: failed to save shared copy: ' . $e->getMessage(), [
+                'exception' => $e,
+                'path'      => $node->getPath(),
+            ]);
+        } finally {
+            @unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
         }
     }
 }

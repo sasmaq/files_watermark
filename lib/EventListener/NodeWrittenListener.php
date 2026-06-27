@@ -4,28 +4,25 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\EventListener;
 
-use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\Files\File;
+use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
 /** @template-implements IEventListener<NodeWrittenEvent> */
 class NodeWrittenListener implements IEventListener {
 
-    private const SUPPORTED_MIME = [
-        'application/pdf',
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-    ];
+    // File IDs currently being watermarked — prevents re-entrant loop when
+    // watermarkInPlace() writes the file and fires another NodeWrittenEvent.
+    private static array $processing = [];
 
     public function __construct(
-        private WatermarkService      $watermarkService,
-        private WatermarkConfigMapper $configMapper,
-        private LoggerInterface       $logger,
+        private WatermarkService $watermarkService,
+        private IUserSession     $userSession,
+        private LoggerInterface  $logger,
     ) {}
 
     public function handle(Event $event): void {
@@ -39,21 +36,28 @@ class NodeWrittenListener implements IEventListener {
             return;
         }
 
-        if (!in_array($node->getMimeType(), self::SUPPORTED_MIME, true)) {
+        if (!in_array($node->getMimeType(), WatermarkService::SUPPORTED_ALL, true)) {
+            return;
+        }
+
+        $fileId = $node->getId();
+        if (isset(self::$processing[$fileId])) {
             return;
         }
 
         try {
-            $config = $this->watermarkService->resolveConfig();
+            $config = $this->watermarkService->resolveConfig(
+                $this->userSession->getUser()?->getUID()
+            );
         } catch (\Throwable) {
             return;
         }
 
-        $triggers = array_map('trim', explode(',', $config->getTrigger()));
-        if (!in_array('on_upload', $triggers, true)) {
+        if ($config->getTrigger() !== 'on_upload') {
             return;
         }
 
+        self::$processing[$fileId] = true;
         try {
             $this->watermarkService->watermarkInPlace($node, 'on_upload', $config);
         } catch (\Throwable $e) {
@@ -61,6 +65,8 @@ class NodeWrittenListener implements IEventListener {
                 'exception' => $e,
                 'path'      => $node->getPath(),
             ]);
+        } finally {
+            unset(self::$processing[$fileId]);
         }
     }
 }

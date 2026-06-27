@@ -34,9 +34,9 @@
 
 ### Event Listener
 
-- [ ] **NodeWrittenListener** — verify it only triggers when `trigger = on_upload` is set in config
-- [ ] **NodeWrittenListener** — add guard against infinite loop (watermarked file write re-triggering the listener)
-- [ ] **ShareCreatedListener** — test that `{name}_shared.{ext}` copy is saved in the same folder as the original
+- [x] **NodeWrittenListener** — verify it only triggers when `trigger = on_upload` is set in config
+- [x] **NodeWrittenListener** — add guard against infinite loop (watermarked file write re-triggering the listener)
+- [x] **ShareCreatedListener** — test that `{name}_shared.{ext}` copy is saved in the same folder as the original
 
 ### Database
 
