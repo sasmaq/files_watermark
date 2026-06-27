@@ -3,7 +3,6 @@
 
 # Node dependencies and build output
 /node_modules/
-/js/
 
 # Composer lock (uncomment if you want to track it)
 # composer.lock

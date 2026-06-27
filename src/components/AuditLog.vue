@@ -29,13 +29,23 @@
         </tbody>
       </table>
 
-      <div class="pagination">
-        <NcButton :disabled="offset === 0" @click="prev">
-          {{ t('files_watermark', '← Previous') }}
-        </NcButton>
-        <NcButton :disabled="entries.length < limit" @click="next">
-          {{ t('files_watermark', 'Next →') }}
-        </NcButton>
+      <div class="pagination-bar">
+        <div class="page-size">
+          <label for="audit-page-size">{{ t('files_watermark', 'Per page') }}</label>
+          <select id="audit-page-size" v-model.number="limit" class="page-size-select" @change="onPageSizeChange">
+            <option :value="25">25</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+          </select>
+        </div>
+        <div class="page-nav">
+          <NcButton :disabled="offset === 0" @click="prev">
+            {{ t('files_watermark', '← Previous') }}
+          </NcButton>
+          <NcButton :disabled="entries.length < limit" @click="next">
+            {{ t('files_watermark', 'Next →') }}
+          </NcButton>
+        </div>
       </div>
     </template>
   </div>
@@ -53,7 +63,7 @@ import NcNoteCard from '@nextcloud/vue/dist/Components/NcNoteCard.js'
 const entries = ref([])
 const loading = ref(false)
 const error   = ref(null)
-const limit   = 50
+const limit   = ref(50)
 const offset  = ref(0)
 
 async function fetchLog() {
@@ -61,7 +71,7 @@ async function fetchLog() {
   error.value   = null
   try {
     const res = await axios.get(generateUrl('/apps/files_watermark/api/v1/log'), {
-      params: { limit, offset: offset.value },
+      params: { limit: limit.value, offset: offset.value },
     })
     entries.value = res.data
   } catch (e) {
@@ -71,12 +81,17 @@ async function fetchLog() {
   }
 }
 
+function onPageSizeChange() {
+  offset.value = 0
+  fetchLog()
+}
+
 function prev() {
-  offset.value = Math.max(0, offset.value - limit)
+  offset.value = Math.max(0, offset.value - limit.value)
   fetchLog()
 }
 function next() {
-  offset.value += limit
+  offset.value += limit.value
   fetchLog()
 }
 
@@ -104,7 +119,27 @@ onMounted(fetchLog)
   color: var(--color-text-lighter);
   padding: 24px;
 }
-.pagination {
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.page-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+}
+.page-size-select {
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--color-border-dark, #ccc);
+  border-radius: var(--border-radius, 3px);
+  background: var(--color-main-background, #fff);
+  color: var(--color-main-text, #000);
+}
+.page-nav {
   display: flex;
   gap: 8px;
 }

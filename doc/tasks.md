@@ -48,14 +48,14 @@
 
 ## Frontend (Vue 3)
 
-- [ ] **AdminSettings.vue** — global config form: load existing config on mount, show save confirmation
-- [ ] **AdminSettings.vue** — wire audit log tab to `GET /api/v1/log` with pagination controls
-- [ ] **AuditLog.vue** — implement paginated table (page size selector, prev/next)
-- [ ] **WatermarkForm.vue** — live preview of the watermark template string with variable substitution
-- [ ] **WatermarkForm.vue** — image watermark upload field: validate file type (PNG/SVG) and size limit
-- [ ] **WatermarkModal.vue** — show file name and estimated processing time before confirming on-demand apply
-- [ ] **main-files.js** — register `FileAction` for supported MIME types only (PDF, JPEG, PNG, WEBP)
-- [ ] **main-admin.js** — confirm Vue 3 entry point mounts correctly inside Nextcloud's content area
+- [x] **AdminSettings.vue** — global config form: load existing config on mount, show save confirmation
+- [x] **AdminSettings.vue** — wire audit log tab to `GET /api/v1/log` with pagination controls
+- [x] **AuditLog.vue** — implement paginated table (page size selector, prev/next)
+- [x] **WatermarkForm.vue** — live preview of the watermark template string with variable substitution
+- [x] **WatermarkForm.vue** — image watermark upload field: validate file type (PNG/SVG) and size limit
+- [x] **WatermarkModal.vue** — show file name and estimated processing time before confirming on-demand apply
+- [x] **main-files.js** — register `FileAction` for supported MIME types only (PDF, JPEG, PNG, WEBP)
+- [x] **main-admin.js** — confirm Vue 3 entry point mounts correctly inside Nextcloud's content area
 
 ---
 

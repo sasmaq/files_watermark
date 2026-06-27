@@ -10,7 +10,7 @@ const SUPPORTED_MIME = [
     'image/webp',
 ]
 
-function mountModal(filePath, fileName) {
+function mountModal(filePath, fileName, fileSize = 0) {
     const container = document.createElement('div')
     document.body.appendChild(container)
 
@@ -19,6 +19,7 @@ function mountModal(filePath, fileName) {
             return h(WatermarkModal, {
                 filePath,
                 fileName,
+                fileSize,
                 onClose() {
                     app.unmount()
                     container.remove()
@@ -37,6 +38,6 @@ registerFileAction(new FileAction({
         return files.length === 1 && SUPPORTED_MIME.includes(files[0].mime)
     },
     async exec(file) {
-        mountModal(file.path, file.basename)
+        mountModal(file.path, file.basename, file.size ?? 0)
     },
 }))

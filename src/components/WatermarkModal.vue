@@ -9,6 +9,10 @@
         {{ t('files_watermark', 'Apply watermark to: {file}', { file: fileName }) }}
       </p>
 
+      <p v-if="estimatedSeconds" class="time-hint">
+        {{ t('files_watermark', 'Estimated processing time: ~{n} second(s) for large files.', { n: estimatedSeconds }) }}
+      </p>
+
       <NcNoteCard v-if="done" type="success">
         {{ t('files_watermark', 'Watermark applied successfully.') }}
       </NcNoteCard>
@@ -32,7 +36,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
@@ -44,6 +48,7 @@ import NcNoteCard from '@nextcloud/vue/dist/Components/NcNoteCard.js'
 const props = defineProps({
   filePath: { type: String, required: true },
   fileName: { type: String, required: true },
+  fileSize: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['close'])
@@ -51,6 +56,12 @@ const emit = defineEmits(['close'])
 const applying   = ref(false)
 const done       = ref(false)
 const applyError = ref(null)
+
+// Rough estimate: ~1 second per MB, minimum 1s, only shown for files > 1 MB.
+const estimatedSeconds = computed(() => {
+  if (!props.fileSize || props.fileSize < 1024 * 1024) return null
+  return Math.max(1, Math.round(props.fileSize / 1024 / 1024))
+})
 
 async function apply() {
   applying.value   = true
@@ -67,3 +78,11 @@ async function apply() {
   }
 }
 </script>
+
+<style scoped>
+.time-hint {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: var(--color-text-lighter);
+}
+</style>

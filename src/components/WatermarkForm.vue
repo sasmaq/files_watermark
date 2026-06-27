@@ -26,18 +26,22 @@
         :label="t('files_watermark', 'Text template')"
         :placeholder="t('files_watermark', '{username} — {date}')"
       />
+      <p v-if="previewText" class="template-preview">
+        <strong>{{ t('files_watermark', 'Preview:') }}</strong> {{ previewText }}
+      </p>
     </NcSettingsSection>
 
     <NcSettingsSection
       v-if="form.type !== 'text'"
       :name="t('files_watermark', 'Watermark image')"
-      :description="t('files_watermark', 'Nextcloud path to the image used as watermark')"
+      :description="t('files_watermark', 'Nextcloud path to the PNG, JPG, or SVG file used as watermark')"
     >
       <NcTextField
         v-model="form.imagePath"
         :label="t('files_watermark', 'Image path')"
         :placeholder="t('files_watermark', '/path/to/logo.png')"
       />
+      <p v-if="imagePathError" class="field-error">{{ imagePathError }}</p>
     </NcSettingsSection>
 
     <NcSettingsSection
@@ -105,7 +109,7 @@
     </NcSettingsSection>
 
     <div class="form-actions">
-      <NcButton type="primary" :disabled="saving" native-type="button" @click="$emit('save', { ...form })">
+      <NcButton type="primary" :disabled="saving || !!imagePathError" native-type="button" @click="$emit('save', { ...form })">
         <template v-if="saving" #icon>
           <NcLoadingIcon :size="20" />
         </template>
@@ -116,7 +120,7 @@
 </template>
 
 <script setup>
-import { reactive, watch } from 'vue'
+import { reactive, watch, computed } from 'vue'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/dist/Components/NcButton.js'
 import NcSettingsSection from '@nextcloud/vue/dist/Components/NcSettingsSection.js'
@@ -147,6 +151,30 @@ const form = reactive({
 })
 
 watch(form, (val) => emit('update:modelValue', { ...val }))
+
+const SAMPLE = {
+    username: 'john.doe',
+    email:    'john.doe@example.com',
+    date:     new Date().toISOString().slice(0, 10),
+    datetime: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    filename: 'document.pdf',
+}
+
+const previewText = computed(() => {
+    if (!form.textTemplate) return ''
+    return form.textTemplate.replace(/\{(\w+)\}/g, (_, key) => SAMPLE[key] ?? `{${key}}`)
+})
+
+const ALLOWED_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'svg']
+
+const imagePathError = computed(() => {
+    if (!form.imagePath) return null
+    const ext = form.imagePath.split('.').pop().toLowerCase()
+    if (!ALLOWED_IMAGE_EXTS.includes(ext)) {
+        return t('files_watermark', 'Image must be a PNG, JPG, or SVG file.')
+    }
+    return null
+})
 </script>
 
 <style scoped>
@@ -187,5 +215,16 @@ watch(form, (val) => emit('update:modelValue', { ...val }))
 .form-actions {
     margin-top: 24px;
     padding: 0 0 0 2px;
+}
+.template-preview {
+    margin-top: 8px;
+    font-size: 0.9em;
+    color: var(--color-text-lighter);
+    word-break: break-word;
+}
+.field-error {
+    margin-top: 6px;
+    font-size: 0.9em;
+    color: var(--color-error, #e9322d);
 }
 </style>
