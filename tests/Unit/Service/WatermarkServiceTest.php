@@ -18,6 +18,7 @@ use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 
 class WatermarkServiceTest extends TestCase {
 
@@ -28,6 +29,7 @@ class WatermarkServiceTest extends TestCase {
     private IRootFolder&MockObject            $rootFolder;
     private IUserSession&MockObject           $userSession;
     private ISystemTagObjectMapper&MockObject $tagObjectMapper;
+    private LoggerInterface&MockObject         $logger;
     private WatermarkService                  $service;
 
     protected function setUp(): void {
@@ -40,6 +42,7 @@ class WatermarkServiceTest extends TestCase {
         $this->rootFolder       = $this->createMock(IRootFolder::class);
         $this->userSession      = $this->createMock(IUserSession::class);
         $this->tagObjectMapper  = $this->createMock(ISystemTagObjectMapper::class);
+        $this->logger           = $this->createMock(LoggerInterface::class);
 
         $this->service = new WatermarkService(
             $this->configMapper,
@@ -49,7 +52,17 @@ class WatermarkServiceTest extends TestCase {
             $this->rootFolder,
             $this->userSession,
             $this->tagObjectMapper,
+            $this->logger,
         );
+    }
+
+    public function testIsSupportedMatchesKnownTypes(): void {
+        $this->assertTrue($this->service->isSupported('application/pdf'));
+        $this->assertTrue($this->service->isSupported('image/jpeg'));
+        $this->assertTrue($this->service->isSupported('image/png'));
+        $this->assertTrue($this->service->isSupported('image/webp'));
+        $this->assertFalse($this->service->isSupported('text/plain'));
+        $this->assertFalse($this->service->isSupported('application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
     }
 
     public function testResolveConfigReturnsUserConfigWhenPresent(): void {
@@ -157,5 +170,67 @@ class WatermarkServiceTest extends TestCase {
             unlink($tmpPath);
             @rmdir(dirname($tmpPath));
         }
+    }
+
+    public function testWatermarkFileDelegatesPdfToPdfWatermarker(): void {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setOpacity(80);
+        $config->setFontSize(24);
+        $config->setColor('#cccccc');
+        $config->setRotation(45);
+        $config->setTrigger('on_demand');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $user->method('getEMailAddress')->willReturn('alice@example.com');
+        $this->userSession->method('getUser')->willReturn($user);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('doc.pdf');
+        $file->method('getId')->willReturn(7);
+        $file->method('getPath')->willReturn('/alice/files/doc.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        // The PDF must go to the PDF renderer, never the image renderer.
+        $this->pdfWatermarker->expects($this->once())->method('apply');
+        $this->imageWatermarker->expects($this->never())->method('apply');
+        $this->logMapper->expects($this->once())->method('insertLog');
+
+        $tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
+        $this->assertStringContainsString('doc.pdf', $tmpPath);
+
+        if (file_exists($tmpPath)) {
+            unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
+        }
+    }
+
+    public function testUnsupportedTypeIsSkippedWithLogEntryAndNoRendering(): void {
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('text/plain');
+        $file->method('getPath')->willReturn('/alice/files/notes.txt');
+
+        // Audit-log entry is written for the skip ...
+        $this->logger->expects($this->once())
+            ->method('info')
+            ->with(
+                $this->stringContains('unsupported'),
+                $this->callback(fn(array $ctx): bool => ($ctx['mime'] ?? null) === 'text/plain'),
+            );
+
+        // ... and no renderer is invoked.
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->imageWatermarker->expects($this->never())->method('apply');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported file type');
+
+        $this->service->watermarkFile($file, 'on_demand');
     }
 }

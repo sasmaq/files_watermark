@@ -12,6 +12,7 @@ use OCP\Files\File;
 use OCP\Files\IRootFolder;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
+use Psr\Log\LoggerInterface;
 
 class WatermarkService {
 
@@ -27,6 +28,7 @@ class WatermarkService {
         private IRootFolder            $rootFolder,
         private IUserSession           $userSession,
         private ISystemTagObjectMapper $tagObjectMapper,
+        private LoggerInterface        $logger,
     ) {}
 
     /**
@@ -35,7 +37,7 @@ class WatermarkService {
      */
     public function watermarkFile(File $file, string $trigger, ?WatermarkConfig $config = null): string {
         $mime = $file->getMimeType();
-        $this->assertSupported($mime);
+        $this->assertSupported($mime, $file);
 
         if ($config === null) {
             $config = $this->resolveConfig($this->userSession->getUser()?->getUID());
@@ -152,8 +154,22 @@ class WatermarkService {
         ];
     }
 
-    private function assertSupported(string $mime): void {
-        if (!in_array($mime, self::SUPPORTED_ALL, true)) {
+    /**
+     * Whether a MIME type can be watermarked at all (single source of truth for routing).
+     */
+    public function isSupported(string $mime): bool {
+        return in_array($mime, self::SUPPORTED_ALL, true);
+    }
+
+    /**
+     * Skips (aborts) processing of an unsupported file, recording an audit-log entry first.
+     */
+    private function assertSupported(string $mime, ?File $file = null): void {
+        if (!$this->isSupported($mime)) {
+            $this->logger->info('files_watermark: skipping unsupported file type {mime}', [
+                'mime' => $mime,
+                'path' => $file?->getPath(),
+            ]);
             throw new \RuntimeException("Unsupported file type: $mime");
         }
     }

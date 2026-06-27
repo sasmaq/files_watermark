@@ -29,8 +29,8 @@ they are implemented.
 
 ### Service routing
 
-- [ ] `WatermarkService` delegates to the correct renderer per MIME type
-- [ ] Unsupported types are skipped with an audit-log entry
+- [x] `WatermarkService` delegates to the correct renderer per MIME type
+- [x] Unsupported types are skipped with an audit-log entry
 
 ---
 

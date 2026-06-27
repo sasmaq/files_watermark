@@ -36,7 +36,7 @@ class NodeWrittenListener implements IEventListener {
             return;
         }
 
-        if (!in_array($node->getMimeType(), WatermarkService::SUPPORTED_ALL, true)) {
+        if (!$this->watermarkService->isSupported($node->getMimeType())) {
             return;
         }
 
