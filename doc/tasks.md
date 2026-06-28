@@ -78,12 +78,12 @@ they are implemented.
 
 ### Backend (Controllers / Settings)
 
-- [ ] `ApiController` — `getConfig`, `saveConfig`, `deleteConfig`, `applyWatermark`, `getLog`
-- [ ] `saveConfig` rejects invalid template tokens, type, trigger, and color
-- [ ] `applyWatermark` returns a descriptive error for unsupported file types
-- [ ] `getLog` is admin-only (403 for non-admins) via `IGroupManager::isAdmin()`
-- [ ] `SettingsController` — admin page (`settings#adminIndex`)
-- [ ] `AdminSettings` / `AdminSection` registered in `info.xml`
+- [x] `ApiController` — `getConfig`, `saveConfig`, `deleteConfig`, `applyWatermark`, `getLog`
+- [x] `saveConfig` rejects invalid template tokens, type, trigger, and color
+- [x] `applyWatermark` returns a descriptive error for unsupported file types
+- [x] `getLog` is admin-only (403 for non-admins) via `IGroupManager::isAdmin()`
+- [x] `SettingsController` — admin page (`settings#adminIndex`)
+- [x] `AdminSettings` / `AdminSection` registered in `info.xml`
 
 ### Frontend (Vue 3)
 
@@ -95,11 +95,13 @@ they are implemented.
 - [ ] `WatermarkForm.vue` — image upload field: validate type (PNG/SVG) and size
 - [ ] `WatermarkModal.vue` — show file name + estimated processing time before on-demand apply
 - [ ] `main-admin.js` — Vue 3 entry mounts in the admin content area
-- [ ] `main-files.js` — register `FileAction` for supported MIME types only
+- [ ] `main-files.js` — register an "Apply Watermark" `FileAction` in the Files file/context menu
+  - [ ] Action shown in the file row context menu for supported MIME types only
   - [ ] Hidden for unsupported types and multi-select (`files.length === 1`)
+  - [ ] `exec` opens `WatermarkModal` and awaits the apply result
   - [ ] Spinner/loading state on the file row during processing
   - [ ] Refresh the file list after completion
-  - [ ] Use the app SVG icon
+  - [ ] Use the app SVG icon + localized display name/title
 
 ---
 
