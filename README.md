@@ -58,11 +58,16 @@ composer install
 
 ### 2. Frontend dependencies
 
-> **Note:** Some Nextcloud packages declare `vue@^2` as a peer dependency while working correctly with Vue 3. Use `--legacy-peer-deps` to bypass the conflict:
+The app targets **Vue 3** with **`@nextcloud/vue` v9** (its Vue 3 line), so the
+dependency tree resolves cleanly:
 
 ```bash
-npm install --legacy-peer-deps
+npm install
 ```
+
+> **Note:** avoid `--legacy-peer-deps` — it skips auto-installing the peer
+> dependencies that `@nextcloud/eslint-config` needs (e.g. `eslint-plugin-import`)
+> and will break `npm run lint`.
 
 ### 3. Build frontend assets
 
@@ -126,7 +131,7 @@ compiled output, not the sources.
 ```bash
 # 1. Build on the host
 composer install
-npm install --legacy-peer-deps
+npm install
 npm run build
 
 # 2. Start Nextcloud (SQLite, admin auto-provisioned)
