@@ -177,6 +177,9 @@ class ApiController extends OCSController {
             return new DataResponse(['error' => 'Unauthenticated'], Http::STATUS_UNAUTHORIZED);
         }
 
+        // Resolve the path through the user's root folder. Nextcloud normalizes
+        // the path and rejects traversal (`../`) outside the user's home, so the
+        // resolved node is always owned by / shared with the acting user.
         $userFolder = $this->rootFolder->getUserFolder($user->getUID());
 
         try {
@@ -187,6 +190,16 @@ class ApiController extends OCSController {
 
         if (!($node instanceof \OCP\Files\File)) {
             return new DataResponse(['error' => 'Path is not a file'], Http::STATUS_BAD_REQUEST);
+        }
+
+        // The watermark is applied in place, so the acting user must be able to
+        // both read the original content and write the result back.
+        if (!$node->isReadable()) {
+            return new DataResponse(['error' => 'You do not have permission to read this file'], Http::STATUS_FORBIDDEN);
+        }
+
+        if (!$node->isUpdateable()) {
+            return new DataResponse(['error' => 'You do not have permission to modify this file'], Http::STATUS_FORBIDDEN);
         }
 
         $mime = $node->getMimeType();

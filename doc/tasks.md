@@ -69,8 +69,8 @@ they are implemented.
 
 ### Permissions
 
-- [ ] `applyWatermark` checks file ownership / read permission before processing
-- [ ] Resolve all file paths through `\OCP\Files\IRootFolder` (no path traversal)
+- [x] `applyWatermark` checks file ownership / read permission before processing
+- [x] Resolve all file paths through `\OCP\Files\IRootFolder` (no path traversal)
 
 ---
 
