@@ -13,7 +13,19 @@ declare(strict_types=1);
  */
 
 namespace {
-    require_once __DIR__ . '/../vendor/autoload.php';
+    // Plain require (not require_once): the phpunit binary has already required
+    // the autoloader, so require_once would return true instead of the loader.
+    // Composer's autoload.php always returns the cached ClassLoader instance.
+    $loader = require __DIR__ . '/../vendor/autoload.php';
+
+    // Register the nextcloud/ocp stub interfaces for the test run only. These
+    // are deliberately NOT in composer's autoload(-dev) so they never shadow
+    // the real OCP classes at Nextcloud runtime (which causes fatal
+    // signature-mismatch errors against core).
+    if ($loader instanceof \Composer\Autoload\ClassLoader) {
+        $loader->addPsr4('OCP\\', __DIR__ . '/../vendor/nextcloud/ocp/OCP/');
+        $loader->addPsr4('NCU\\', __DIR__ . '/../vendor/nextcloud/ocp/NCU/');
+    }
 }
 
 namespace OC\Hooks {

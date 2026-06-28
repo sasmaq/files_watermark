@@ -21,6 +21,16 @@ class Application extends App implements IBootstrap {
 
     public function __construct() {
         parent::__construct(self::APP_ID);
+
+        // Register the app's Composer autoloader so the bundled third-party
+        // libraries (setasign/fpdi, tecnickcom/tcpdf) are loadable at runtime.
+        // Nextcloud autoloads OCA\FilesWatermark\ classes from lib/, but not the
+        // vendor/ dependencies — without this, using the PDF watermarker throws
+        // "Class TCPDF not found" (a fatal Error → HTTP 500).
+        $autoload = __DIR__ . '/../../vendor/autoload.php';
+        if (file_exists($autoload)) {
+            require_once $autoload;
+        }
     }
 
     public function register(IRegistrationContext $context): void {

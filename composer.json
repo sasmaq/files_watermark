@@ -19,9 +19,7 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "OCA\\FilesWatermark\\Tests\\": "tests/",
-            "OCP\\": "vendor/nextcloud/ocp/OCP/",
-            "NCU\\": "vendor/nextcloud/ocp/NCU/"
+            "OCA\\FilesWatermark\\Tests\\": "tests/"
         }
     },
     "config": {
