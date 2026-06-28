@@ -1,0 +1,78 @@
+# S3 test environment for the files_watermark app.
+#
+# Standalone stack (separate from docker-compose.yml) that runs Nextcloud with
+# RustFS as the S3 PRIMARY object store, so every file lives on S3. Use it to
+# verify Goal 5 — that download / on-demand / on-upload watermarking works on
+# S3-backed storage.
+#
+# Build the app on the host first (the container runs the compiled output):
+#
+#   composer install && npm install && npm run build
+#
+# Then bring up the isolated S3 stack (its own project name + volumes):
+#
+#   docker compose -p fw_s3 -f docker-compose.s3.yml up -d
+#   docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php occ app:enable files_watermark
+#
+# Open http://localhost:8081  (admin / admin). RustFS console: http://localhost:9001
+# (rustfsadmin / rustfsadmin). Tear down with:
+#
+#   docker compose -p fw_s3 -f docker-compose.s3.yml down -v
+
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: fw_s3_rustfs
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # web console (if enabled by the image)
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_VOLUMES: /data
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      # RustFS answers S3 requests on :9000; curl or wget is used depending on
+      # what the image ships. If neither is present, drop this block and switch
+      # the nextcloud depends_on to `condition: service_started`.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/ >/dev/null 2>&1 || wget -qO- http://localhost:9000/ >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  nextcloud:
+    image: nextcloud:31-apache
+    container_name: fw_s3_nextcloud
+    ports:
+      - "8081:80"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    # Same custom_apps ownership fix as docker-compose.yml (see notes there).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - chown www-data:www-data /var/www/html/custom_apps; exec /entrypoint.sh apache2-foreground
+    environment:
+      SQLITE_DATABASE: nextcloud
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: admin
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+      # S3 as primary object storage (configured at install time).
+      OBJECTSTORE_S3_BUCKET: nextcloud
+      OBJECTSTORE_S3_AUTOCREATE: "true"
+      OBJECTSTORE_S3_HOST: rustfs
+      OBJECTSTORE_S3_PORT: "9000"
+      OBJECTSTORE_S3_SSL: "false"
+      OBJECTSTORE_S3_USEPATH_STYLE: "true"
+      OBJECTSTORE_S3_REGION: us-east-1
+      OBJECTSTORE_S3_KEY: rustfsadmin
+      OBJECTSTORE_S3_SECRET: rustfsadmin
+    volumes:
+      - nextcloud_data:/var/www/html
+      - ./:/var/www/html/custom_apps/files_watermark
+
+volumes:
+  rustfs_data:
+  nextcloud_data:

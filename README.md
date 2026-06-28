@@ -159,6 +159,50 @@ The compose file uses SQLite for zero-config single-container testing; a
 PostgreSQL variant (closer to production, exercises the migration on a real
 RDBMS) is documented inline at the bottom of the file.
 
+### Testing with S3 storage (RustFS)
+
+The app is storage-agnostic: it reads/writes file content through the Nextcloud
+Files API (`getContent()` / `putContent()` / `newFile()`) and only touches the
+local filesystem for short-lived temp copies. So watermarking works unchanged on
+S3 — this stack lets you verify it.
+
+**1. S3 as primary object storage** (every file lives on S3) — use the dedicated
+[`docker-compose.s3.yml`](docker-compose.s3.yml), which runs Nextcloud + RustFS:
+
+```bash
+composer install && npm install && npm run build
+docker compose -p fw_s3 -f docker-compose.s3.yml up -d
+docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php occ app:enable files_watermark
+```
+
+Open <http://localhost:8081> (admin / admin). Then verify:
+
+- **On demand:** upload a PDF/image → `...` menu → **Apply Watermark**.
+- **On download:** `GET /apps/files_watermark/api/v1/download?path=/<file>` returns a
+  watermarked copy while the original S3 object is untouched.
+- **On upload:** set the global trigger to *On upload* in admin settings, then upload
+  a file and confirm it comes back watermarked.
+- Cross-check in the RustFS console (<http://localhost:9001>, rustfsadmin / rustfsadmin)
+  that objects are written to the `nextcloud` bucket.
+
+Tear down: `docker compose -p fw_s3 -f docker-compose.s3.yml down -v`.
+
+**2. External S3 storage mount** (S3 mounted as a folder on an otherwise-local
+instance) — on the default stack, point an external mount at the same RustFS:
+
+```bash
+docker compose exec -u www-data nextcloud php occ app:enable files_external
+docker compose exec -u www-data nextcloud php occ files_external:create \
+  /s3mount amazons3 amazons3::accesskey \
+  -c bucket=externalbucket -c hostname=rustfs -c port=9000 -c use_ssl=false \
+  -c use_path_style=true -c region=us-east-1 \
+  -c key=rustfsadmin -c secret=rustfsadmin
+```
+
+Then watermark a file inside the `/s3mount` folder via the file action and confirm it
+succeeds (the same RustFS from the S3 stack can be reused, or add a RustFS service to
+the default stack).
+
 ## License
 
 AGPL-3.0-or-later

@@ -109,9 +109,17 @@ they are implemented.
 
 ## Goal 5 — S3 storage backend support
 
-- [ ] `DownloadController` serves watermarked copy on S3-backed storage
+Storage-agnostic by design: all file I/O goes through the Files API
+(`getContent` / `putContent` / `newFile`); only short-lived temp copies touch the
+local filesystem. No S3-specific code needed. `docker-compose.s3.yml` (Nextcloud +
+MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
+
+- [x] `DownloadController` serves watermarked copy on S3-backed storage
+  - stages content to a local temp via `getContent()` and streams that temp; original S3 object untouched (asserted in `DownloadControllerTest`)
 - [ ] Verify on-demand / on-upload watermarking on an S3 primary-storage instance
+  - harness ready (`docker-compose.s3.yml`); needs a manual run to tick off
 - [ ] Verify on external S3 storage mount
+  - `occ files_external:create` steps documented in README; needs a manual run to tick off
 
 ---
 
