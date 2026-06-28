@@ -88,20 +88,22 @@ they are implemented.
 ### Frontend (Vue 3)
 
 - [ ] `AdminSettings.vue` — global policy, group overrides, default template; load on mount + save confirmation
-- [ ] Scope config UI — MIME whitelist (`mime_types`)
-- [ ] Scope config UI — per-folder system-tag targeting (`folder_tag`)
-- [ ] `AuditLog.vue` — paginated table (page size selector, prev/next) wired to `GET /api/v1/log`
-- [ ] `WatermarkForm.vue` — live preview of template with variable substitution
+  - global policy + default template + load-on-mount + save confirmation done; **group overrides UI still missing**
+- [x] Scope config UI — MIME whitelist (`mime_types`)
+- [x] Scope config UI — per-folder system-tag targeting (`folder_tag`)
+- [x] `AuditLog.vue` — paginated table (page size selector, prev/next) wired to `GET /api/v1/log`
+- [x] `WatermarkForm.vue` — live preview of template with variable substitution
 - [ ] `WatermarkForm.vue` — image upload field: validate type (PNG/SVG) and size
-- [ ] `WatermarkModal.vue` — show file name + estimated processing time before on-demand apply
-- [ ] `main-admin.js` — Vue 3 entry mounts in the admin content area
-- [ ] `main-files.js` — register an "Apply Watermark" `FileAction` in the Files file/context menu
-  - [ ] Action shown in the file row context menu for supported MIME types only
-  - [ ] Hidden for unsupported types and multi-select (`files.length === 1`)
-  - [ ] `exec` opens `WatermarkModal` and awaits the apply result
-  - [ ] Spinner/loading state on the file row during processing
-  - [ ] Refresh the file list after completion
-  - [ ] Use the app SVG icon + localized display name/title
+  - current UI is a Nextcloud **path** field with extension-type validation; **no file upload + no size check**
+- [x] `WatermarkModal.vue` — show file name + estimated processing time before on-demand apply
+- [x] `main-admin.js` — Vue 3 entry mounts in the admin content area
+- [x] `main-files.js` — register an "Apply Watermark" `FileAction` in the Files file/context menu
+  - [x] Action shown in the file row context menu for supported MIME types only
+  - [x] Hidden for unsupported types and multi-select (`files.length === 1`)
+  - [x] `exec` opens `WatermarkModal` and awaits the apply result
+  - [x] Spinner/loading state on the file row during processing
+  - [x] Refresh the file list after completion
+  - [x] Use the app SVG icon + localized display name/title
 
 ---
 
@@ -170,7 +172,7 @@ they are implemented.
 
 ### Frontend (Jest)
 
-- [ ] `WatermarkForm.spec.js`, `AuditLog.spec.js`, `AdminSettings.spec.js`
+- [x] `WatermarkForm.spec.js`, `AuditLog.spec.js`, `AdminSettings.spec.js`
 
 ### Integration / E2E (Cypress)
 

@@ -1,22 +1,8 @@
 import { mount } from '@vue/test-utils'
 import WatermarkForm from '../components/WatermarkForm.vue'
 
-// Mock @nextcloud/vue component imports used inside WatermarkForm
-jest.mock('@nextcloud/vue/dist/Components/NcButton.js', () => ({
-    default: { template: '<button><slot /></button>' },
-}))
-jest.mock('@nextcloud/vue/dist/Components/NcSelect.js', () => ({
-    default: { template: '<select />', props: ['modelValue', 'options', 'reduce', 'label', 'trackBy', 'placeholder'] },
-}))
-jest.mock('@nextcloud/vue/dist/Components/NcSettingsSection.js', () => ({
-    default: { template: '<div><slot /></div>', props: ['name', 'description'] },
-}))
-jest.mock('@nextcloud/vue/dist/Components/NcTextField.js', () => ({
-    default: { template: '<input />', props: ['modelValue', 'label', 'placeholder'] },
-}))
-jest.mock('@nextcloud/vue/dist/Components/NcLoadingIcon.js', () => ({
-    default: { template: '<span />', props: ['size'] },
-}))
+// @nextcloud/vue components are stubbed via jest.config moduleNameMapper
+// (src/tests/__mocks__/@nextcloud/vue-components/*).
 
 describe('WatermarkForm', () => {
     function mountForm(props = {}) {
