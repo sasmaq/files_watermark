@@ -40,13 +40,15 @@ class ImageWatermarker {
             $draw->setFillColor(new \ImagickPixel($color));
             $draw->setFillOpacity($alpha);
 
-            $stepX = max(150, $fontSize * 7);
-            $stepY = max(100, $fontSize * 5);
+            $stepX = max(300, $fontSize * 14);
+            $stepY = max(320, $fontSize * 16);
 
             // annotateImage places text at the given pixel coords and rotates it in place,
             // avoiding the cumulative-transform bug that $draw->rotate() in a loop would cause.
             for ($x = 0; $x < $width + $stepX; $x += $stepX) {
-                for ($y = $stepY; $y < $height + $stepY; $y += $stepY) {
+                // Start near the top (baseline ~ one line down) so the tiling
+                // always covers the image even when the step is larger than it.
+                for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
                     $image->annotateImage($draw, $x, $y, -$rotation, $text);
                 }
             }
@@ -97,18 +99,18 @@ class ImageWatermarker {
             $fontPath = $this->findSystemFont();
 
             if ($fontPath !== null) {
-                $stepX = max(150, $fontSize * 7);
-                $stepY = max(100, $fontSize * 5);
+                $stepX = max(300, $fontSize * 14);
+                $stepY = max(320, $fontSize * 16);
                 for ($x = 0; $x < $width + $stepX; $x += $stepX) {
-                    for ($y = $stepY; $y < $height + $stepY; $y += $stepY) {
+                    for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
                         imagettftext($src, $fontSize, $rotation, $x, $y, $textColor, $fontPath, $text);
                     }
                 }
             } else {
                 // No TTF font available: fall back to built-in pixelated font (no rotation).
                 $gdFontSize = max(1, intval($fontSize / 4));
-                $stepX      = max(100, $gdFontSize * 40);
-                $stepY      = max(60, $gdFontSize * 25);
+                $stepX      = max(200, $gdFontSize * 80);
+                $stepY      = max(200, $gdFontSize * 80);
                 for ($x = 0; $x < $width; $x += $stepX) {
                     for ($y = 0; $y < $height; $y += $stepY) {
                         imagestring($src, $gdFontSize, $x, $y, $text, $textColor);
