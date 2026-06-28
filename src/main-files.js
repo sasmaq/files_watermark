@@ -4,10 +4,10 @@ import { t } from '@nextcloud/l10n'
 import WatermarkModal from './components/WatermarkModal.vue'
 
 const SUPPORTED_MIME = [
-    'application/pdf',
-    'image/jpeg',
-    'image/png',
-    'image/webp',
+	'application/pdf',
+	'image/jpeg',
+	'image/png',
+	'image/webp',
 ]
 
 // Inline content of img/app.svg — comments stripped for use as an inline SVG string.
@@ -20,46 +20,50 @@ const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24
  *
  * Keeping exec() awaiting this Promise lets Nextcloud Files show a spinner
  * on the file row and auto-refresh the file when exec resolves with true.
+ * @param {string} filePath - Path of the file to watermark
+ * @param {string} fileName - Display name shown in the modal
+ * @param {number} fileSize - File size in bytes, used for the time estimate
+ * @return {Promise<boolean|null>} true when applied, null when cancelled
  */
 function mountModal(filePath, fileName, fileSize = 0) {
-    return new Promise((resolve) => {
-        let watermarked = false
-        const container = document.createElement('div')
-        document.body.appendChild(container)
+	return new Promise((resolve) => {
+		let watermarked = false
+		const container = document.createElement('div')
+		document.body.appendChild(container)
 
-        const app = createApp({
-            render() {
-                return h(WatermarkModal, {
-                    filePath,
-                    fileName,
-                    fileSize,
-                    onWatermarked() {
-                        watermarked = true
-                        resolve(true)
-                    },
-                    onClose() {
-                        app.unmount()
-                        container.remove()
-                        if (!watermarked) {
-                            resolve(null)
-                        }
-                    },
-                })
-            },
-        })
-        app.mount(container)
-    })
+		const app = createApp({
+			render() {
+				return h(WatermarkModal, {
+					filePath,
+					fileName,
+					fileSize,
+					onWatermarked() {
+						watermarked = true
+						resolve(true)
+					},
+					onClose() {
+						app.unmount()
+						container.remove()
+						if (!watermarked) {
+							resolve(null)
+						}
+					},
+				})
+			},
+		})
+		app.mount(container)
+	})
 }
 
 registerFileAction(new FileAction({
-    id: 'files_watermark_apply',
-    displayName: () => t('files_watermark', 'Apply Watermark'),
-    title: () => t('files_watermark', 'Embed identity information into this file as a visible watermark'),
-    iconSvgInline: () => APP_ICON_SVG,
-    enabled(files) {
-        return files.length === 1 && SUPPORTED_MIME.includes(files[0].mime)
-    },
-    async exec(file) {
-        return mountModal(file.path, file.basename, file.size ?? 0)
-    },
+	id: 'files_watermark_apply',
+	displayName: () => t('files_watermark', 'Apply Watermark'),
+	title: () => t('files_watermark', 'Embed identity information into this file as a visible watermark'),
+	iconSvgInline: () => APP_ICON_SVG,
+	enabled(files) {
+		return files.length === 1 && SUPPORTED_MIME.includes(files[0].mime)
+	},
+	async exec(file) {
+		return mountModal(file.path, file.basename, file.size ?? 0)
+	},
 }))
