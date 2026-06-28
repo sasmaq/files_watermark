@@ -25,6 +25,16 @@ services:
     container_name: files_watermark_nc
     ports:
       - "8080:80"
+    # The bind mount below makes Docker create the parent `custom_apps`
+    # directory owned by root. `custom_apps` is a *writable* app path, so the
+    # first-run install fails its writability check ("Cannot write into apps
+    # directory"). Chown the dir (non-recursive, so the host-owned app files
+    # inside are left alone — they only need to be readable) before handing
+    # off to the stock entrypoint.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - chown www-data:www-data /var/www/html/custom_apps; exec /entrypoint.sh apache2-foreground
     environment:
       # Auto-provision on first run so no web installer step is needed.
       SQLITE_DATABASE: nextcloud
