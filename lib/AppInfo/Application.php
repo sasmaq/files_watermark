@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\AppInfo;
 
+use OCA\Files\Event\LoadAdditionalScriptsEvent;
+use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\ShareCreatedListener;
 use OCP\AppFramework\App;
@@ -24,6 +26,7 @@ class Application extends App implements IBootstrap {
     public function register(IRegistrationContext $context): void {
         $context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
         $context->registerEventListener(ShareCreatedEvent::class, ShareCreatedListener::class);
+        $context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
     }
 
     public function boot(IBootContext $context): void {
