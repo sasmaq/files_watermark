@@ -116,13 +116,43 @@ npm run lint
 - **On share:** when a share is created, a watermarked copy (`{name}_shared.{ext}`) is saved in the same folder
 - **Admin settings:** configure the global policy under **Settings → Additional → Watermark Settings**
 
-## Docker
+## Docker (local test environment)
+
+A [`docker-compose.yml`](docker-compose.yml) is provided to run the app against a
+real Nextcloud 31 instance. It bind-mounts this repo into Nextcloud's
+`custom_apps/`, so **build the app on the host first** — the container runs the
+compiled output, not the sources.
 
 ```bash
-docker run -d -p 8080:80 nextcloud:31.0.14-apache
+# 1. Build on the host
+composer install
+npm install --legacy-peer-deps
+npm run build
 
-docker cp ./ 7c31d03efd61:/var/www/html/apps/files_watermark
+# 2. Start Nextcloud (SQLite, admin auto-provisioned)
+docker compose up -d
+
+# 3. Wait ~30–60s for first-run install, then enable the app
+docker compose exec -u www-data nextcloud php occ app:enable files_watermark
 ```
+
+Open <http://localhost:8080> and log in as **admin / admin**.
+
+Then test:
+
+- **Admin settings:** Settings → Administration → **Watermark**
+- **On demand:** upload a PDF/JPEG/PNG/WEBP, open the file row `...` menu → **Apply Watermark**
+- **Logs:** `docker compose logs -f nextcloud`
+
+Iterating:
+
+- **Frontend change:** re-run `npm run build` on the host and hard-refresh the browser (the mount is live; no restart needed).
+- **PHP / routes / migration change:** `docker compose exec -u www-data nextcloud php occ app:disable files_watermark && docker compose exec -u www-data nextcloud php occ app:enable files_watermark`
+- **Reset everything:** `docker compose down -v` (deletes the Nextcloud volume).
+
+The compose file uses SQLite for zero-config single-container testing; a
+PostgreSQL variant (closer to production, exercises the migration on a real
+RDBMS) is documented inline at the bottom of the file.
 
 ## License
 

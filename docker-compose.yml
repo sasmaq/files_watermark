@@ -1,0 +1,70 @@
+# Local test environment for the files_watermark app.
+#
+# This bind-mounts the repo into Nextcloud's custom_apps/ so the app runs
+# against a real Nextcloud 31 instance. Build the app on the host FIRST
+# (the container runs the compiled output, not the sources):
+#
+#   composer install
+#   npm install --legacy-peer-deps
+#   npm run build
+#
+# Then:
+#
+#   docker compose up -d
+#   # wait for first-run install (~30-60s), then enable the app:
+#   docker compose exec -u www-data nextcloud php occ app:enable files_watermark
+#
+# Open http://localhost:8080  (admin / admin)
+#
+# Uses SQLite for zero-config single-container testing. To mirror production
+# more closely, swap to the Postgres setup noted at the bottom of this file.
+
+services:
+  nextcloud:
+    image: nextcloud:31-apache
+    container_name: files_watermark_nc
+    ports:
+      - "8080:80"
+    environment:
+      # Auto-provision on first run so no web installer step is needed.
+      SQLITE_DATABASE: nextcloud
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: admin
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+    volumes:
+      # Persist Nextcloud core + data across restarts.
+      - nextcloud_data:/var/www/html
+      # Live-mount the app. After a frontend change, re-run `npm run build`
+      # on the host and hard-refresh the browser — no container restart needed.
+      - ./:/var/www/html/custom_apps/files_watermark
+
+volumes:
+  nextcloud_data:
+
+# ---------------------------------------------------------------------------
+# Optional: test against PostgreSQL instead of SQLite (closer to production,
+# exercises the migration on a real RDBMS). Replace the `environment:` block
+# above with the POSTGRES_* vars and add this service + depends_on:
+#
+#   environment:
+#     POSTGRES_HOST: db
+#     POSTGRES_DB: nextcloud
+#     POSTGRES_USER: nextcloud
+#     POSTGRES_PASSWORD: nextcloud
+#     NEXTCLOUD_ADMIN_USER: admin
+#     NEXTCLOUD_ADMIN_PASSWORD: admin
+#     NEXTCLOUD_TRUSTED_DOMAINS: localhost
+#   depends_on:
+#     - db
+#
+#   db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_DB: nextcloud
+#       POSTGRES_USER: nextcloud
+#       POSTGRES_PASSWORD: nextcloud
+#     volumes:
+#       - db_data:/var/lib/postgresql/data
+#
+# ...and add `db_data:` under the top-level `volumes:` key.
+# ---------------------------------------------------------------------------

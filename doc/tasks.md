@@ -189,6 +189,7 @@ they are implemented.
 - [ ] Document all API endpoints (incl. `/api/v1/download`) with request/response examples
 - [ ] Developer guide: how to add a new file-type renderer
 - [ ] Document the Docker dev workflow (incl. headless LibreOffice)
+  - `docker-compose.yml` + README "Docker (local test environment)" section done; **headless LibreOffice not yet added** (pending Office support)
 - [ ] Add `CHANGELOG.md` with v1.0.0 entry
 - [ ] Bump `appinfo/info.xml` version to the release tag
 - [ ] Package for the App Store and tag the release
