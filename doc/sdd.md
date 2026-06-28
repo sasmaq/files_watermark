@@ -186,7 +186,7 @@ All endpoints require a valid Nextcloud session or app password. Admin-only endp
 ## 8. Frontend (Vue.js)
 
 - **Admin Settings** (`/settings/admin/watermark`) — global policy, group overrides, default template, MIME/tag scope, audit log viewer.
-- **Personal Settings** (`/settings/user/watermark`) — per-user settings panel for users to manage their own watermark template and preferences within the bounds allowed by admin policy.
+
 - **File Action** — context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
 
 Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component library and **@nextcloud/axios** for API calls, consistent with Nextcloud 31 app standards.

@@ -74,7 +74,7 @@ they are implemented.
 
 ---
 
-## Goal 4 — Admin management UI and per-user settings panel
+## Goal 4 — Admin management UI
 
 ### Backend (Controllers / Settings)
 
@@ -83,9 +83,7 @@ they are implemented.
 - [ ] `applyWatermark` returns a descriptive error for unsupported file types
 - [ ] `getLog` is admin-only (403 for non-admins) via `IGroupManager::isAdmin()`
 - [ ] `SettingsController` — admin page (`settings#adminIndex`)
-- [ ] `SettingsController` — personal page (`settings#personalIndex`) — *new per SDD*
 - [ ] `AdminSettings` / `AdminSection` registered in `info.xml`
-- [ ] `PersonalSettings` / `PersonalSection` registered in `info.xml` — *new per SDD*
 
 ### Frontend (Vue 3)
 
@@ -96,9 +94,7 @@ they are implemented.
 - [ ] `WatermarkForm.vue` — live preview of template with variable substitution
 - [ ] `WatermarkForm.vue` — image upload field: validate type (PNG/SVG) and size
 - [ ] `WatermarkModal.vue` — show file name + estimated processing time before on-demand apply
-- [ ] `PersonalSettings.vue` — per-user panel bounded by admin policy — *new per SDD*
 - [ ] `main-admin.js` — Vue 3 entry mounts in the admin content area
-- [ ] `main-personal.js` — Vue 3 entry for personal settings + webpack entry — *new per SDD*
 - [ ] `main-files.js` — register `FileAction` for supported MIME types only
   - [ ] Hidden for unsupported types and multi-select (`files.length === 1`)
   - [ ] Spinner/loading state on the file row during processing
@@ -172,7 +168,7 @@ they are implemented.
 
 ### Frontend (Jest)
 
-- [ ] `WatermarkForm.spec.js`, `AuditLog.spec.js`, `AdminSettings.spec.js`, `PersonalSettings.spec.js`
+- [ ] `WatermarkForm.spec.js`, `AuditLog.spec.js`, `AdminSettings.spec.js`
 
 ### Integration / E2E (Cypress)
 
