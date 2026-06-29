@@ -105,6 +105,74 @@ they are implemented.
   - [x] Refresh the file list after completion
   - [x] Use the app SVG icon + localized display name/title
 
+### Watermarked-file indicator (Files app) — *new*
+
+Show a visual indicator in the Files list/details for files that have already been
+watermarked. Detection sources the existing `watermark_log` table by file id.
+
+#### Backend (lookup endpoint)
+
+- [ ] `ApiController::getWatermarkedStatus` — accept a list of file ids and return which are watermarked
+  - [ ] Route `GET /api/v1/watermarked` (`?ids=1,2,3`), `#[NoAdminRequired]`
+  - [ ] Resolve status from `watermark_log` (a file id is "watermarked" if any log row references it)
+  - [ ] Restrict the query to ids the acting user can access (no leaking other users' file ids)
+- [ ] `WatermarkLogMapper::findWatermarkedFileIds(array $fileIds): int[]` — single batched `IN (...)` query, distinct file ids
+- [ ] Decide invalidation semantics: a later non-watermark write replaces content in place, so a log row may be stale (document as "has ever been watermarked")
+
+#### Frontend (`main-files.js`)
+
+- [ ] Register a Files `FileListAction` / row decorator that batches visible file ids and calls `GET /api/v1/watermarked`
+- [ ] Render an indicator (app SVG icon badge) on watermarked rows; localized tooltip "This file is watermarked"
+- [ ] Only query/decorate supported MIME types (`SUPPORTED_MIME`)
+- [ ] Refresh the indicator after an on-demand apply completes (file just watermarked shows the badge)
+- [ ] Gracefully no-op when the lookup request fails (never block the file list)
+
+#### Tests
+
+- [ ] `ApiControllerTest` — `getWatermarkedStatus` returns correct ids, empty for none, access-scoped
+- [ ] `WatermarkLogMapperTest` — `findWatermarkedFileIds` batched lookup + distinct
+- [ ] Jest — `main-files` indicator renders for watermarked ids and is absent otherwise
+
+### Remove watermark (restore original) — *new*
+
+Let a user undo a watermark after it has been applied. Because `watermarkInPlace` **burns**
+the watermark into the PDF/image content (destructive, non-reversible), "remove" must mean
+**restore a preserved copy of the pre-watermark original** — not algorithmically strip pixels.
+
+#### Preserve the original (prerequisite)
+
+- [ ] Decide where the pre-watermark original is preserved (pick one):
+  - Nextcloud file **versions** — reuse `IVersionManager`; restore = revert to the pre-apply version (no extra storage, but version may be pruned/expire)
+  - **App-managed backup** in app data keyed by file id (durable, but extra storage + cleanup lifecycle)
+  - Sibling `{name}_original.{ext}` copy in the same folder (visible to user; simplest)
+- [ ] In `WatermarkService::watermarkInPlace`, snapshot the original **before** `putContent` (per the chosen mechanism)
+- [ ] Record the backup reference (version id / backup path) — extend `watermark_log` or a new column so removal can find it
+- [ ] Guard: don't overwrite an existing original backup when re-watermarking an already-watermarked file
+
+#### Backend (remove endpoint)
+
+- [ ] `ApiController::removeWatermark(string $path)` — restore the original and mark the file un-watermarked
+  - [ ] Route `POST /api/v1/remove`, `#[NoAdminRequired]`
+  - [ ] Ownership / `isUpdateable` permission checks (mirror `applyWatermark`)
+  - [ ] 422 when no preserved original exists (nothing to restore)
+  - [ ] Restore content via the chosen mechanism, then clean up the backup
+- [ ] `WatermarkService::removeWatermark(File $file)` — perform the restore + record the removal
+- [ ] Update `watermark_log` so the file no longer counts as watermarked (insert a `removed` action, or clear rows) — keep the indicator query (`findWatermarkedFileIds`) consistent
+
+#### Frontend (`main-files.js`)
+
+- [ ] Register a "Remove Watermark" `FileAction`, enabled only for files that are currently watermarked (reuse the indicator lookup) and `files.length === 1`
+- [ ] Confirmation dialog before restoring (destructive: discards the watermarked version)
+- [ ] Spinner on the row + refresh file list and indicator after completion
+- [ ] Localized display name/title + app SVG icon
+
+#### Tests
+
+- [ ] `WatermarkServiceTest` — original is snapshotted on apply; `removeWatermark` restores byte-identical original
+- [ ] `ApiControllerTest` — `removeWatermark` happy path, 422 when no backup, permission guards
+- [ ] `NodeWrittenListenerTest`/audit — removal records a log entry and clears watermarked status
+- [ ] Jest — "Remove Watermark" action only shown for watermarked files
+
 ---
 
 ## Goal 5 — S3 storage backend support
