@@ -28,6 +28,39 @@ class WatermarkLogMapper extends QBMapper {
         return $this->findEntities($qb);
     }
 
+    /**
+     * Return the subset of the given file ids that have at least one log row,
+     * i.e. that have ever been watermarked. Runs as a single batched `IN (...)`
+     * query and returns distinct ids.
+     *
+     * @param int[] $fileIds
+     * @return int[]
+     */
+    public function findWatermarkedFileIds(array $fileIds): array {
+        if (empty($fileIds)) {
+            return [];
+        }
+
+        $fileIds = array_values(array_unique(array_map('intval', $fileIds)));
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectDistinct('file_id')
+            ->from($this->getTableName())
+            ->where($qb->expr()->in(
+                'file_id',
+                $qb->createNamedParameter($fileIds, IQueryBuilder::PARAM_INT_ARRAY),
+            ));
+
+        $result = $qb->executeQuery();
+        $ids    = [];
+        while ($row = $result->fetch()) {
+            $ids[] = (int)$row['file_id'];
+        }
+        $result->closeCursor();
+
+        return $ids;
+    }
+
     public function insertLog(string $userId, int $fileId, string $filePath, string $trigger, ?int $configId): WatermarkLog {
         $log = new WatermarkLog();
         $log->setUserId($userId);

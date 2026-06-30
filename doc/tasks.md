@@ -112,26 +112,28 @@ watermarked. Detection sources the existing `watermark_log` table by file id.
 
 #### Backend (lookup endpoint)
 
-- [ ] `ApiController::getWatermarkedStatus` — accept a list of file ids and return which are watermarked
-  - [ ] Route `GET /api/v1/watermarked` (`?ids=1,2,3`), `#[NoAdminRequired]`
-  - [ ] Resolve status from `watermark_log` (a file id is "watermarked" if any log row references it)
-  - [ ] Restrict the query to ids the acting user can access (no leaking other users' file ids)
-- [ ] `WatermarkLogMapper::findWatermarkedFileIds(array $fileIds): int[]` — single batched `IN (...)` query, distinct file ids
-- [ ] Decide invalidation semantics: a later non-watermark write replaces content in place, so a log row may be stale (document as "has ever been watermarked")
+- [x] `ApiController::getWatermarkedStatus` — accept a list of file ids and return which are watermarked
+  - [x] Route `GET /api/v1/watermarked` (`?ids=1,2,3`), `#[NoAdminRequired]`
+  - [x] Resolve status from `watermark_log` (a file id is "watermarked" if any log row references it)
+  - [x] Restrict the query to ids the acting user can access (no leaking other users' file ids)
+- [x] `WatermarkLogMapper::findWatermarkedFileIds(array $fileIds): int[]` — single batched `IN (...)` query, distinct file ids
+- [x] Decide invalidation semantics: a later non-watermark write replaces content in place, so a log row may be stale (documented as "has ever been watermarked" in the method docblock)
 
 #### Frontend (`main-files.js`)
 
-- [ ] Register a Files `FileListAction` / row decorator that batches visible file ids and calls `GET /api/v1/watermarked`
-- [ ] Render an indicator (app SVG icon badge) on watermarked rows; localized tooltip "This file is watermarked"
-- [ ] Only query/decorate supported MIME types (`SUPPORTED_MIME`)
-- [ ] Refresh the indicator after an on-demand apply completes (file just watermarked shows the badge)
-- [ ] Gracefully no-op when the lookup request fails (never block the file list)
+- [x] Register a Files `FileListAction` / row decorator that batches visible file ids and calls `GET /api/v1/watermarked`
+  - implemented as a debounced `MutationObserver` over the file list that batches visible row ids
+- [x] Render an indicator (app SVG icon badge) on watermarked rows; localized tooltip "This file is watermarked"
+- [x] Only query/decorate supported MIME types (`SUPPORTED_MIME`)
+  - enforced node-side via `supportedFileIds`; backend only logs supported types so passive lookups stay scoped too
+- [x] Refresh the indicator after an on-demand apply completes (file just watermarked shows the badge)
+- [x] Gracefully no-op when the lookup request fails (never block the file list)
 
 #### Tests
 
-- [ ] `ApiControllerTest` — `getWatermarkedStatus` returns correct ids, empty for none, access-scoped
-- [ ] `WatermarkLogMapperTest` — `findWatermarkedFileIds` batched lookup + distinct
-- [ ] Jest — `main-files` indicator renders for watermarked ids and is absent otherwise
+- [x] `ApiControllerTest` — `getWatermarkedStatus` returns correct ids, empty for none, access-scoped
+- [x] `WatermarkLogMapperTest` — `findWatermarkedFileIds` batched lookup + distinct
+- [x] Jest — `main-files` indicator renders for watermarked ids and is absent otherwise
 
 ### Remove watermark (restore original) — *new*
 

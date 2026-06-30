@@ -219,6 +219,46 @@ class ApiController extends OCSController {
         return new DataResponse(['status' => 'watermarked', 'path' => $path]);
     }
 
+    /**
+     * Report which of the given file ids have ever been watermarked.
+     *
+     * The query is scoped to ids the acting user can actually access, so the
+     * response never reveals whether another user's files are watermarked.
+     *
+     * @param string $ids Comma-separated list of file ids, e.g. "1,2,3".
+     */
+    #[NoAdminRequired]
+    public function getWatermarkedStatus(string $ids = ''): DataResponse {
+        $user = $this->userSession->getUser();
+        if ($user === null) {
+            return new DataResponse(['error' => 'Unauthenticated'], Http::STATUS_UNAUTHORIZED);
+        }
+
+        $requested = array_filter(array_map('intval', explode(',', $ids)), fn(int $id) => $id > 0);
+        $requested = array_values(array_unique($requested));
+
+        if (empty($requested)) {
+            return new DataResponse(['watermarked' => []]);
+        }
+
+        // Restrict to ids the acting user can access. getById returns an empty
+        // array for ids the user cannot reach, so anything outside their scope
+        // is dropped before it ever hits the log table.
+        $userFolder = $this->rootFolder->getUserFolder($user->getUID());
+        $accessible = array_values(array_filter(
+            $requested,
+            fn(int $id) => $userFolder->getById($id) !== [],
+        ));
+
+        if (empty($accessible)) {
+            return new DataResponse(['watermarked' => []]);
+        }
+
+        $watermarked = $this->logMapper->findWatermarkedFileIds($accessible);
+
+        return new DataResponse(['watermarked' => $watermarked]);
+    }
+
     public function getLog(int $limit = 100, int $offset = 0): DataResponse {
         $user    = $this->userSession->getUser();
         $isAdmin = $user && $this->groupManager->isAdmin($user->getUID());

@@ -10,6 +10,7 @@ return [
         ['name' => 'api#deleteConfig',   'url' => '/api/v1/config/{id}', 'verb' => 'DELETE'],
         ['name' => 'api#applyWatermark', 'url' => '/api/v1/apply',       'verb' => 'POST'],
         ['name' => 'api#getLog',         'url' => '/api/v1/log',         'verb' => 'GET'],
+        ['name' => 'api#getWatermarkedStatus', 'url' => '/api/v1/watermarked', 'verb' => 'GET'],
 
         // On-download watermark endpoint — streams a watermarked temp copy, original untouched
         ['name' => 'download#download',  'url' => '/api/v1/download',    'verb' => 'GET'],
