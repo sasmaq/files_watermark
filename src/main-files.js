@@ -19,7 +19,7 @@ const INDICATOR_CLASS = 'files-watermark-indicator'
 const INDICATOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z"/></svg>'
 
 // Inline content of img/app.svg — comments stripped for use as an inline SVG string.
-const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="17" x2="16" y2="11" stroke-opacity="0.6" stroke-width="1.2"/><line x1="8" y1="14" x2="13" y2="9" stroke-opacity="0.4" stroke-width="1.2"/><line x1="11" y1="17" x2="16" y2="13" stroke-opacity="0.4" stroke-width="1.2"/></svg>'
+const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><g stroke-width="1.2" stroke-opacity="0.5"><line x1="6" y1="12" x2="12" y2="6"/><line x1="6" y1="16" x2="14" y2="8"/><line x1="9" y1="18" x2="17" y2="10"/><line x1="13" y1="18" x2="18" y2="13"/></g></svg>'
 
 /**
  * Mounts WatermarkModal and returns a Promise that resolves with:
