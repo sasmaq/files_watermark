@@ -19,7 +19,10 @@ const INDICATOR_CLASS = 'files-watermark-indicator'
 const INDICATOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z"/></svg>'
 
 // Inline content of img/app.svg — comments stripped for use as an inline SVG string.
-const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><g stroke-width="1.2" stroke-opacity="0.5"><line x1="6" y1="12" x2="12" y2="6"/><line x1="6" y1="16" x2="14" y2="8"/><line x1="9" y1="18" x2="17" y2="10"/><line x1="13" y1="18" x2="18" y2="13"/></g></svg>'
+// `fill="none"` is repeated on each shape (not just the root) because Nextcloud's
+// `.icon-vue svg { fill: currentColor }` rule overrides the root attribute and would
+// otherwise fill the document outline into a solid blob.
+const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path fill="none" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline fill="none" points="14 2 14 8 20 8"/><g fill="none" stroke-width="1.2" stroke-opacity="0.5"><line x1="6" y1="12" x2="12" y2="6"/><line x1="6" y1="16" x2="14" y2="8"/><line x1="9" y1="18" x2="17" y2="10"/><line x1="13" y1="18" x2="18" y2="13"/></g></svg>'
 
 /**
  * Mounts WatermarkModal and returns a Promise that resolves with:
@@ -65,8 +68,10 @@ function mountModal(filePath, fileName, fileSize = 0) {
 
 registerFileAction(new FileAction({
 	id: 'files_watermark_apply',
-	displayName: () => t('files_watermark', 'Apply Watermark'),
-	title: () => t('files_watermark', 'Embed identity information into this file as a visible watermark'),
+	// Nextcloud uses `title` as the menu label when present and only falls back
+	// to `displayName`, so the action name lives in `displayName` with no
+	// `title` — otherwise the long description would show as the button text.
+	displayName: () => t('files_watermark', 'Apply watermark'),
 	iconSvgInline: () => APP_ICON_SVG,
 	enabled(files) {
 		return files.length === 1 && SUPPORTED_MIME.includes(files[0].mime)
@@ -116,7 +121,11 @@ export async function fetchWatermarkedIds(ids) {
 			generateUrl('/apps/files_watermark/api/v1/watermarked'),
 			{ params: { ids: ids.join(',') } },
 		)
-		return res?.data?.watermarked ?? []
+		// ApiController returns a plain DataResponse ({ watermarked: [...] }).
+		// Also accept the OCS envelope ({ ocs: { data: { watermarked } } }) so
+		// the lookup survives the controller being switched to an OCSController.
+		const data = res?.data
+		return data?.watermarked ?? data?.ocs?.data?.watermarked ?? []
 	} catch (e) {
 		// Best-effort: swallow the error so the list keeps working.
 		return []
@@ -141,12 +150,24 @@ export function decorateRows(ids, root = document) {
 		badge.setAttribute('aria-label', badge.title)
 		badge.innerHTML = INDICATOR_SVG
 		// Inline styles keep the badge self-contained — no extra stylesheet to
-		// ship for a DOM-injected element.
+		// ship for a DOM-injected element. flex:0 0 auto stops the badge from
+		// being squeezed to zero width next to the (flex:1) file name.
 		badge.style.display = 'inline-flex'
 		badge.style.alignItems = 'center'
+		badge.style.flex = '0 0 auto'
 		badge.style.marginInlineStart = '6px'
 		badge.style.color = 'var(--color-primary-element, #0082c9)'
-		const target = row.querySelector('.files-list__row-name') ?? row
+		// Let clicks fall through to the row/name link underneath.
+		badge.style.pointerEvents = 'none'
+		// The name cell (`.files-list__row-name`) clips overflow and its inner
+		// link fills the whole cell, so a badge appended *after* the link is
+		// pushed past the edge and never shown. Drop it inside the name link
+		// instead — the same flex line that carries the file name / extension —
+		// where a flex:0 0 auto sibling stays visible while the name truncates.
+		const target = row.querySelector('.files-list__row-name-link')
+			?? row.querySelector('.files-list__row-name-text')?.parentElement
+			?? row.querySelector('.files-list__row-name')
+			?? row
 		target.appendChild(badge)
 	}
 }

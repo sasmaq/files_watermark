@@ -26,6 +26,25 @@ function addRow(fileid) {
 	return row
 }
 
+/**
+ * Build a row that mirrors the real Nextcloud Files DOM: the name cell holds a
+ * full-width link (`.files-list__row-name-link`) wrapping the name text. The
+ * badge must land *inside* the link, not after the cell, or it is clipped.
+ * @param {number} fileid - the row's file id
+ * @return {HTMLElement} the row element (already attached to document.body)
+ */
+function addRealRow(fileid) {
+	const row = addRow(fileid)
+	const cell = row.querySelector('.files-list__row-name')
+	const link = document.createElement('a')
+	link.className = 'files-list__row-name-link'
+	const text = document.createElement('span')
+	text.className = 'files-list__row-name-text'
+	link.appendChild(text)
+	cell.appendChild(link)
+	return row
+}
+
 describe('main-files watermarked indicator', () => {
 	beforeEach(() => {
 		jest.clearAllMocks()
@@ -54,8 +73,9 @@ describe('main-files watermarked indicator', () => {
 	})
 
 	describe('fetchWatermarkedIds', () => {
-		it('returns the watermarked ids from the response', async () => {
-			axios.get.mockResolvedValue({ data: { watermarked: [2, 5] } })
+		it('reads the ids from the OCS envelope the controller actually returns', async () => {
+			// ApiController extends OCSController → { ocs: { data: { watermarked } } }.
+			axios.get.mockResolvedValue({ data: { ocs: { data: { watermarked: [2, 5] } } } })
 
 			const ids = await fetchWatermarkedIds([1, 2, 5])
 
@@ -64,6 +84,11 @@ describe('main-files watermarked indicator', () => {
 				{ params: { ids: '1,2,5' } },
 			)
 			expect(ids).toEqual([2, 5])
+		})
+
+		it('also accepts a plain (non-OCS) response shape', async () => {
+			axios.get.mockResolvedValue({ data: { watermarked: [7] } })
+			expect(await fetchWatermarkedIds([7])).toEqual([7])
 		})
 
 		it('skips the request and returns [] for no ids', async () => {
@@ -105,6 +130,14 @@ describe('main-files watermarked indicator', () => {
 			addRow(1)
 			decorateRows([1])
 			expect(document.querySelector(INDICATOR_SELECTOR).title).toBe('This file is watermarked')
+		})
+
+		it('places the badge inside the name link so it is not clipped', () => {
+			addRealRow(1)
+			decorateRows([1])
+			const link = document.querySelector('.files-list__row-name-link')
+			// Must be a child of the visible flex link, not merely somewhere in the row.
+			expect(link.querySelector(INDICATOR_SELECTOR)).not.toBeNull()
 		})
 	})
 
