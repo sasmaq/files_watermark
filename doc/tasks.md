@@ -135,6 +135,53 @@ watermarked. Detection sources the existing `watermark_log` table by file id.
 - [x] `WatermarkLogMapperTest` — `findWatermarkedFileIds` batched lookup + distinct
 - [x] Jest — `main-files` indicator renders for watermarked ids and is absent otherwise
 
+### Skip watermarking already-watermarked files — *new*
+
+Prevent applying a watermark to a file that has already been watermarked, so a file is
+never double-stamped. "Already watermarked" reuses the indicator's definition — a file id
+that has any row in `watermark_log` (see `findWatermarkedFileIds`). Enforce it on the
+backend (the source of truth) and surface it in the UI so the action is not offered.
+
+#### Backend (authoritative guard)
+
+- [ ] `ApiController::applyWatermark` — before calling `WatermarkService`, look up the
+  file id via `WatermarkLogMapper::findWatermarkedFileIds([$fileId])` and short-circuit
+  when already present
+  - [ ] Return a distinct, non-error response the UI can branch on (e.g.
+    `['status' => 'already_watermarked', 'path' => $path]`), not a 500
+  - [ ] Resolve the node's file id from `$path` within the user folder (same access
+    scoping as `getWatermarkedStatus`)
+- [ ] `WatermarkService` — make the skip authoritative for **all** triggers, not just
+  on-demand: bail out early in `watermarkInPlace` (or its callers) when the file id is
+  already logged, so `on_upload` / `on_download` / `on_share` re-processing can't
+  re-stamp either
+  - [ ] Return a boolean / status from the service so callers can tell "applied" from
+    "skipped (already watermarked)"
+- [ ] Decide interaction with **Remove watermark**: once restore lands, removing must
+  delete the `watermark_log` row(s) for the file id, otherwise the file stays "already
+  watermarked" and can never be re-applied (cross-link the restore section)
+
+#### Frontend (`main-files.js`)
+
+- [ ] Maintain a client-side `Set` of known-watermarked file ids, populated by the same
+  observer/lookup that drives the indicator (the `FileAction.enabled` callback is
+  **synchronous**, so it must read a cache rather than await the endpoint)
+- [ ] `enabled(files)` — additionally return `false` when the single file's id is in the
+  watermarked set, so "Apply watermark" is hidden for already-watermarked rows
+- [ ] Keep the cache fresh: add the id after a successful on-demand apply (alongside the
+  existing `decorateRows`) so the action disappears immediately without a list refresh
+- [ ] Handle the backend `already_watermarked` response in `WatermarkModal` as an
+  informational message (not an error), in case the action is reached via a stale cache
+
+#### Tests
+
+- [ ] `ApiControllerApplyWatermarkTest` — applying to an already-logged file id returns
+  `already_watermarked` and does **not** invoke `WatermarkService`
+- [ ] `WatermarkServiceTest` — service skips (and reports skipped) when the file id is
+  already in `watermark_log`
+- [ ] Jest — `enabled()` returns `false` for a file id in the watermarked cache and
+  `true` otherwise
+
 ### Remove watermark (restore original) — *new*
 
 Let a user undo a watermark after it has been applied. Because `watermarkInPlace` **burns**
