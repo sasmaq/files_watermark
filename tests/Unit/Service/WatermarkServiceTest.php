@@ -254,6 +254,9 @@ class WatermarkServiceTest extends TestCase {
         $file->method('getPath')->willReturn('/alice/files/photo.png');
         $file->method('getContent')->willReturn('original-bytes');
 
+        // Not yet watermarked, so the in-place burn proceeds.
+        $this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
+
         // The renderer writes the watermarked output to the destination temp path.
         $this->imageWatermarker->method('apply')
             ->willReturnCallback(function (string $src, string $dest): void {
@@ -263,7 +266,27 @@ class WatermarkServiceTest extends TestCase {
         // In-place application must push the watermarked bytes back into the file.
         $file->expects($this->once())->method('putContent')->with('watermarked-bytes');
 
-        $this->service->watermarkInPlace($file, 'on_demand', $config);
+        $this->assertTrue($this->service->watermarkInPlace($file, 'on_demand', $config));
+    }
+
+    public function testWatermarkInPlaceSkipsAlreadyWatermarkedFile(): void {
+        $file = $this->createMock(File::class);
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+
+        // A prior watermark is on record for this file id.
+        $this->logMapper->expects($this->once())
+            ->method('findWatermarkedFileIds')
+            ->with([11])
+            ->willReturn([11]);
+
+        // Nothing is rendered, the content is never rewritten, and no new log row is added.
+        $this->imageWatermarker->expects($this->never())->method('apply');
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $file->expects($this->never())->method('putContent');
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        $this->assertFalse($this->service->watermarkInPlace($file, 'on_demand'));
     }
 
     public function testTextWatermarkPassesAllPlaceholdersToRenderer(): void {

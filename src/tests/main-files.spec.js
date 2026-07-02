@@ -4,6 +4,9 @@ import {
 	fetchWatermarkedIds,
 	decorateRows,
 	refreshIndicators,
+	isApplyActionEnabled,
+	rememberWatermarked,
+	clearWatermarkedIds,
 } from '../main-files.js'
 
 // @nextcloud/files, axios, router and l10n are stubbed via jest.config moduleNameMapper.
@@ -49,6 +52,7 @@ describe('main-files watermarked indicator', () => {
 	beforeEach(() => {
 		jest.clearAllMocks()
 		document.body.innerHTML = ''
+		clearWatermarkedIds()
 	})
 
 	describe('supportedFileIds', () => {
@@ -138,6 +142,34 @@ describe('main-files watermarked indicator', () => {
 			const link = document.querySelector('.files-list__row-name-link')
 			// Must be a child of the visible flex link, not merely somewhere in the row.
 			expect(link.querySelector(INDICATOR_SELECTOR)).not.toBeNull()
+		})
+	})
+
+	describe('isApplyActionEnabled', () => {
+		const pdf = { fileid: 1, mime: 'application/pdf' }
+
+		it('is enabled for a single supported file that is not watermarked', () => {
+			expect(isApplyActionEnabled([pdf])).toBe(true)
+		})
+
+		it('is disabled for unsupported MIME types', () => {
+			expect(isApplyActionEnabled([{ fileid: 1, mime: 'text/plain' }])).toBe(false)
+		})
+
+		it('is disabled for multi-select', () => {
+			expect(isApplyActionEnabled([pdf, { fileid: 2, mime: 'image/png' }])).toBe(false)
+		})
+
+		it('is disabled once the file id is known to be watermarked', () => {
+			expect(isApplyActionEnabled([pdf])).toBe(true)
+			rememberWatermarked([1])
+			expect(isApplyActionEnabled([pdf])).toBe(false)
+		})
+
+		it('refreshIndicators feeds the cache so the action hides for watermarked rows', async () => {
+			axios.get.mockResolvedValue({ data: { watermarked: [1] } })
+			await refreshIndicators([pdf])
+			expect(isApplyActionEnabled([pdf])).toBe(false)
 		})
 	})
 

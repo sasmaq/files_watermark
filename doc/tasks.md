@@ -144,18 +144,20 @@ backend (the source of truth) and surface it in the UI so the action is not offe
 
 #### Backend (authoritative guard)
 
-- [ ] `ApiController::applyWatermark` — before calling `WatermarkService`, look up the
-  file id via `WatermarkLogMapper::findWatermarkedFileIds([$fileId])` and short-circuit
-  when already present
-  - [ ] Return a distinct, non-error response the UI can branch on (e.g.
-    `['status' => 'already_watermarked', 'path' => $path]`), not a 500
-  - [ ] Resolve the node's file id from `$path` within the user folder (same access
+- [x] `ApiController::applyWatermark` — short-circuit when already watermarked
+  - implemented by branching on the service return value (single source of truth)
+    rather than a second lookup; the node's file id is already resolved from `$path`
+  - [x] Return a distinct, non-error response the UI can branch on
+    (`['status' => 'already_watermarked', 'path' => $path]`, HTTP 200)
+  - [x] Resolve the node's file id from `$path` within the user folder (same access
     scoping as `getWatermarkedStatus`)
-- [ ] `WatermarkService` — make the skip authoritative for **all** triggers, not just
-  on-demand: bail out early in `watermarkInPlace` (or its callers) when the file id is
-  already logged, so `on_upload` / `on_download` / `on_share` re-processing can't
-  re-stamp either
-  - [ ] Return a boolean / status from the service so callers can tell "applied" from
+- [x] `WatermarkService` — skip + report via `watermarkInPlace(): bool`
+  - `isAlreadyWatermarked(int $fileId)` guards the **in-place** triggers
+    (`on_demand`, `on_upload`); `watermarkInPlace` returns `false` when skipped
+  - **scope note:** `on_share` / `on_download` go through `watermarkFile` against the
+    clean original (never burned in place), so they can't cumulatively re-stamp and are
+    intentionally *not* guarded — guarding them would serve/copy un-watermarked content
+  - [x] Return a boolean / status from the service so callers can tell "applied" from
     "skipped (already watermarked)"
 - [ ] Decide interaction with **Remove watermark**: once restore lands, removing must
   delete the `watermark_log` row(s) for the file id, otherwise the file stays "already
@@ -163,24 +165,27 @@ backend (the source of truth) and surface it in the UI so the action is not offe
 
 #### Frontend (`main-files.js`)
 
-- [ ] Maintain a client-side `Set` of known-watermarked file ids, populated by the same
-  observer/lookup that drives the indicator (the `FileAction.enabled` callback is
-  **synchronous**, so it must read a cache rather than await the endpoint)
-- [ ] `enabled(files)` — additionally return `false` when the single file's id is in the
-  watermarked set, so "Apply watermark" is hidden for already-watermarked rows
-- [ ] Keep the cache fresh: add the id after a successful on-demand apply (alongside the
+- [x] Maintain a client-side `Set` of known-watermarked file ids, populated by the same
+  observer/lookup that drives the indicator (`rememberWatermarked`)
+- [x] `enabled(files)` — return `false` when the single file's id is in the watermarked
+  set (`isApplyActionEnabled`)
+  - **known limitation:** Nextcloud memoizes `enabled()` at first row mount and reuses
+    row components across navigation, so a file *already* watermarked on page load may
+    still show the action until re-evaluated. This is best-effort; the backend guard is
+    authoritative. Verified: the action **does** disappear after an on-demand apply.
+- [x] Keep the cache fresh: add the id after a successful on-demand apply (alongside the
   existing `decorateRows`) so the action disappears immediately without a list refresh
-- [ ] Handle the backend `already_watermarked` response in `WatermarkModal` as an
-  informational message (not an error), in case the action is reached via a stale cache
+- [x] Handle the backend `already_watermarked` response in `WatermarkModal` as an
+  informational (`info`) note, not an error
 
 #### Tests
 
-- [ ] `ApiControllerApplyWatermarkTest` — applying to an already-logged file id returns
-  `already_watermarked` and does **not** invoke `WatermarkService`
-- [ ] `WatermarkServiceTest` — service skips (and reports skipped) when the file id is
-  already in `watermark_log`
-- [ ] Jest — `enabled()` returns `false` for a file id in the watermarked cache and
-  `true` otherwise
+- [x] `ApiControllerApplyWatermarkTest` — already-watermarked (service returns `false`)
+  yields `already_watermarked`; the applied path returns `watermarked`
+- [x] `WatermarkServiceTest` — `watermarkInPlace` skips (no render / no `putContent` /
+  no `insertLog`, returns `false`) when the file id is already in `watermark_log`
+- [x] Jest — `isApplyActionEnabled` returns `false` for a cached watermarked id and
+  `true` otherwise (incl. via `refreshIndicators` feeding the cache)
 
 ### Remove watermark (restore original) — *new*
 

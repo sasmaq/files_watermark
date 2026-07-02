@@ -1,5 +1,5 @@
 import { createApp, h } from 'vue'
-import { registerFileAction, FileAction } from '@nextcloud/files'
+import { registerFileAction, FileAction, registerDavProperty } from '@nextcloud/files'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
@@ -14,6 +14,40 @@ const SUPPORTED_MIME = [
 
 // Marker class for the indicator badge so we can find / dedupe it on a row.
 const INDICATOR_CLASS = 'files-watermark-indicator'
+
+// WebDAV property served by our PROPFIND plugin. Requesting it here makes the Files
+// client fetch it with every listing, so a node carries its watermarked status by
+// the time its row renders — letting `enabled()` decide synchronously on the first
+// (and, in Nextcloud, memoized) evaluation instead of racing an async lookup.
+const DAV_WATERMARKED_PROP = 'is-watermarked'
+registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns' })
+
+/**
+ * Whether a Files `Node` is already watermarked, read from the WebDAV property
+ * delivered with the listing. The plugin returns '1' for watermarked, '0' otherwise.
+ * @param {object} node - a Files `Node`
+ * @return {boolean} true when the node is marked watermarked
+ */
+export function isNodeWatermarked(node) {
+	return node?.attributes?.[DAV_WATERMARKED_PROP] === '1'
+}
+
+/**
+ * Whether the "Apply watermark" action should be offered for the selection:
+ * a single supported-MIME file that is not already watermarked.
+ * @param {object[]} files - selected Files `Node` objects
+ * @return {boolean} true when the action should be shown
+ */
+export function isApplyActionEnabled(files) {
+	if (files.length !== 1) {
+		return false
+	}
+	const file = files[0]
+	if (!SUPPORTED_MIME.includes(file.mime)) {
+		return false
+	}
+	return !isNodeWatermarked(file)
+}
 
 // Small badge SVG (distinct from the action icon: a filled tag/seal mark).
 const INDICATOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z"/></svg>'
@@ -73,13 +107,12 @@ registerFileAction(new FileAction({
 	// `title` — otherwise the long description would show as the button text.
 	displayName: () => t('files_watermark', 'Apply watermark'),
 	iconSvgInline: () => APP_ICON_SVG,
-	enabled(files) {
-		return files.length === 1 && SUPPORTED_MIME.includes(files[0].mime)
-	},
+	enabled: isApplyActionEnabled,
 	async exec(file) {
 		const result = await mountModal(file.path, file.basename, file.size ?? 0)
-		// The file was just watermarked — show the badge straight away without
-		// waiting for the next list refresh.
+		// The file was just watermarked — badge the row straight away without waiting
+		// for the next list refresh. The action itself hides once Nextcloud refreshes
+		// the node (its `is-watermarked` WebDAV property flips to '1').
 		if (result === true) {
 			const id = Number(file.fileid ?? file.id)
 			if (Number.isInteger(id) && id > 0) {
@@ -212,7 +245,9 @@ export function startIndicatorObserver() {
 		clearTimeout(timer)
 		timer = setTimeout(async () => {
 			const ids = visibleRowFileIds()
-			decorateRows(await fetchWatermarkedIds(ids))
+			const watermarked = await fetchWatermarkedIds(ids)
+			rememberWatermarked(watermarked)
+			decorateRows(watermarked)
 		}, 200)
 	}
 
@@ -221,8 +256,71 @@ export function startIndicatorObserver() {
 	schedule()
 }
 
+/**
+ * Extract the numeric file id from a Files `Node`.
+ * @param {object} node - a Files `Node`
+ * @return {number} the file id, or NaN
+ */
+function nodeId(node) {
+	return Number(node?.fileid ?? node?.id)
+}
+
+/**
+ * Faithful shallow clone of a Files `Node`: a new object reference that keeps the
+ * same prototype (so getters like `source` / `fileid` / `mime` still work) and all
+ * own properties. Nextcloud's `files:node:updated` handler replaces the stored node
+ * only when it receives a *different* reference for the same file id — that swap is
+ * what makes the row re-render and re-evaluate `enabled()`.
+ * @param {object} node - a Files `Node`
+ * @return {object} a distinct clone of the node
+ */
+function cloneNode(node) {
+	return Object.create(
+		Object.getPrototypeOf(node),
+		Object.getOwnPropertyDescriptors(node),
+	)
+}
+
+/**
+ * Watch the Files list contents (real `Node` objects) and, once their watermarked
+ * status is known, hide the "Apply watermark" action on already-watermarked rows.
+ *
+ * `FileAction.enabled` is memoized by Nextcloud when a row first mounts — and rows
+ * are reused across folder navigation — so populating the id cache alone does not
+ * re-hide the action. Re-emitting `files:node:updated` for the affected nodes forces
+ * Nextcloud to re-render those rows, which re-runs `enabled()` against the now-warm
+ * cache. Only nodes newly discovered as watermarked are re-emitted, so this can't
+ * loop if the update bounces back as another `files:list:updated`.
+ */
+export function startNodeListWatcher() {
+	subscribe('files:list:updated', async (payload = {}) => {
+		const { contents } = payload
+		console.debug('[wm] files:list:updated', { keys: Object.keys(payload), contents: Array.isArray(contents) ? contents.length : contents })
+		if (!Array.isArray(contents)) {
+			return
+		}
+		const supported = contents.filter((n) => n && SUPPORTED_MIME.includes(n.mime))
+		const ids = supported.map(nodeId).filter((id) => Number.isInteger(id) && id > 0)
+		const watermarked = new Set(await fetchWatermarkedIds(ids))
+		console.debug('[wm] supported ids', ids, 'watermarked', [...watermarked])
+		if (watermarked.size === 0) {
+			return
+		}
+		// Nodes we didn't already know about — the only ones that need a re-render.
+		const newlyWatermarked = supported.filter(
+			(n) => watermarked.has(nodeId(n)) && !watermarkedIds.has(nodeId(n)),
+		)
+		rememberWatermarked([...watermarked])
+		console.debug('[wm] emitting node:updated for', newlyWatermarked.map(nodeId))
+		for (const node of newlyWatermarked) {
+			emit('files:node:updated', cloneNode(node))
+		}
+	})
+}
+
 // Auto-start in the browser. Skipped under the test runner so the observer's
 // timers don't fire spurious lookups during unit tests.
 if (typeof process === 'undefined' || process.env?.JEST_WORKER_ID === undefined) {
 	startIndicatorObserver()
+	startNodeListWatcher()
 }

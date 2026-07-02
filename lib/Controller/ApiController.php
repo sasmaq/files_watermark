@@ -209,9 +209,15 @@ class ApiController extends Controller {
         }
 
         try {
-            $this->watermarkService->watermarkInPlace($node, 'on_demand');
+            $applied = $this->watermarkService->watermarkInPlace($node, 'on_demand');
         } catch (\RuntimeException $e) {
             return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
+        }
+
+        // Already watermarked — a benign no-op, not an error. The UI branches on
+        // this status to inform the user rather than showing a failure.
+        if (!$applied) {
+            return new DataResponse(['status' => 'already_watermarked', 'path' => $path]);
         }
 
         return new DataResponse(['status' => 'watermarked', 'path' => $path]);

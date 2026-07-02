@@ -9,6 +9,7 @@ module.exports = {
         '^@/(.*)$': '<rootDir>/src/$1',
         '@nextcloud/axios': '<rootDir>/src/tests/__mocks__/@nextcloud/axios.js',
         '@nextcloud/files': '<rootDir>/src/tests/__mocks__/@nextcloud/files.js',
+        '@nextcloud/event-bus': '<rootDir>/src/tests/__mocks__/@nextcloud/event-bus.js',
         '@nextcloud/router': '<rootDir>/src/tests/__mocks__/@nextcloud/router.js',
         '@nextcloud/l10n': '<rootDir>/src/tests/__mocks__/@nextcloud/l10n.js',
         // Each @nextcloud/vue component resolves to its own stub so default

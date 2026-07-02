@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\AppInfo;
 
+use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\Files\Event\LoadAdditionalScriptsEvent;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
+use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\ShareCreatedListener;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
@@ -37,6 +39,7 @@ class Application extends App implements IBootstrap {
         $context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
         $context->registerEventListener(ShareCreatedEvent::class, ShareCreatedListener::class);
         $context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
+        $context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
     }
 
     public function boot(IBootContext $context): void {

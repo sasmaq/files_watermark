@@ -14,13 +14,16 @@
 			<NcNoteCard v-if="done" type="success">
 				{{ t('files_watermark', 'Watermark applied successfully.') }}
 			</NcNoteCard>
+			<NcNoteCard v-if="alreadyWatermarked" type="info">
+				{{ t('files_watermark', 'This file is already watermarked.') }}
+			</NcNoteCard>
 			<NcNoteCard v-if="applyError" type="error">
 				{{ applyError }}
 			</NcNoteCard>
 		</template>
 
 		<template #actions>
-			<NcButton v-if="!done"
+			<NcButton v-if="!done && !alreadyWatermarked"
 				type="primary"
 				:disabled="applying"
 				@click="apply">
@@ -56,6 +59,7 @@ const emit = defineEmits(['close', 'watermarked'])
 
 const applying = ref(false)
 const done = ref(false)
+const alreadyWatermarked = ref(false)
 const applyError = ref(null)
 
 // Rough estimate: ~1 second per MB, minimum 1s, only shown for files > 1 MB.
@@ -71,12 +75,19 @@ async function apply() {
 	applying.value = true
 	applyError.value = null
 	try {
-		await axios.post(generateUrl('/apps/files_watermark/api/v1/apply'), {
+		const res = await axios.post(generateUrl('/apps/files_watermark/api/v1/apply'), {
 			path: props.filePath,
 		})
-		done.value = true
+		// The backend reports an already-watermarked file as a benign no-op — treat
+		// it as informational, and still emit `watermarked` so the row badge / action
+		// state catch up if the client cache was stale.
+		if (res?.data?.status === 'already_watermarked') {
+			alreadyWatermarked.value = true
+		} else {
+			done.value = true
+		}
 		emit('watermarked')
-		// Auto-close after showing the success message briefly.
+		// Auto-close after showing the message briefly.
 		setTimeout(() => emit('close'), 1500)
 	} catch (e) {
 		applyError.value = e?.response?.data?.error ?? e.message

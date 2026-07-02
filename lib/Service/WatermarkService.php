@@ -73,13 +73,41 @@ class WatermarkService {
     }
 
     /**
-     * Apply watermark in-place — replaces the file content inside Nextcloud.
+     * Whether the file has ever been watermarked (has any row in `watermark_log`).
+     *
+     * Mirrors the Files-list indicator's definition. It is the guard used to skip
+     * re-stamping a file whose content was already burned in place.
      */
-    public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null): void {
+    public function isAlreadyWatermarked(int $fileId): bool {
+        return $this->logMapper->findWatermarkedFileIds([$fileId]) !== [];
+    }
+
+    /**
+     * Apply watermark in-place — replaces the file content inside Nextcloud.
+     *
+     * Skips (and returns false) when the file has already been watermarked, so an
+     * in-place burn is never applied twice — this is the authoritative guard for the
+     * in-place triggers (`on_demand`, `on_upload`). Copy/stream triggers
+     * (`on_share`, `on_download`) go through {@see watermarkFile} against the clean
+     * original and are intentionally not guarded here.
+     *
+     * @return bool true when the watermark was applied, false when it was skipped
+     *              because the file is already watermarked
+     */
+    public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null): bool {
+        if ($this->isAlreadyWatermarked($file->getId())) {
+            $this->logger->info('files_watermark: skipping already-watermarked file {path}', [
+                'path'   => $file->getPath(),
+                'fileId' => $file->getId(),
+            ]);
+            return false;
+        }
+
         $tmpPath = $this->watermarkFile($file, $trigger, $config);
         $file->putContent(file_get_contents($tmpPath));
         unlink($tmpPath);
         @rmdir(dirname($tmpPath));
+        return true;
     }
 
     public function resolveConfig(?string $userId = null): WatermarkConfig {

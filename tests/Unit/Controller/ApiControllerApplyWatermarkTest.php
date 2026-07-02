@@ -120,11 +120,29 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 
         $this->watermarkService->expects($this->once())
             ->method('watermarkInPlace')
-            ->with($node, 'on_demand');
+            ->with($node, 'on_demand')
+            ->willReturn(true);
 
         $response = $this->controller->applyWatermark('doc.pdf');
 
         $this->assertSame(Http::STATUS_OK, $response->getStatus());
         $this->assertSame(['status' => 'watermarked', 'path' => 'doc.pdf'], $response->getData());
+    }
+
+    public function testReturnsAlreadyWatermarkedWhenServiceSkips(): void {
+        $this->loginAlice();
+        $node = $this->mockFile(readable: true, updateable: true);
+
+        // The service reports the file was already watermarked (skipped).
+        $this->watermarkService->expects($this->once())
+            ->method('watermarkInPlace')
+            ->with($node, 'on_demand')
+            ->willReturn(false);
+
+        $response = $this->controller->applyWatermark('doc.pdf');
+
+        // A benign no-op — 200 with a distinct status the UI can branch on, not an error.
+        $this->assertSame(Http::STATUS_OK, $response->getStatus());
+        $this->assertSame(['status' => 'already_watermarked', 'path' => 'doc.pdf'], $response->getData());
     }
 }
