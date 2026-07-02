@@ -1,5 +1,6 @@
 import { createApp, h } from 'vue'
 import { registerFileAction, FileAction, registerDavProperty } from '@nextcloud/files'
+import { subscribe, emit } from '@nextcloud/event-bus'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
@@ -32,6 +33,32 @@ export function isNodeWatermarked(node) {
 	return node?.attributes?.[DAV_WATERMARKED_PROP] === '1'
 }
 
+// Module-level cache of file ids known to be watermarked. Populated from the
+// backend lookup (refreshIndicators and the list observers) and consulted by the
+// action's enabled() so an already-watermarked file never offers "Apply", even
+// before its WebDAV `is-watermarked` property has been delivered.
+const watermarkedIds = new Set()
+
+/**
+ * Record file ids as watermarked in the module cache.
+ * @param {number[]} ids - watermarked file ids
+ */
+export function rememberWatermarked(ids) {
+	for (const id of ids) {
+		const numeric = Number(id)
+		if (Number.isInteger(numeric) && numeric > 0) {
+			watermarkedIds.add(numeric)
+		}
+	}
+}
+
+/**
+ * Empty the watermarked-id cache. Primarily a test seam.
+ */
+export function clearWatermarkedIds() {
+	watermarkedIds.clear()
+}
+
 /**
  * Whether the "Apply watermark" action should be offered for the selection:
  * a single supported-MIME file that is not already watermarked.
@@ -44,6 +71,9 @@ export function isApplyActionEnabled(files) {
 	}
 	const file = files[0]
 	if (!SUPPORTED_MIME.includes(file.mime)) {
+		return false
+	}
+	if (watermarkedIds.has(nodeId(file))) {
 		return false
 	}
 	return !isNodeWatermarked(file)
@@ -215,6 +245,7 @@ export function decorateRows(ids, root = document) {
 export async function refreshIndicators(nodes, root = document) {
 	const ids = supportedFileIds(nodes)
 	const watermarked = await fetchWatermarkedIds(ids)
+	rememberWatermarked(watermarked)
 	decorateRows(watermarked, root)
 	return watermarked
 }
