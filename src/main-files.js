@@ -53,11 +53,10 @@ export function isApplyActionEnabled(files) {
 // Small badge SVG (distinct from the action icon: a filled tag/seal mark).
 const INDICATOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z"/></svg>'
 
-// Inline content of img/app.svg — comments stripped for use as an inline SVG string.
-// `fill="none"` is repeated on each shape (not just the root) because Nextcloud's
-// `.icon-vue svg { fill: currentColor }` rule overrides the root attribute and would
-// otherwise fill the document outline into a solid blob.
-const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path fill="none" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline fill="none" points="14 2 14 8 20 8"/><g fill="none" stroke-width="1.2" stroke-opacity="0.5"><line x1="6" y1="12" x2="12" y2="6"/><line x1="6" y1="16" x2="14" y2="8"/><line x1="9" y1="18" x2="17" y2="10"/><line x1="13" y1="18" x2="18" y2="13"/></g></svg>'
+// Inline content of img/app.svg — a filled document with a watermark droplet
+// knocked out via the even-odd rule. `fill="currentColor"` lets it inherit the
+// menu text colour (Nextcloud's `.icon-vue svg { fill: currentColor }` rule).
+const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm6 7c-1.6 2-3 4.3-3 6a3 3 0 0 0 6 0c0-1.7-1.4-4-3-6Z"/></svg>'
 
 /**
  * Mounts WatermarkModal and returns a Promise that resolves with:
