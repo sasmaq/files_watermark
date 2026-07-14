@@ -50,7 +50,7 @@ describe('AdminSettings', () => {
 			CONFIG_URL,
 			expect.objectContaining({ type: 'text', opacity: 50, id: 7 }),
 		)
-		expect(wrapper.find('.nc-note-card--success').exists()).toBe(true)
+		expect(wrapper.find('.wm-status--success').exists()).toBe(true)
 	})
 
 	it('surfaces a save error returned by the API', async () => {
@@ -62,7 +62,7 @@ describe('AdminSettings', () => {
 		wrapper.findComponent(WatermarkForm).vm.$emit('save', { type: 'text' })
 		await flushPromises()
 
-		expect(wrapper.find('.nc-note-card--error').text()).toContain('Invalid color')
+		expect(wrapper.find('.wm-status--error').text()).toContain('Invalid color')
 	})
 
 	it('treats a 404 on load as "no config yet" without showing an error', async () => {

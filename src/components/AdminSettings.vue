@@ -1,17 +1,12 @@
 <template>
 	<div class="section">
-		<h2>{{ t('files_watermark', 'Watermark Settings') }}</h2>
+		<h2>{{ t('files_watermark', 'Watermark') }}</h2>
+		<p class="section-intro">
+			{{ t('files_watermark', 'Define the watermark applied to files across this server. Changes are previewed live and take effect as soon as you save.') }}
+		</p>
 
 		<NcNoteCard v-if="loadError" type="error">
 			{{ t('files_watermark', 'Failed to load configuration: {error}', { error: loadError }) }}
-		</NcNoteCard>
-
-		<NcNoteCard v-if="saved" type="success">
-			{{ t('files_watermark', 'Settings saved.') }}
-		</NcNoteCard>
-
-		<NcNoteCard v-if="saveError" type="error">
-			{{ saveError }}
 		</NcNoteCard>
 
 		<div v-if="loading" class="loading-wrapper">
@@ -23,12 +18,19 @@
 				:title="t('files_watermark', 'Global Watermark Policy')"
 				:is-admin="true"
 				:saving="saving"
+				:saved="saved"
+				:save-error="saveError"
 				@save="save" />
 
-			<NcSettingsSection :name="t('files_watermark', 'Watermark Activity Log')"
-				:description="t('files_watermark', 'Every watermark event is recorded here')">
+			<section class="watermark-log">
+				<h3 class="watermark-log__title">
+					{{ t('files_watermark', 'Activity log') }}
+				</h3>
+				<p class="watermark-log__desc">
+					{{ t('files_watermark', 'Every watermark applied to a file is recorded here.') }}
+				</p>
 				<AuditLog />
-			</NcSettingsSection>
+			</section>
 		</template>
 	</div>
 </template>
@@ -40,7 +42,6 @@ import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
-import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import WatermarkForm from './WatermarkForm.vue'
 import AuditLog from './AuditLog.vue'
 
@@ -92,9 +93,30 @@ async function save(formData) {
 </script>
 
 <style scoped>
+.section-intro {
+    margin: 0 0 20px;
+    max-width: 720px;
+    color: var(--color-text-maxcontrast);
+}
 .loading-wrapper {
     display: flex;
     justify-content: center;
     padding: 32px;
+}
+.watermark-log {
+    max-width: 980px;
+    margin-top: 32px;
+    padding-top: 28px;
+    border-top: 1px solid var(--color-border);
+}
+.watermark-log__title {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+}
+.watermark-log__desc {
+    margin: 0 0 16px;
+    font-size: 14px;
+    color: var(--color-text-maxcontrast);
 }
 </style>

@@ -56,8 +56,8 @@ class PdfWatermarker {
         $pdf->SetAlpha($alpha);
 
         $angle    = -$config->getRotation();
-        $stepX    = max(120, $config->getFontSize() * 6);
-        $stepY    = max(80, $config->getFontSize() * 4);
+        $stepX    = max(85, $config->getFontSize() * 4);
+        $stepY    = max(55, $config->getFontSize() * 3);
 
         for ($x = -$stepX; $x < $width + $stepX; $x += $stepX) {
             for ($y = -$stepY; $y < $height + $stepY; $y += $stepY) {

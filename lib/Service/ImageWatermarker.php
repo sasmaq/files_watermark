@@ -40,8 +40,8 @@ class ImageWatermarker {
             $draw->setFillColor(new \ImagickPixel($color));
             $draw->setFillOpacity($alpha);
 
-            $stepX = max(300, $fontSize * 14);
-            $stepY = max(320, $fontSize * 16);
+            $stepX = max(210, $fontSize * 10);
+            $stepY = max(225, $fontSize * 11);
 
             // annotateImage places text at the given pixel coords and rotates it in place,
             // avoiding the cumulative-transform bug that $draw->rotate() in a loop would cause.
@@ -99,8 +99,8 @@ class ImageWatermarker {
             $fontPath = $this->findSystemFont();
 
             if ($fontPath !== null) {
-                $stepX = max(300, $fontSize * 14);
-                $stepY = max(320, $fontSize * 16);
+                $stepX = max(210, $fontSize * 10);
+                $stepY = max(225, $fontSize * 11);
                 for ($x = 0; $x < $width + $stepX; $x += $stepX) {
                     for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
                         imagettftext($src, $fontSize, $rotation, $x, $y, $textColor, $fontPath, $text);
@@ -109,8 +109,8 @@ class ImageWatermarker {
             } else {
                 // No TTF font available: fall back to built-in pixelated font (no rotation).
                 $gdFontSize = max(1, intval($fontSize / 4));
-                $stepX      = max(200, $gdFontSize * 80);
-                $stepY      = max(200, $gdFontSize * 80);
+                $stepX      = max(140, $gdFontSize * 56);
+                $stepY      = max(140, $gdFontSize * 56);
                 for ($x = 0; $x < $width; $x += $stepX) {
                     for ($y = 0; $y < $height; $y += $stepY) {
                         imagestring($src, $gdFontSize, $x, $y, $text, $textColor);

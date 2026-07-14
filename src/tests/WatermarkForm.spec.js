@@ -41,17 +41,17 @@ describe('WatermarkForm', () => {
 
 	it('hides admin scope section for non-admin users', () => {
 		const wrapper = mountForm({ isAdmin: false })
-		expect(wrapper.text()).not.toContain('MIME type whitelist')
+		expect(wrapper.text()).not.toContain('Where to apply')
 	})
 
 	it('shows admin scope section for admin users', () => {
 		const wrapper = mountForm({ isAdmin: true })
-		expect(wrapper.text()).toContain('MIME type whitelist')
+		expect(wrapper.text()).toContain('Where to apply')
 	})
 
 	it('emits save event with form data when save button clicked', async () => {
 		const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '{username}' } })
-		await wrapper.find('button').trigger('click')
+		await wrapper.find('.wm-save').trigger('click')
 		expect(wrapper.emitted('save')).toBeTruthy()
 		const [payload] = wrapper.emitted('save')[0]
 		expect(payload.type).toBe('text')
