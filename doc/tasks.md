@@ -104,13 +104,17 @@ they are implemented.
   - [x] Spinner/loading state on the file row during processing
   - [x] Refresh the file list after completion
   - [x] Use the app SVG icon + localized display name/title
+  - [ ] Show the action **only when the effective trigger is `on_demand`** (hidden in `on_upload` / `on_download` / `on_share` modes)
+    - `isApplyActionEnabled` does not gate on the trigger today; this requires exposing the effective trigger to `main-files.js` (e.g. initial state or a config lookup), which it does not read yet
+    - the **Remove Watermark** action must share this same `on_demand`-only rule (see the Remove watermark section)
 
 ### Watermarked-file indicator (Files app) — *new*
 
 Show a visual indicator in the Files list/details for files that have already been
-watermarked. Detection sources the existing `watermark_log` table by file id.
+watermarked. Detection sources the existing `watermark_log` table by file id and is
+delivered to the client through a WebDAV property (`nc:is-watermarked`).
 
-#### Backend (lookup endpoint)
+#### Backend (status lookup + DAV property)
 
 - [x] `ApiController::getWatermarkedStatus` — accept a list of file ids and return which are watermarked
   - [x] Route `GET /api/v1/watermarked` (`?ids=1,2,3`), `#[NoAdminRequired]`
@@ -118,22 +122,25 @@ watermarked. Detection sources the existing `watermark_log` table by file id.
   - [x] Restrict the query to ids the acting user can access (no leaking other users' file ids)
 - [x] `WatermarkLogMapper::findWatermarkedFileIds(array $fileIds): int[]` — single batched `IN (...)` query, distinct file ids
 - [x] Decide invalidation semantics: a later non-watermark write replaces content in place, so a log row may be stale (documented as "has ever been watermarked" in the method docblock)
+- [x] `PropFindPlugin` (DAV `ServerPlugin`) — expose the `nc:is-watermarked` property per node, primed with one batched `findWatermarkedFileIds` query per folder listing; registered via `SabrePluginAddListener`
+  - **this is now the indicator's primary status source**; `getWatermarkedStatus` is kept as a REST endpoint but is no longer called by the Files UI
 
 #### Frontend (`main-files.js`)
 
-- [x] Register a Files `FileListAction` / row decorator that batches visible file ids and calls `GET /api/v1/watermarked`
-  - implemented as a debounced `MutationObserver` over the file list that batches visible row ids
+- [x] Read watermarked status from the `nc:is-watermarked` WebDAV property delivered with each listing (`registerDavProperty` + `isNodeWatermarked(node)`) — no per-listing fetch
+  - supersedes the earlier `GET /api/v1/watermarked` id-batching approach
 - [x] Render an indicator (app SVG icon badge) on watermarked rows; localized tooltip "This file is watermarked"
-- [x] Only query/decorate supported MIME types (`SUPPORTED_MIME`)
-  - enforced node-side via `supportedFileIds`; backend only logs supported types so passive lookups stay scoped too
+  - `decorateRows()` badges rows; a debounced `MutationObserver` re-runs it as rows mount/recycle (DOM decoration only — status still comes from the DAV property)
+- [x] Only decorate supported MIME types (`SUPPORTED_MIME`)
+  - the PROPFIND plugin only marks supported types, so the property stays scoped server-side
 - [x] Refresh the indicator after an on-demand apply completes (file just watermarked shows the badge)
-- [x] Gracefully no-op when the lookup request fails (never block the file list)
+- [x] Gracefully no-op when the property is absent (treated as not watermarked; never blocks the file list)
 
 #### Tests
 
-- [x] `ApiControllerTest` — `getWatermarkedStatus` returns correct ids, empty for none, access-scoped
+- [x] `ApiControllerWatermarkedStatusTest` — `getWatermarkedStatus` returns correct ids, empty for none, access-scoped
 - [x] `WatermarkLogMapperTest` — `findWatermarkedFileIds` batched lookup + distinct
-- [x] Jest — `main-files` indicator renders for watermarked ids and is absent otherwise
+- [x] Jest — `decorateRows` badges only watermarked rows and is idempotent; strips a stale badge on a recycled row
 
 ### Skip watermarking already-watermarked files — *new*
 
@@ -165,16 +172,14 @@ backend (the source of truth) and surface it in the UI so the action is not offe
 
 #### Frontend (`main-files.js`)
 
-- [x] Maintain a client-side `Set` of known-watermarked file ids, populated by the same
-  observer/lookup that drives the indicator (`rememberWatermarked`)
-- [x] `enabled(files)` — return `false` when the single file's id is in the watermarked
-  set (`isApplyActionEnabled`)
-  - **known limitation:** Nextcloud memoizes `enabled()` at first row mount and reuses
-    row components across navigation, so a file *already* watermarked on page load may
-    still show the action until re-evaluated. This is best-effort; the backend guard is
-    authoritative. Verified: the action **does** disappear after an on-demand apply.
-- [x] Keep the cache fresh: add the id after a successful on-demand apply (alongside the
-  existing `decorateRows`) so the action disappears immediately without a list refresh
+- [x] `enabled(files)` reads the node's `nc:is-watermarked` DAV property directly
+  (`isApplyActionEnabled` → `!isNodeWatermarked(file)`), so the action is hidden
+  synchronously the moment a watermarked row mounts — no client-side id cache needed
+  - supersedes the earlier `rememberWatermarked` `Set` and its `enabled()`-memoization
+    caveat: because the property arrives with the listing, first-mount evaluation is
+    already correct
+- [x] After a successful on-demand apply, re-decorate so the badge appears immediately
+  without a full list refresh (`decorateRows`)
 - [x] Handle the backend `already_watermarked` response in `WatermarkModal` as an
   informational (`info`) note, not an error
 
@@ -184,8 +189,8 @@ backend (the source of truth) and surface it in the UI so the action is not offe
   yields `already_watermarked`; the applied path returns `watermarked`
 - [x] `WatermarkServiceTest` — `watermarkInPlace` skips (no render / no `putContent` /
   no `insertLog`, returns `false`) when the file id is already in `watermark_log`
-- [x] Jest — `isApplyActionEnabled` returns `false` for a cached watermarked id and
-  `true` otherwise (incl. via `refreshIndicators` feeding the cache)
+- [x] Jest — `isApplyActionEnabled` returns `false` when the node carries the
+  `nc:is-watermarked` property and `true` otherwise
 
 ### Remove watermark (restore original) — *new*
 
@@ -215,7 +220,8 @@ the watermark into the PDF/image content (destructive, non-reversible), "remove"
 
 #### Frontend (`main-files.js`)
 
-- [ ] Register a "Remove Watermark" `FileAction`, enabled only for files that are currently watermarked (reuse the indicator lookup) and `files.length === 1`
+- [ ] Register a "Remove Watermark" `FileAction`, shown only when **the effective trigger is `on_demand`**, the single file is currently watermarked (`isNodeWatermarked`), and `files.length === 1` — the mirror of the Apply action's availability rule (see Goal 4)
+  - factor the shared conditions (single file, supported MIME, `on_demand` trigger) into one helper used by both `isApplyActionEnabled` and the Remove action; the two differ only on the watermarked check (Apply requires **not** watermarked, Remove requires watermarked)
 - [ ] Confirmation dialog before restoring (destructive: discards the watermarked version)
 - [ ] Spinner on the row + refresh file list and indicator after completion
 - [ ] Localized display name/title + app SVG icon
@@ -225,7 +231,7 @@ the watermark into the PDF/image content (destructive, non-reversible), "remove"
 - [ ] `WatermarkServiceTest` — original is snapshotted on apply; `removeWatermark` restores byte-identical original
 - [ ] `ApiControllerTest` — `removeWatermark` happy path, 422 when no backup, permission guards
 - [ ] `NodeWrittenListenerTest`/audit — removal records a log entry and clears watermarked status
-- [ ] Jest — "Remove Watermark" action only shown for watermarked files
+- [ ] Jest — "Remove Watermark" action only shown for watermarked files, and only in `on_demand` trigger mode (hidden in other modes); Apply is hidden in non-`on_demand` modes too
 
 ---
 
@@ -248,22 +254,25 @@ MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
 ## Data model & database
 
 - [ ] Migration creates `watermark_config` and `watermark_log` cleanly on MySQL, PostgreSQL, SQLite
+  - migration exists using the portable schema builder; a cross-DB run is not yet verified
 - [ ] `watermark_config` columns include `mime_types`, `folder_tag`, and `metadata` type support
-- [ ] `WatermarkConfigMapper` — `findByUser`, `findGlobal`, `findById`, `findByUserAndMimeType`
+  - `mime_types` and `folder_tag` columns present; **`metadata` type not yet supported** (`ApiController::VALID_TYPES` is `text` / `image` / `combined`)
+- [x] `WatermarkConfigMapper` — `findByUser`, `findGlobal`, `findById`, `findByUserAndMimeType`
 - [ ] Config resolution order: user → group → global → defaults
-  - [ ] Wire **group** override (`group_id`) into `resolveConfig` (currently user → global only)
-- [ ] `WatermarkLogMapper` — `findAll` with pagination (offset + limit)
+  - `resolveConfig` does user → global → default; **group override (`group_id`) still not wired in**
+- [x] `WatermarkLogMapper` — `findAll` with pagination (`findAll(int $limit = 100, int $offset = 0)`)
 
 ---
 
 ## Dependencies & environment (SDD §9, §3)
 
-- [ ] PHP deps: `setasign/fpdi`, `tecnickcom/tcpdf`
-- [ ] Ensure `Imagick` (preferred) and `GD` (fallback) extensions available
+- [x] PHP deps: `setasign/fpdi` (`^2.6`), `tecnickcom/tcpdf` (`^6.7`) in `composer.json`
+- [x] Ensure `Imagick` (preferred) and `GD` (fallback) extensions available
+  - `ImageWatermarker` prefers Imagick and falls back to GD; both paths covered by `ImageWatermarkerTest`
 - [ ] Configure headless LibreOffice / Collabora in the Docker dev environment — *new per SDD*
 - [ ] Ensure PHP `exif` / metadata libraries available — *new per SDD*
-- [ ] Frontend deps: `@nextcloud/vue`, `@nextcloud/axios`, `@nextcloud/files`
-- [ ] Build assets (`npm run build`) and enable app (`occ app:enable files_watermark`)
+- [x] Frontend deps: `@nextcloud/vue` (`^9.8`), `@nextcloud/axios` (`^2.5`), `@nextcloud/files` (`^3.9`)
+- [x] Build assets (`npm run build`) and enable app (`occ app:enable files_watermark`)
 
 ---
 
@@ -291,13 +300,16 @@ MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
 
 ### Unit (PHPUnit)
 
-- [ ] `WatermarkServiceTest` — config resolution (user / group / global / default)
-- [ ] `WatermarkServiceTest` — correct renderer delegated per MIME type
+- [x] `WatermarkServiceTest` — config resolution (user / global / default)
+  - **group** case not covered because group resolution is not implemented yet
+- [x] `WatermarkServiceTest` — correct renderer delegated per MIME type (PDF + image), plus skip/whitelist/already-watermarked paths
 - [ ] `WatermarkConfigMapperTest` — finders + insert/update
+  - the existing `WatermarkConfigMapperTest` covers the **entity** (`jsonSerialize`, `getAllowedMimeTypes`); mapper finders + insert/update are **not** yet tested
 - [x] `PdfWatermarkerTest` — text/image/combined overlays + multi-page + corrupt-PDF handling
 - [x] `ImageWatermarkerTest` — JPEG/PNG/WEBP output, GD fallback, opacity + rotation
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
 - [ ] `ApiControllerTest` — auth guard, happy path, error responses per endpoint
+  - `ApiControllerApplyWatermarkTest` (apply / already-watermarked) and `ApiControllerWatermarkedStatusTest` exist; `getConfig` / `saveConfig` / `deleteConfig` / `getLog` still untested
 - [x] `NodeWrittenListenerTest` / `ShareCreatedListenerTest` — trigger gating
 
 ### Frontend (Jest)
