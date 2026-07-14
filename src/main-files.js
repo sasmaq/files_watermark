@@ -1,6 +1,7 @@
 import { createApp, h } from 'vue'
 import { registerFileAction, FileAction, registerDavProperty } from '@nextcloud/files'
 import { subscribe } from '@nextcloud/event-bus'
+import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
 import WatermarkModal from './components/WatermarkModal.vue'
 
@@ -32,22 +33,54 @@ export function isNodeWatermarked(node) {
 }
 
 /**
+ * The effective watermark trigger for the current user, resolved server-side
+ * (user → group → global → default) and handed over as initial state by
+ * LoadAdditionalScriptsListener. Defaults to `on_demand` when the state is
+ * absent so the manual actions degrade to available rather than silently gone.
+ * @return {string} one of on_demand / on_upload / on_download / on_share
+ */
+export function getEffectiveTrigger() {
+	return loadState('files_watermark', 'effective-trigger', 'on_demand')
+}
+
+/**
+ * Whether watermarking is on-demand. The manual Apply (and Remove) file actions
+ * are only offered in this mode; in on_upload / on_download / on_share the app
+ * applies watermarks itself, so the actions are hidden.
+ * @return {boolean} true when the effective trigger is `on_demand`
+ */
+export function isOnDemandTrigger() {
+	return getEffectiveTrigger() === 'on_demand'
+}
+
+/**
+ * Whether the selection is a single supported-MIME file (the conditions the
+ * Apply and Remove actions share). Each action layers its own watermarked check
+ * on top: Apply requires the file be *not* watermarked, Remove requires it be.
+ * @param {object[]} files - selected Files `Node` objects
+ * @return {boolean} true for a single file of a supported type in on_demand mode
+ */
+export function isSingleSupportedFile(files) {
+	if (!isOnDemandTrigger()) {
+		return false
+	}
+	if (files.length !== 1) {
+		return false
+	}
+	return SUPPORTED_MIME.includes(files[0].mime)
+}
+
+/**
  * Whether the "Apply watermark" action should be offered for the selection:
- * a single supported-MIME file that is not already watermarked. The watermarked
- * status comes from the WebDAV property PROPFIND delivers with the listing, so
- * this decides synchronously without a backend round-trip.
+ * a single supported-MIME file, in on_demand mode, that is not already
+ * watermarked. The watermarked status comes from the WebDAV property PROPFIND
+ * delivers with the listing, so this decides synchronously without a backend
+ * round-trip.
  * @param {object[]} files - selected Files `Node` objects
  * @return {boolean} true when the action should be shown
  */
 export function isApplyActionEnabled(files) {
-	if (files.length !== 1) {
-		return false
-	}
-	const file = files[0]
-	if (!SUPPORTED_MIME.includes(file.mime)) {
-		return false
-	}
-	return !isNodeWatermarked(file)
+	return isSingleSupportedFile(files) && !isNodeWatermarked(files[0])
 }
 
 // Small badge SVG (distinct from the action icon: a filled tag/seal mark).

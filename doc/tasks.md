@@ -104,9 +104,9 @@ they are implemented.
   - [x] Spinner/loading state on the file row during processing
   - [x] Refresh the file list after completion
   - [x] Use the app SVG icon + localized display name/title
-  - [ ] Show the action **only when the effective trigger is `on_demand`** (hidden in `on_upload` / `on_download` / `on_share` modes)
-    - `isApplyActionEnabled` does not gate on the trigger today; this requires exposing the effective trigger to `main-files.js` (e.g. initial state or a config lookup), which it does not read yet
-    - the **Remove Watermark** action must share this same `on_demand`-only rule (see the Remove watermark section)
+  - [x] Show the action **only when the effective trigger is `on_demand`** (hidden in `on_upload` / `on_download` / `on_share` modes)
+    - `LoadAdditionalScriptsListener` resolves the effective trigger (user → global → default via `WatermarkService::resolveConfig`) and hands it to `main-files.js` as initial state (`effective-trigger`); `getEffectiveTrigger()` / `isOnDemandTrigger()` read it, defaulting to `on_demand` when absent
+    - the shared single-file + supported-MIME + `on_demand` conditions are factored into `isSingleSupportedFile()` so the **Remove Watermark** action can reuse the same `on_demand`-only rule (see the Remove watermark section)
 
 ### Watermarked-file indicator (Files app) — *new*
 

@@ -1,12 +1,17 @@
 import {
 	isNodeWatermarked,
 	isApplyActionEnabled,
+	isOnDemandTrigger,
+	getEffectiveTrigger,
+	isSingleSupportedFile,
 	syncWatermarkedIds,
 	decorateRows,
 	clearWatermarkedIds,
 } from '../main-files.js'
+import { __setState, __resetState } from '@nextcloud/initial-state'
 
-// @nextcloud/files, event-bus, router and l10n are stubbed via jest.config moduleNameMapper.
+// @nextcloud/files, event-bus, router, l10n and initial-state are stubbed via
+// jest.config moduleNameMapper.
 
 const INDICATOR_SELECTOR = '.files-watermark-indicator'
 
@@ -55,6 +60,10 @@ describe('main-files', () => {
 	beforeEach(() => {
 		document.body.innerHTML = ''
 		clearWatermarkedIds()
+		__resetState()
+		// Default the effective trigger to on_demand so existing assertions about
+		// action availability hold; the trigger-gating suite overrides it per case.
+		__setState('files_watermark', 'effective-trigger', 'on_demand')
 	})
 
 	describe('isNodeWatermarked', () => {
@@ -94,6 +103,41 @@ describe('main-files', () => {
 
 		it('is disabled once the file is watermarked (from the PROPFIND property)', () => {
 			expect(isApplyActionEnabled([node({ watermarked: true })])).toBe(false)
+		})
+
+		it('is disabled when the effective trigger is not on_demand', () => {
+			for (const trigger of ['on_upload', 'on_download', 'on_share']) {
+				__setState('files_watermark', 'effective-trigger', trigger)
+				expect(isApplyActionEnabled([node()])).toBe(false)
+			}
+		})
+	})
+
+	describe('effective trigger gating', () => {
+		it('reads the trigger from initial state', () => {
+			__setState('files_watermark', 'effective-trigger', 'on_upload')
+			expect(getEffectiveTrigger()).toBe('on_upload')
+		})
+
+		it('defaults to on_demand when the state is absent', () => {
+			__resetState()
+			expect(getEffectiveTrigger()).toBe('on_demand')
+			expect(isOnDemandTrigger()).toBe(true)
+		})
+
+		it('isOnDemandTrigger is true only for on_demand', () => {
+			__setState('files_watermark', 'effective-trigger', 'on_demand')
+			expect(isOnDemandTrigger()).toBe(true)
+			__setState('files_watermark', 'effective-trigger', 'on_share')
+			expect(isOnDemandTrigger()).toBe(false)
+		})
+
+		it('isSingleSupportedFile requires on_demand, a single file, and a supported MIME', () => {
+			expect(isSingleSupportedFile([node()])).toBe(true)
+			expect(isSingleSupportedFile([node(), node({ fileid: 2 })])).toBe(false)
+			expect(isSingleSupportedFile([node({ mime: 'text/plain' })])).toBe(false)
+			__setState('files_watermark', 'effective-trigger', 'on_upload')
+			expect(isSingleSupportedFile([node()])).toBe(false)
 		})
 	})
 
