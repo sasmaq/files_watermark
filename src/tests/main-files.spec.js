@@ -274,9 +274,11 @@ describe('main-files', () => {
 			const observe = jest.fn()
 			const OriginalMO = global.MutationObserver
 			global.MutationObserver = class {
+
 				constructor(cb) { this.cb = cb }
 				observe(...args) { observe(...args) }
 				disconnect() {}
+
 			}
 
 			try {
