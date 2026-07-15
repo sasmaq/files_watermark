@@ -7,8 +7,12 @@ import {
 	syncWatermarkedIds,
 	decorateRows,
 	clearWatermarkedIds,
+	markWatermarked,
+	reconcileMissingStatus,
+	startIndicator,
 } from '../main-files.js'
 import { __setState, __resetState } from '@nextcloud/initial-state'
+import axios from '@nextcloud/axios'
 
 // @nextcloud/files, event-bus, router, l10n and initial-state are stubbed via
 // jest.config moduleNameMapper.
@@ -64,6 +68,7 @@ describe('main-files', () => {
 		// Default the effective trigger to on_demand so existing assertions about
 		// action availability hold; the trigger-gating suite overrides it per case.
 		__setState('files_watermark', 'effective-trigger', 'on_demand')
+		axios.get.mockReset()
 	})
 
 	describe('isNodeWatermarked', () => {
@@ -213,6 +218,82 @@ describe('main-files', () => {
 			syncWatermarkedIds([node({ fileid: 1, watermarked: true })])
 			decorateRows()
 			expect(document.querySelector(INDICATOR_SELECTOR).title).toBe('This file is watermarked')
+		})
+	})
+
+	describe('markWatermarked', () => {
+		it('records the id and paints the badge (post-apply path)', () => {
+			addRow(7)
+			expect(markWatermarked(7)).toBe(true)
+			expect(document.querySelector('[data-cy-files-list-row-fileid="7"]').querySelector(INDICATOR_SELECTOR)).not.toBeNull()
+		})
+
+		it('is idempotent and ignores invalid ids', () => {
+			markWatermarked(7)
+			expect(markWatermarked(7)).toBe(false)
+			expect(markWatermarked(0)).toBe(false)
+			expect(markWatermarked(NaN)).toBe(false)
+		})
+	})
+
+	describe('reconcileMissingStatus', () => {
+		// A node as delivered when the DAV property was NOT requested: no attribute.
+		const bareNode = (fileid) => ({ fileid, mime: 'application/pdf', attributes: {} })
+
+		it('queries the REST endpoint for nodes missing the property and badges the result', async () => {
+			addRow(1)
+			addRow(2)
+			axios.get.mockResolvedValue({ data: { watermarked: [2] } })
+
+			await reconcileMissingStatus([bareNode(1), bareNode(2)])
+
+			expect(axios.get).toHaveBeenCalledWith(
+				'/nc/apps/files_watermark/api/v1/watermarked',
+				{ params: { ids: '1,2' } },
+			)
+			expect(document.querySelector('[data-cy-files-list-row-fileid="2"]').querySelector(INDICATOR_SELECTOR)).not.toBeNull()
+			expect(document.querySelector('[data-cy-files-list-row-fileid="1"]').querySelector(INDICATOR_SELECTOR)).toBeNull()
+		})
+
+		it('does not query when the property is present (present-but-0 is trusted)', async () => {
+			await reconcileMissingStatus([node({ fileid: 1, watermarked: false })])
+			expect(axios.get).not.toHaveBeenCalled()
+		})
+
+		it('never throws when the request fails', async () => {
+			axios.get.mockRejectedValue(new Error('network'))
+			await expect(reconcileMissingStatus([bareNode(1)])).resolves.toBeUndefined()
+		})
+	})
+
+	describe('startIndicator', () => {
+		it('observes the fileid attribute so in-place recycled rows are re-decorated', () => {
+			// The virtual scroller reuses a <tr> for a different file by patching its
+			// fileid attribute rather than remounting; a childList-only observer would
+			// miss that, so the observer must also watch the fileid attribute.
+			const observe = jest.fn()
+			const OriginalMO = global.MutationObserver
+			global.MutationObserver = class {
+				constructor(cb) { this.cb = cb }
+				observe(...args) { observe(...args) }
+				disconnect() {}
+			}
+
+			try {
+				startIndicator()
+			} finally {
+				global.MutationObserver = OriginalMO
+			}
+
+			expect(observe).toHaveBeenCalledWith(
+				document.body,
+				expect.objectContaining({
+					childList: true,
+					subtree: true,
+					attributes: true,
+					attributeFilter: ['data-cy-files-list-row-fileid'],
+				}),
+			)
 		})
 	})
 })

@@ -3,6 +3,8 @@ import { registerFileAction, FileAction, registerDavProperty } from '@nextcloud/
 import { subscribe } from '@nextcloud/event-bus'
 import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
+import axios from '@nextcloud/axios'
+import { generateUrl } from '@nextcloud/router'
 import WatermarkModal from './components/WatermarkModal.vue'
 
 const SUPPORTED_MIME = [
@@ -142,10 +144,16 @@ registerFileAction(new FileAction({
 	iconSvgInline: () => APP_ICON_SVG,
 	enabled: isApplyActionEnabled,
 	async exec(file) {
-		// Nextcloud refreshes the node when exec resolves true, which re-runs PROPFIND:
-		// the `is-watermarked` property flips to '1', hiding this action and showing the
-		// indicator below — no manual DOM update needed.
-		return mountModal(file.path, file.basename, file.size ?? 0)
+		const result = await mountModal(file.path, file.basename, file.size ?? 0)
+		// The file was just watermarked, so record its id ourselves and redraw the
+		// badge. We can't rely on the post-exec node refresh to re-deliver our custom
+		// `is-watermarked` DAV property — it often doesn't — which is why the badge
+		// used to be missing right after an apply. The set persists across the row's
+		// re-render, so the observer keeps the badge painted afterwards.
+		if (result === true) {
+			markWatermarked(Number(file.fileid ?? file.id))
+		}
+		return result
 	},
 }))
 
@@ -188,6 +196,65 @@ export function syncWatermarkedIds(nodes) {
  */
 export function clearWatermarkedIds() {
 	watermarkedIds.clear()
+}
+
+/**
+ * Record a file id as watermarked and repaint the badges. Used right after an
+ * on-demand apply (where we already know the outcome) so the indicator appears
+ * without waiting on a listing refresh or the DAV property.
+ * @param {number} id - the file id that was just watermarked
+ * @return {boolean} true when the id was newly added
+ */
+export function markWatermarked(id) {
+	if (!Number.isInteger(id) || id <= 0 || watermarkedIds.has(id)) {
+		return false
+	}
+	watermarkedIds.add(id)
+	decorateRows()
+	return true
+}
+
+/**
+ * Fallback status lookup for a listing whose nodes carry NO `is-watermarked`
+ * attribute at all — which happens when our DAV property was registered after the
+ * Files app built its initial PROPFIND (a hard-refresh race), so the property is
+ * simply missing rather than present-and-false. For those ids only, ask the REST
+ * endpoint and fold any watermarked ones into the set. A present-but-0 value is
+ * trusted and never re-queried, so the DAV property stays the primary source.
+ * @param {object[]} nodes - the folder's Files `Node` objects
+ * @return {Promise<void>}
+ */
+export async function reconcileMissingStatus(nodes) {
+	const missing = []
+	for (const node of nodes) {
+		const present = node?.attributes?.[DAV_WATERMARKED_PROP] !== undefined
+		const id = Number(node?.fileid ?? node?.id)
+		if (!present && Number.isInteger(id) && id > 0) {
+			missing.push(id)
+		}
+	}
+	if (missing.length === 0) {
+		return
+	}
+
+	try {
+		const res = await axios.get(generateUrl('/apps/files_watermark/api/v1/watermarked'), {
+			params: { ids: missing.join(',') },
+		})
+		let changed = false
+		for (const raw of res?.data?.watermarked ?? []) {
+			const id = Number(raw)
+			if (Number.isInteger(id) && id > 0 && !watermarkedIds.has(id)) {
+				watermarkedIds.add(id)
+				changed = true
+			}
+		}
+		if (changed) {
+			decorateRows()
+		}
+	} catch (e) {
+		// Best-effort: the indicator must never block or break the file list.
+	}
 }
 
 /**
@@ -248,6 +315,9 @@ export function startIndicator() {
 		}
 		syncWatermarkedIds(contents)
 		decorateRows()
+		// Safety net for the hard-refresh race where the DAV property wasn't part of
+		// the initial PROPFIND; no-op (no request) once the property is delivered.
+		reconcileMissingStatus(contents)
 	})
 
 	// A freshly-watermarked file's node is refreshed (property flips to '1') without
@@ -268,7 +338,17 @@ export function startIndicator() {
 			clearTimeout(timer)
 			timer = setTimeout(() => decorateRows(), 50)
 		})
-		observer.observe(document.body, { childList: true, subtree: true })
+		observer.observe(document.body, {
+			childList: true,
+			subtree: true,
+			// The Files list virtual scroller recycles a <tr> for a different file
+			// by patching its fileid attribute in place — no child add/remove — so a
+			// childList-only observer never fires for it and a watermarked file that
+			// scrolls into a recycled row silently loses its badge. Watching the
+			// fileid attribute makes those in-place recycles re-trigger decoration.
+			attributes: true,
+			attributeFilter: ['data-cy-files-list-row-fileid'],
+		})
 	}
 }
 

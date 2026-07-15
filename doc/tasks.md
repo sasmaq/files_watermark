@@ -201,9 +201,7 @@ the watermark into the PDF/image content (destructive, non-reversible), "remove"
 #### Preserve the original (prerequisite)
 
 - [ ] Decide where the pre-watermark original is preserved (pick one):
-  - Nextcloud file **versions** — reuse `IVersionManager`; restore = revert to the pre-apply version (no extra storage, but version may be pruned/expire)
   - **App-managed backup** in app data keyed by file id (durable, but extra storage + cleanup lifecycle)
-  - Sibling `{name}_original.{ext}` copy in the same folder (visible to user; simplest)
 - [ ] In `WatermarkService::watermarkInPlace`, snapshot the original **before** `putContent` (per the chosen mechanism)
 - [ ] Record the backup reference (version id / backup path) — extend `watermark_log` or a new column so removal can find it
 - [ ] Guard: don't overwrite an existing original backup when re-watermarking an already-watermarked file
