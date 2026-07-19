@@ -13,6 +13,93 @@ they are implemented.
 - [x] Apply image/logo overlay on PDFs
 - [x] Handle encrypted / password-protected PDFs gracefully (throw or skip + log)
 
+### Flattened (rasterised) PDFs — *new, tamper-resistance*
+
+Optional setting: after watermarking a PDF, render every page to an image and rebuild the
+PDF from those images, so the watermark is fused into the page pixels.
+
+**Why.** Today's overlay is a separate content stream sitting on top of the original page
+objects. That is trivially reversible — `qpdf`/`mutool` can drop the overlay object, and
+some editors let a user select and delete it outright. Rasterising destroys the separability:
+there is no longer an overlay to remove, only pixels.
+
+**Set expectations honestly in the UI.** This makes the watermark *impractical* to remove,
+not impossible — a determined attacker can still crop, inpaint, or OCR-and-retypeset the
+page. It raises cost; it is not a cryptographic guarantee. The setting's help text should
+say so rather than implying tamper-proofing.
+
+**Costs, all of which need a decision before building:**
+
+- **Accessibility regression — the blocker to weigh first.** Rasterising deletes the text
+  layer: no selection, no copy/paste, no search, and screen readers get nothing. For a
+  document-management product this may be a compliance problem (WCAG / EN 301 549), so the
+  setting must be **off by default** and clearly labelled as a11y-destroying
+  - [ ] Decide whether to mitigate by re-embedding an invisible OCR/text layer, and whether
+    that would reintroduce extractable watermark text (it would — so probably scope it out)
+- **File size** typically grows several-fold; a text-heavy PDF hit hardest
+- **Fidelity** bounded by render DPI — a tunable with a real quality/size trade-off
+- **CPU + memory**, per page, and unbounded for large documents
+- **Destroys** forms, annotations, hyperlinks, bookmarks and embedded metadata — which
+  includes anything `MetadataWatermarker` embeds, so ordering matters (rasterise first, then
+  re-embed metadata)
+
+#### Dependency and environment
+
+- [ ] Confirm how to rasterise. Imagick's PDF delegate is **Ghostscript**, and most distro
+  ImageMagick builds ship a `policy.xml` that **disables PDF** by default over the
+  Ghostscript CVEs — so this will be unavailable on a large share of installs
+  - [ ] Check the actual policy in the shipped `nextcloud:31-apache` image and document it
+  - [ ] Evaluate alternatives that avoid the policy problem: `pdftoppm` (poppler-utils),
+    calling `gs` directly, or a PHP-native rasteriser
+- [ ] Detect availability at runtime and surface it in the admin UI — the option must be
+  disabled with an explanation, never fail silently at watermark time
+- [ ] Add the chosen binary to `docker-compose.yml` / `docker-compose.s3.yml` and document
+  it in the README's requirements
+
+#### Implementation
+
+- [ ] Add a `flatten_pdf` boolean column (default `false`) via a new migration, plus
+  `WatermarkConfig` getter/setter and `jsonSerialize`
+- [ ] Add a `flattenDpi` smallint column (suggest default 150; clamp to a sane range as
+  `saveConfig` already does for `opacity` / `fontSize`)
+- [ ] Accept + validate both in `ApiController::saveConfig`
+- [ ] Implement the rasterise pass in `PdfWatermarker` (or a `PdfFlattener` collaborator),
+  applied **after** the overlay so the watermark is baked in
+- [ ] Stream page-by-page rather than holding every page bitmap in memory
+- [ ] Cap by page count / source size, mirroring `ZipInterceptorPlugin`'s `MAX_*` ceilings
+- [ ] Fail closed: if flattening is enabled and fails, do **not** fall back to the
+  unflattened PDF — that would silently hand back the removable-overlay version. Skip +
+  audit-log, and for `on_share` deny the fetch as the delivery path already does
+
+#### Trigger interaction
+
+- [ ] `on_demand` / `on_upload` — flatten once, in place; the stored bytes become the
+  flattened PDF
+  - [ ] Confirm **Remove Watermark** still works: `OriginalStore` holds the pre-watermark
+    original, so restore is unaffected — but verify, since flattening changes size/MIME
+    characteristics
+- [ ] `on_download` / `on_share` — flattening on *every* fetch is far more expensive than
+  today's overlay-per-fetch. Decide whether to cache the flattened copy, and if so where and
+  with what invalidation
+  - [ ] If not cached, measure and document the per-download cost before enabling
+
+#### Admin UI
+
+- [ ] Toggle + DPI control in `WatermarkForm`, shown only for PDF-capable configs
+- [ ] Help text covering irreversibility, the a11y loss, and the size increase
+- [ ] Disabled state with the reason when the rasteriser is unavailable
+
+#### Testing
+
+- [ ] `PdfFlattenerTest` — output has no extractable text layer (the actual security claim);
+  page count and page dimensions preserved; DPI honoured
+- [ ] Round-trip: flattened output is still a valid PDF that Imagick/poppler can open
+- [ ] Watermark survives an overlay-stripping attempt (`qpdf --qdf` / `mutool clean`) —
+  the regression that proves the feature works
+- [ ] Encrypted / corrupt source still fails gracefully, and fails *closed*
+- [ ] Missing rasteriser binary → option unavailable, no fatal
+- [ ] Large multi-page document stays within the memory cap
+
 ### Images (`ImageWatermarker`)
 
 - [x] Apply text/image watermark to JPEG, PNG, WEBP via Imagick
@@ -510,22 +597,99 @@ RustFS) is provided to verify — see README "Testing with S3 storage (RustFS)".
 
 ## Testing (SDD §11)
 
+### DAV plugin test harness — *the priority gap*
+
+**Nothing in `lib/Dav/` has a single unit test**, because the PHPUnit harness has neither
+Sabre nor `OCA\DAV` on its path (`tests/Unit/Dav/` does not exist). This is not a cosmetic
+gap: every delivery-time bug found so far lived in exactly that untested layer, and each was
+caught only by driving a real instance by hand —
+
+- the archive gate keyed off the *container*, leaking clean originals for single-file shares
+- `NodeWrittenEvent` firing under a lock, so on-upload never applied at all
+- on-upload applying, but only as promptly as cron
+
+- [ ] Stub `Sabre\DAV\{Server, ServerPlugin, Tree}`, `Sabre\HTTP\{RequestInterface,
+  ResponseInterface}`, `Sabre\DAV\Exception\{NotFound, Forbidden, ServiceUnavailable}` and
+  `OCA\DAV\Connector\Sabre\{File, Directory, Node}` in `tests/bootstrap.php`
+  - same pattern the bootstrap already uses for `OC\Hooks\Emitter` and the Doctrine
+    constants; keep them out of composer autoload so they never shadow the real classes
+  - **risk to weigh:** hand-written stubs can drift from real Sabre and give false green.
+    `ZipInterceptorPlugin` already carries this hazard by duplicating core's `streamNode`
+    (see the ZIP section), so stub fidelity needs re-checking on Nextcloud upgrades
+- [ ] `DownloadInterceptorPluginTest` — on_download streams a copy; on_share denies (403)
+  when a render fails rather than serving the original; owner fetch untouched;
+  `$publicContext` forces share treatment
+- [ ] `ZipInterceptorPluginTest` — **regression: gate per member, never per container**
+  (a shared single file inside the recipient's own home must still be watermarked); archive
+  naming / root path for whole-folder vs selection; `files=` + `X-NC-Files` parsing;
+  `BeforeZipCreatedEvent` veto honoured; `MAX_MEMBERS` / `MAX_BYTES` → 403 under on_share
+  but plain archive under on_download; defer to core when nothing was substituted
+- [ ] `UploadWatermarkPluginTest` — **regression: `afterMethod:MOVE` is hooked** (chunked
+  uploads never PUT their final path); job removed only on success and left queued on
+  failure; no session / wrong trigger / unsupported MIME all no-op
+- [ ] `PropFindPluginTest` — `is-watermarked` property for file nodes only
+
 ### Unit (PHPUnit)
 
 - [x] `WatermarkServiceTest` — config resolution (user / global / default)
   - **group** case not covered because group resolution is not implemented yet
 - [x] `WatermarkServiceTest` — correct renderer delegated per MIME type (PDF + image), plus skip/whitelist/already-watermarked paths
+- [x] `WatermarkServiceTest` — audit row is written *after* the in-place write lands, and a
+  failed write leaves neither a row nor a temp copy behind
+- [x] `WatermarkServiceTest` — explicit `?IUser $actor` overrides the session for both the
+  `{username}` placeholder and the audit row (the background job has no session)
+- [x] `WatermarkServiceTest` — `deliveryTriggerFor()` answers per node: a received share
+  reports `on_share`, the recipient's own home folder reports nothing
 - [ ] `WatermarkConfigMapperTest` — finders + insert/update
   - the existing `WatermarkConfigMapperTest` covers the **entity** (`jsonSerialize`, `getAllowedMimeTypes`); mapper finders + insert/update are **not** yet tested
+  - [ ] include `hasDeliveryTrigger()` — the archive fast path depends on it, and it is
+    currently only exercised through a mock
 - [x] `PdfWatermarkerTest` — text/image/combined overlays + multi-page + corrupt-PDF handling
+- [ ] `PdfWatermarkerTest` — **PDF 1.5+ with compressed xref** (what FPDI cannot parse, and
+  what every Nextcloud skeleton PDF is): must fail gracefully and leave the original intact
 - [x] `ImageWatermarkerTest` — JPEG/PNG/WEBP output, GD fallback, opacity + rotation
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
 - [ ] `ApiControllerTest` — auth guard, happy path, error responses per endpoint
   - `ApiControllerApplyWatermarkTest` (apply / already-watermarked) and `ApiControllerWatermarkedStatusTest` exist; `getConfig` / `saveConfig` / `deleteConfig` / `getLog` still untested
-- [x] `NodeWrittenListenerTest` — trigger gating
+- [x] `NodeWrittenListenerTest` — queues the job rather than watermarking inline; trigger
+  gating; no-session and already-watermarked skips; `suppressFor()` re-entrancy + return value
+- [ ] `WatermarkOnUploadJobTest` — unknown user / deleted file are skipped, not fatal;
+  the acting user is passed through to `watermarkInPlace()`
   - no `ShareCreatedListenerTest`: on-share is delivery-time, so it is covered by
     `WatermarkServiceTest` (`deliveryTrigger` / `watermarkForDownload`, incl. the
     public-link path) and `BeforePreviewFetchedListenerTest`
+
+### Manual verification matrix
+
+Scenarios that have been driven by hand against `docker-compose.s3.yml` and should be
+re-run before a release — ideally promoted to E2E, since each one has caught a real bug.
+Cross-check every result against the *clean* original's checksum, not just file size.
+
+- [ ] **Trigger × access matrix.** For each of `on_demand` / `on_upload` / `on_download` /
+  `on_share`: owner direct fetch, owner ZIP, recipient direct fetch, recipient ZIP,
+  public-link fetch, public-link ZIP. Expected: `on_share` watermarks for everyone *except*
+  the owner; `on_download` for everyone including the owner; the in-place triggers watermark
+  the stored bytes so every path carries it and no interceptor engages
+  - **partially done** — `on_share` has been driven through all six cells; the other three
+    modes only through owner direct/ZIP and recipient ZIP. The remaining cells are the
+    unchecked work here, and the full grid is what belongs in E2E
+- [x] **Single-file share vs folder share.** Both must watermark in ZIP form — a folder
+  share hides the container-gate bug that a single-file share exposes
+- [x] **Upload paths.** Plain PUT, chunked PUT + MOVE, and a non-DAV write (Files API /
+  `occ`) — the first two watermark in-request, the third falls back to the job
+- [x] **Audit-log truthfulness.** Exactly one row per applied watermark, attributed to the
+  real acting user (not `system` / `Unknown`), and *no* row when the write failed
+- [x] **No temp leakage.** `/tmp/nc_watermark_*` is empty after both success and failure
+- [x] **Background-job queue drains** — no orphaned or duplicate `WatermarkOnUploadJob`
+- [ ] **Tar archives** (`Accept: application/x-tar`) — currently broken in core itself; recheck
+- [ ] **Public file-drop upload** — watermarked by neither the inline path nor the job
+  (no session to attribute to); decide whether to cover it
+- [ ] **Large-file / many-member archive** — cross the `MAX_MEMBERS` / `MAX_BYTES` caps and
+  confirm on_share denies while on_download degrades to a plain archive
+- [ ] **Encrypted / password-protected PDF** through every trigger
+- [ ] **Concurrent uploads of the same path** — the `suppressFor()` guard is per-process
+  static, so it does not span two simultaneous PHP workers; confirm the
+  `isAlreadyWatermarked()` guard is what actually prevents a double burn
 
 ### Frontend (Jest)
 
@@ -533,9 +697,11 @@ RustFS) is provided to verify — see README "Testing with S3 storage (RustFS)".
 
 ### Integration / E2E (Cypress)
 
-- [ ] Upload PDF/image/Office → on-upload watermark applied
-- [ ] On-demand apply via file action
-- [ ] Create share → `_shared` copy watermarked
+- [ ] Upload PDF/image/Office → on-upload watermark applied **without waiting for cron**
+- [ ] On-demand apply via file action, then **Remove Watermark** restores the original
+- [ ] Share a file → recipient's download is watermarked, owner's is not
+- [ ] Same for a public link, including the share page's inline preview
+- [ ] Folder + multi-select ZIP download → every supported member watermarked
 - [ ] Download via `/api/v1/download` → original untouched
 - [ ] Run the full flow on an S3-backed instance
 
