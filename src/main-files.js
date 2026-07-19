@@ -6,6 +6,7 @@ import { t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import WatermarkModal from './components/WatermarkModal.vue'
+import RemoveWatermarkModal from './components/RemoveWatermarkModal.vue'
 
 const SUPPORTED_MIME = [
 	'application/pdf',
@@ -32,6 +33,20 @@ registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns
 export function isNodeWatermarked(node) {
 	const value = node?.attributes?.[DAV_WATERMARKED_PROP]
 	return value === 1 || value === '1'
+}
+
+/**
+ * Whether a node explicitly reports itself as *not* watermarked, as opposed to not
+ * carrying the property at all. The distinction matters when clearing state after a
+ * removal: a missing property means "unknown" (the hard-refresh race the REST reconcile
+ * covers), and treating that as "not watermarked" would wipe ids we legitimately learned
+ * from elsewhere.
+ * @param {object} node - a Files `Node`
+ * @return {boolean} true when the property is present and false
+ */
+export function isNodeExplicitlyNotWatermarked(node) {
+	const value = node?.attributes?.[DAV_WATERMARKED_PROP]
+	return value === 0 || value === '0'
 }
 
 /**
@@ -94,6 +109,23 @@ export function isApplyActionEnabled(files) {
 	const watermarked = isNodeWatermarked(node)
 		|| (Number.isInteger(id) && watermarkedIds.has(id))
 	return !watermarked
+}
+
+/**
+ * Whether the "Remove watermark" action should be offered: the exact mirror of
+ * {@see isApplyActionEnabled}, differing only in requiring the file to *be*
+ * watermarked. The two are mutually exclusive, so a row never shows both.
+ * @param {object[]} files - selected Files `Node` objects
+ * @return {boolean} true when the action should be shown
+ */
+export function isRemoveActionEnabled(files) {
+	if (!isSingleSupportedFile(files)) {
+		return false
+	}
+	const node = files[0]
+	const id = Number(node?.fileid ?? node?.id)
+	return isNodeWatermarked(node)
+		|| (Number.isInteger(id) && watermarkedIds.has(id))
 }
 
 // Small badge SVG (distinct from the action icon: a filled tag/seal mark).
@@ -177,6 +209,68 @@ registerFileAction(new FileAction({
 	},
 }))
 
+// Undo/restore icon — a counter-clockwise arrow over a document, deliberately distinct
+// from the Apply action's icon so the two are not confused in the menu.
+const RESTORE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3Zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8H12Z"/></svg>'
+
+/**
+ * Mounts RemoveWatermarkModal and returns a Promise that resolves with:
+ *   true  — original was restored
+ *   null  — user cancelled
+ * @param {string} filePath - Path of the file to restore
+ * @param {string} fileName - Display name shown in the modal
+ * @return {Promise<boolean|null>} true when restored, null when cancelled
+ */
+function mountRemoveModal(filePath, fileName) {
+	return new Promise((resolve) => {
+		let removed = false
+		const container = document.createElement('div')
+		document.body.appendChild(container)
+
+		const app = createApp({
+			render() {
+				return h(RemoveWatermarkModal, {
+					filePath,
+					fileName,
+					onRemoved() {
+						removed = true
+						resolve(true)
+					},
+					onClose() {
+						app.unmount()
+						container.remove()
+						if (!removed) {
+							resolve(null)
+						}
+					},
+				})
+			},
+		})
+		app.mount(container)
+	})
+}
+
+registerFileAction(new FileAction({
+	id: 'files_watermark_remove',
+	displayName: () => t('files_watermark', 'Remove watermark'),
+	iconSvgInline: () => RESTORE_ICON_SVG,
+	enabled: isRemoveActionEnabled,
+	async exec(file) {
+		const result = await mountRemoveModal(file.path, file.basename)
+		// Mirror of the apply path: drop the id, flip the node's own attribute and tell
+		// the Files app, so the badge disappears and `enabled()` re-evaluates (this
+		// action off, Apply back on) without waiting for a folder reload.
+		if (result === true) {
+			unmarkWatermarked(Number(file.fileid ?? file.id))
+			if (file.attributes) {
+				file.attributes[DAV_WATERMARKED_PROP] = 0
+			}
+			emit('files:node:updated', file)
+		}
+		return result
+	},
+}))
+
 // --- Watermarked-file indicator -------------------------------------------
 //
 // Nextcloud's FileAction API can't render an icon-only, non-interactive badge in
@@ -230,6 +324,21 @@ export function markWatermarked(id) {
 		return false
 	}
 	watermarkedIds.add(id)
+	decorateRows()
+	return true
+}
+
+/**
+ * Forget a file id's watermarked status and repaint, so the badge clears immediately
+ * after the watermark is removed.
+ * @param {number} id - the file id whose watermark was removed
+ * @return {boolean} true when the id was actually being tracked
+ */
+export function unmarkWatermarked(id) {
+	if (!Number.isInteger(id) || !watermarkedIds.has(id)) {
+		return false
+	}
+	watermarkedIds.delete(id)
 	decorateRows()
 	return true
 }
@@ -359,12 +468,21 @@ export function startIndicator() {
 		reconcileMissingStatus(contents)
 	})
 
-	// A freshly-watermarked file's node is refreshed (property flips to '1') without
-	// a full list reload — fold it into the set so its badge appears immediately.
+	// A freshly-watermarked file's node is refreshed (property flips to '1') without a
+	// full list reload — fold it into the set so its badge appears immediately. A removal
+	// flips it to '0' and must take the id back out, otherwise the badge would survive
+	// the restore. Only an explicit 0 clears: a node with the property *missing* is
+	// unknown, not clean, and must leave the set alone.
 	subscribe('files:node:updated', (node) => {
 		const id = Number(node?.fileid ?? node?.id)
-		if (isNodeWatermarked(node) && Number.isInteger(id) && id > 0) {
+		if (!Number.isInteger(id) || id <= 0) {
+			return
+		}
+		if (isNodeWatermarked(node)) {
 			watermarkedIds.add(id)
+			decorateRows()
+		} else if (isNodeExplicitlyNotWatermarked(node)) {
+			watermarkedIds.delete(id)
 			decorateRows()
 		}
 	})

@@ -37,8 +37,21 @@ class WatermarkLogMapper extends QBMapper {
     private const NON_DESTRUCTIVE_TRIGGERS = ['on_download', 'on_share'];
 
     /**
-     * Return the subset of the given file ids whose *stored* content has been
-     * watermarked. Runs as a single batched `IN (...)` query and returns distinct ids.
+     * Trigger recorded when a watermark is undone and the original restored. It is an
+     * in-place event like the ones above — it changes the stored content — so it takes
+     * part in the query below, where it *cancels* an earlier apply.
+     */
+    private const REMOVAL_TRIGGER = 'removed';
+
+    /**
+     * Return the subset of the given file ids whose *stored* content is watermarked
+     * right now. Runs as a single batched `IN (...)` query.
+     *
+     * A file's status is decided by its **most recent** in-place event, not by the mere
+     * existence of one: apply → removed → apply must end up watermarked, and
+     * apply → removed must not. Rows are read in insertion order (`id`, which is
+     * monotonic — `created_at` has only second resolution and ties on fast round-trips)
+     * and the last one per file wins.
      *
      * @param int[] $fileIds
      * @return int[]
@@ -51,7 +64,7 @@ class WatermarkLogMapper extends QBMapper {
         $fileIds = array_values(array_unique(array_map('intval', $fileIds)));
 
         $qb = $this->db->getQueryBuilder();
-        $qb->selectDistinct('file_id')
+        $qb->select('file_id', 'trigger')
             ->from($this->getTableName())
             ->where($qb->expr()->in(
                 'file_id',
@@ -60,14 +73,23 @@ class WatermarkLogMapper extends QBMapper {
             ->andWhere($qb->expr()->notIn(
                 'trigger',
                 $qb->createNamedParameter(self::NON_DESTRUCTIVE_TRIGGERS, IQueryBuilder::PARAM_STR_ARRAY),
-            ));
+            ))
+            ->orderBy('id', 'ASC');
 
         $result = $qb->executeQuery();
-        $ids    = [];
+        /** @var array<int, string> $latest file id → most recent in-place trigger */
+        $latest = [];
         while ($row = $result->fetch()) {
-            $ids[] = (int)$row['file_id'];
+            $latest[(int)$row['file_id']] = (string)$row['trigger'];
         }
         $result->closeCursor();
+
+        $ids = [];
+        foreach ($latest as $fileId => $trigger) {
+            if ($trigger !== self::REMOVAL_TRIGGER) {
+                $ids[] = $fileId;
+            }
+        }
 
         return $ids;
     }

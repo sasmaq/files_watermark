@@ -275,9 +275,11 @@ backend (the source of truth) and surface it in the UI so the action is not offe
     intentionally *not* guarded — guarding them would serve/copy un-watermarked content
   - [x] Return a boolean / status from the service so callers can tell "applied" from
     "skipped (already watermarked)"
-- [ ] Decide interaction with **Remove watermark**: once restore lands, removing must
-  delete the `watermark_log` row(s) for the file id, otherwise the file stays "already
-  watermarked" and can never be re-applied (cross-link the restore section)
+- [x] Interaction with **Remove watermark** — settled *without* deleting log rows, which this
+  item originally assumed. Deleting them would destroy audit history; instead a `removed` row
+  is appended and `findWatermarkedFileIds` resolves status from the newest in-place event per
+  file, so a restored file is re-appliable and the full apply/undo history survives
+  (see the restore section)
 
 #### Frontend (`main-files.js`)
 
@@ -307,38 +309,67 @@ Let a user undo a watermark after it has been applied. Because `watermarkInPlace
 the watermark into the PDF/image content (destructive, non-reversible), "remove" must mean
 **restore a preserved copy of the pre-watermark original** — not algorithmically strip pixels.
 
+**Implemented** for `on_demand`. `OriginalStore` keeps the pre-watermark bytes, and
+`removeWatermark` restores them.
+
 #### Preserve the original (prerequisite)
 
-- [ ] Decide where the pre-watermark original is preserved (pick one):
-  - **App-managed backup** in app data keyed by file id (durable, but extra storage + cleanup lifecycle)
-- [ ] In `WatermarkService::watermarkInPlace`, snapshot the original **before** `putContent` (per the chosen mechanism)
-- [ ] Record the backup reference (version id / backup path) — extend `watermark_log` or a new column so removal can find it
-- [ ] Guard: don't overwrite an existing original backup when re-watermarking an already-watermarked file
+- [x] Decided: **app-managed backup** in appdata (`OriginalStore`), keyed by file id
+  - Nextcloud file versions were the alternative and were rejected: the versions app can be
+    disabled and version expiry would silently delete the only route back to the original
+  - appdata is outside every user's storage, so a backup is not itself browsable, shareable
+    or watermarkable
+- [x] `watermarkInPlace` snapshots the original **before** `putContent` — pinned by a test
+  that asserts the store/write ordering, since reading after the write would preserve the
+  watermarked bytes
+- [x] No schema change needed for the backup reference: the appdata file *is* keyed by file id
+- [x] Guard: `store()` never overwrites an existing backup, so re-watermarking cannot replace
+  the true original with watermarked bytes
+- [x] A failed backup is logged and does not abort the apply; the watermark just becomes
+  un-removable, which the remove endpoint reports honestly (422)
 
 #### Backend (remove endpoint)
 
-- [ ] `ApiController::removeWatermark(string $path)` — restore the original and mark the file un-watermarked
-  - [ ] Route `POST /api/v1/remove`, `#[NoAdminRequired]`
-  - [ ] Ownership / `isUpdateable` permission checks (mirror `applyWatermark`)
-  - [ ] 422 when no preserved original exists (nothing to restore)
-  - [ ] Restore content via the chosen mechanism, then clean up the backup
-- [ ] `WatermarkService::removeWatermark(File $file)` — perform the restore + record the removal
-- [ ] Update `watermark_log` so the file no longer counts as watermarked (insert a `removed` action, or clear rows) — keep the indicator query (`findWatermarkedFileIds`) consistent
+- [x] `ApiController::removeWatermark(string $path)` — `POST /api/v1/remove`, `#[NoAdminRequired]`
+  - [x] Readable + `isUpdateable` checks, mirroring `applyWatermark`
+  - [x] 422 when no preserved original exists
+  - [x] Restores, then discards the backup
+- [x] `WatermarkService::removeWatermark(File $file)` — restore + record the removal
+  - the backup is discarded only *after* the write lands, so a failed restore leaves the
+    original recoverable on a later attempt
+- [x] `watermark_log` gains a `removed` row rather than having rows deleted — this is an audit
+  log, so the apply and the undo both stay in the history
+- [x] `findWatermarkedFileIds` now decides status from the **most recent** in-place event per
+  file instead of "any row exists", so apply → removed → apply resolves correctly
+  - this also settles the open question from the *Skip already-watermarked* section: a removed
+    file stops counting as watermarked and can be re-applied
 
 #### Frontend (`main-files.js`)
 
-- [ ] Register a "Remove Watermark" `FileAction`, shown only when **the effective trigger is `on_demand`**, the single file is currently watermarked (`isNodeWatermarked`), and `files.length === 1` — the mirror of the Apply action's availability rule (see Goal 4)
-  - factor the shared conditions (single file, supported MIME, `on_demand` trigger) into one helper used by both `isApplyActionEnabled` and the Remove action; the two differ only on the watermarked check (Apply requires **not** watermarked, Remove requires watermarked)
-- [ ] Confirmation dialog before restoring (destructive: discards the watermarked version)
-- [ ] Spinner on the row + refresh file list and indicator after completion
-- [ ] Localized display name/title + app SVG icon
+- [x] "Remove watermark" `FileAction`, gated by `isRemoveActionEnabled` — the exact mirror of
+  `isApplyActionEnabled`, reusing `isSingleSupportedFile` and differing only on the
+  watermarked check, so a row never offers both
+- [x] Confirmation dialog (`RemoveWatermarkModal`) warning that the watermarked version is
+  discarded, with a destructive-styled confirm button
+- [x] Spinner while restoring; badge cleared and both actions re-evaluated via
+  `unmarkWatermarked` + a `files:node:updated` emit, without a folder reload
+- [x] Localized display name + a restore/undo icon, deliberately distinct from the Apply icon
+- [x] `files:node:updated` now *clears* a tracked id on an explicit `is-watermarked: 0`; a
+  missing property still means "unknown" and leaves the set alone
 
 #### Tests
 
-- [ ] `WatermarkServiceTest` — original is snapshotted on apply; `removeWatermark` restores byte-identical original
-- [ ] `ApiControllerTest` — `removeWatermark` happy path, 422 when no backup, permission guards
-- [ ] `NodeWrittenListenerTest`/audit — removal records a log entry and clears watermarked status
-- [ ] Jest — "Remove Watermark" action only shown for watermarked files, and only in `on_demand` trigger mode (hidden in other modes); Apply is hidden in non-`on_demand` modes too
+- [x] `WatermarkServiceTest` — original preserved before the overwrite (ordering asserted);
+  restore, the no-backup case, and backup retention when the write throws
+- [x] `ApiControllerRemoveWatermarkTest` — happy path, 422 with no backup, 422 on a throwing
+  restore, permission guards, unauthenticated, not-found
+- [x] `WatermarkLogMapperTest` — a removal cancels an earlier apply; apply → removed → apply
+  counts as watermarked again
+- [x] Jest — Remove shown only for watermarked files and only in `on_demand`; mirror-of-Apply
+  property; `unmarkWatermarked` clears the badge; explicit-0 vs missing property
+- [x] Manual E2E against Nextcloud 31 — apply → remove restores a **byte-identical** original,
+  backup discarded, status cleared, second remove 422s, re-apply works, audit trail keeps all
+  three events
 
 ---
 

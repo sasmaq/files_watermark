@@ -22,6 +22,9 @@ class WatermarkService {
     public const SUPPORTED_IMAGE = ['image/jpeg', 'image/png', 'image/webp'];
     public const SUPPORTED_ALL   = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 
+    /** Log trigger recorded when a watermark is undone; see {@see removeWatermark}. */
+    public const TRIGGER_REMOVED = 'removed';
+
     public function __construct(
         private WatermarkConfigMapper  $configMapper,
         private WatermarkLogMapper     $logMapper,
@@ -31,6 +34,7 @@ class WatermarkService {
         private IUserSession           $userSession,
         private ISystemTagObjectMapper $tagObjectMapper,
         private LoggerInterface        $logger,
+        private OriginalStore          $originalStore,
     ) {}
 
     /**
@@ -298,10 +302,67 @@ class WatermarkService {
         }
 
         $tmpPath = $this->watermarkFile($file, $trigger, $config);
+
+        // Preserve the pre-watermark bytes before they are overwritten — this burn is
+        // destructive and irreversible, so this copy is the only route back. Read the
+        // original *now*, while the stored content is still clean. A failed backup is
+        // logged and does not abort the watermark; the user simply won't be able to undo
+        // it, which removeWatermark() reports rather than pretending to restore.
+        $this->originalStore->store($file->getId(), $file->getContent());
+
         $file->putContent(file_get_contents($tmpPath));
         unlink($tmpPath);
         @rmdir(dirname($tmpPath));
         return true;
+    }
+
+    /**
+     * Undo an in-place watermark by restoring the preserved original.
+     *
+     * The watermark is burned into the content, so this is a restore, not a strip: it
+     * rewrites the file with the copy {@see watermarkInPlace} took beforehand. Once
+     * restored the backup is discarded and a `removed` row is recorded, which makes
+     * {@see isAlreadyWatermarked} report false again so the file can be re-watermarked.
+     *
+     * The removal is logged rather than the original rows being deleted — this is an audit
+     * log, so the apply and the undo both belong in the history.
+     *
+     * @return bool true when the original was restored, false when none is preserved
+     */
+    public function removeWatermark(File $file): bool {
+        $fileId  = $file->getId();
+        $content = $this->originalStore->read($fileId);
+
+        if ($content === null) {
+            $this->logger->info('files_watermark: no preserved original for {path}, cannot remove watermark', [
+                'path'   => $file->getPath(),
+                'fileId' => $fileId,
+            ]);
+            return false;
+        }
+
+        $file->putContent($content);
+
+        // Only drop the backup once the restore has actually landed, so a failed
+        // putContent (which throws) leaves the original recoverable on a later attempt.
+        $this->originalStore->discard($fileId);
+
+        $this->logMapper->insertLog(
+            $this->userSession->getUser()?->getUID() ?? 'system',
+            $fileId,
+            $file->getPath(),
+            self::TRIGGER_REMOVED,
+            null,
+        );
+
+        return true;
+    }
+
+    /**
+     * Whether a watermark on this file can be undone (a preserved original exists).
+     */
+    public function canRemoveWatermark(int $fileId): bool {
+        return $this->originalStore->has($fileId);
     }
 
     public function resolveConfig(?string $userId = null): WatermarkConfig {

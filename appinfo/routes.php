@@ -9,6 +9,8 @@ return [
         ['name' => 'api#saveConfig',     'url' => '/api/v1/config',      'verb' => 'POST'],
         ['name' => 'api#deleteConfig',   'url' => '/api/v1/config/{id}', 'verb' => 'DELETE'],
         ['name' => 'api#applyWatermark', 'url' => '/api/v1/apply',       'verb' => 'POST'],
+        // Restores the pre-watermark original preserved at apply time
+        ['name' => 'api#removeWatermark', 'url' => '/api/v1/remove',     'verb' => 'POST'],
         ['name' => 'api#getLog',         'url' => '/api/v1/log',         'verb' => 'GET'],
         ['name' => 'api#getWatermarkedStatus', 'url' => '/api/v1/watermarked', 'verb' => 'GET'],
 

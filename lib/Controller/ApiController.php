@@ -224,6 +224,58 @@ class ApiController extends Controller {
     }
 
     /**
+     * Undo an on-demand watermark by restoring the preserved original.
+     *
+     * The watermark is burned into the file content, so this restores the copy taken
+     * before the burn rather than stripping anything. 422 when no such copy exists —
+     * a file watermarked before this feature landed, or one whose backup failed.
+     */
+    #[NoAdminRequired]
+    public function removeWatermark(string $path): DataResponse {
+        $user = $this->userSession->getUser();
+        if ($user === null) {
+            return new DataResponse(['error' => 'Unauthenticated'], Http::STATUS_UNAUTHORIZED);
+        }
+
+        $userFolder = $this->rootFolder->getUserFolder($user->getUID());
+
+        try {
+            $node = $userFolder->get($path);
+        } catch (\OCP\Files\NotFoundException) {
+            return new DataResponse(['error' => 'File not found'], Http::STATUS_NOT_FOUND);
+        }
+
+        if (!($node instanceof \OCP\Files\File)) {
+            return new DataResponse(['error' => 'Path is not a file'], Http::STATUS_BAD_REQUEST);
+        }
+
+        // Restoring rewrites the file, so the same read + write permissions the apply
+        // path demands are required here.
+        if (!$node->isReadable()) {
+            return new DataResponse(['error' => 'You do not have permission to read this file'], Http::STATUS_FORBIDDEN);
+        }
+
+        if (!$node->isUpdateable()) {
+            return new DataResponse(['error' => 'You do not have permission to modify this file'], Http::STATUS_FORBIDDEN);
+        }
+
+        try {
+            $removed = $this->watermarkService->removeWatermark($node);
+        } catch (\RuntimeException $e) {
+            return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
+        }
+
+        if (!$removed) {
+            return new DataResponse(
+                ['error' => 'No preserved original is available for this file, so its watermark cannot be removed.'],
+                Http::STATUS_UNPROCESSABLE_ENTITY,
+            );
+        }
+
+        return new DataResponse(['status' => 'removed', 'path' => $path]);
+    }
+
+    /**
      * Report which of the given file ids have ever been watermarked.
      *
      * The query is scoped to ids the acting user can actually access, so the

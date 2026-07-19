@@ -8,11 +8,14 @@ import {
 	decorateRows,
 	clearWatermarkedIds,
 	markWatermarked,
+	unmarkWatermarked,
+	isRemoveActionEnabled,
+	isNodeExplicitlyNotWatermarked,
 	reconcileMissingStatus,
 	startIndicator,
 } from '../main-files.js'
 import { __setState, __resetState } from '@nextcloud/initial-state'
-import { emit } from '@nextcloud/event-bus'
+import { emit, subscribe } from '@nextcloud/event-bus'
 import axios from '@nextcloud/axios'
 
 // @nextcloud/files, event-bus, router, l10n and initial-state are stubbed via
@@ -71,7 +74,19 @@ describe('main-files', () => {
 		__setState('files_watermark', 'effective-trigger', 'on_demand')
 		axios.get.mockReset()
 		emit.mockClear()
+		subscribe.mockClear()
 	})
+
+	/**
+	 * Start the indicator and hand back the handler it registered for an event, so the
+	 * subscription's behaviour can be driven directly.
+	 * @param {string} event - the event-bus event name
+	 * @return {Function} the registered handler
+	 */
+	function handlerFor(event) {
+		startIndicator()
+		return subscribe.mock.calls.find(([name]) => name === event)[1]
+	}
 
 	describe('isNodeWatermarked', () => {
 		it('reads the WebDAV property delivered with the listing', () => {
@@ -126,6 +141,72 @@ describe('main-files', () => {
 				__setState('files_watermark', 'effective-trigger', trigger)
 				expect(isApplyActionEnabled([node()])).toBe(false)
 			}
+		})
+	})
+
+	describe('isRemoveActionEnabled', () => {
+		it('is enabled only for a watermarked single supported file', () => {
+			expect(isRemoveActionEnabled([node({ watermarked: true })])).toBe(true)
+			expect(isRemoveActionEnabled([node({ watermarked: false })])).toBe(false)
+		})
+
+		it('is the exact mirror of Apply, so a row never offers both', () => {
+			const watermarked = [node({ watermarked: true })]
+			const clean = [node({ watermarked: false })]
+			expect(isApplyActionEnabled(watermarked)).toBe(false)
+			expect(isRemoveActionEnabled(watermarked)).toBe(true)
+			expect(isApplyActionEnabled(clean)).toBe(true)
+			expect(isRemoveActionEnabled(clean)).toBe(false)
+		})
+
+		it('is enabled from the badge set when the DAV property is still stale', () => {
+			markWatermarked(42)
+			expect(isRemoveActionEnabled([node({ fileid: 42, watermarked: false })])).toBe(true)
+		})
+
+		it('is disabled for unsupported MIME types and multi-select', () => {
+			expect(isRemoveActionEnabled([node({ mime: 'text/plain', watermarked: true })])).toBe(false)
+			expect(isRemoveActionEnabled([
+				node({ watermarked: true }),
+				node({ fileid: 2, watermarked: true }),
+			])).toBe(false)
+		})
+
+		it('is disabled when the effective trigger is not on_demand', () => {
+			for (const trigger of ['on_upload', 'on_download', 'on_share']) {
+				__setState('files_watermark', 'effective-trigger', trigger)
+				expect(isRemoveActionEnabled([node({ watermarked: true })])).toBe(false)
+			}
+		})
+	})
+
+	describe('unmarkWatermarked', () => {
+		it('drops the id and repaints so the badge clears after a restore', () => {
+			addRow(7)
+			markWatermarked(7)
+			expect(document.querySelectorAll(INDICATOR_SELECTOR)).toHaveLength(1)
+
+			expect(unmarkWatermarked(7)).toBe(true)
+			expect(document.querySelectorAll(INDICATOR_SELECTOR)).toHaveLength(0)
+			// ...and the file becomes appliable again.
+			expect(isApplyActionEnabled([node({ fileid: 7, watermarked: false })])).toBe(true)
+		})
+
+		it('reports false for an id it was not tracking', () => {
+			expect(unmarkWatermarked(123)).toBe(false)
+			expect(unmarkWatermarked(NaN)).toBe(false)
+		})
+	})
+
+	describe('isNodeExplicitlyNotWatermarked', () => {
+		it('distinguishes a present-and-false property from a missing one', () => {
+			// A removal sets it to 0 (clear the id); a missing property means "unknown"
+			// and must not clear anything the reconcile path discovered.
+			expect(isNodeExplicitlyNotWatermarked({ attributes: { 'is-watermarked': 0 } })).toBe(true)
+			expect(isNodeExplicitlyNotWatermarked({ attributes: { 'is-watermarked': '0' } })).toBe(true)
+			expect(isNodeExplicitlyNotWatermarked({ attributes: { 'is-watermarked': 1 } })).toBe(false)
+			expect(isNodeExplicitlyNotWatermarked({ attributes: {} })).toBe(false)
+			expect(isNodeExplicitlyNotWatermarked({})).toBe(false)
 		})
 	})
 
@@ -291,6 +372,30 @@ describe('main-files', () => {
 	})
 
 	describe('startIndicator', () => {
+		it('clears the badge when a node reports itself no longer watermarked', () => {
+			const onNodeUpdated = handlerFor('files:node:updated')
+			addRow(7)
+			markWatermarked(7)
+			expect(document.querySelectorAll(INDICATOR_SELECTOR)).toHaveLength(1)
+
+			// What the Remove action emits after a successful restore.
+			onNodeUpdated({ fileid: 7, attributes: { 'is-watermarked': 0 } })
+
+			expect(document.querySelectorAll(INDICATOR_SELECTOR)).toHaveLength(0)
+		})
+
+		it('leaves a tracked id alone when the node carries no status property', () => {
+			// "Missing" means unknown (the hard-refresh race), not clean — clearing here
+			// would undo what the REST reconcile just discovered.
+			const onNodeUpdated = handlerFor('files:node:updated')
+			addRow(7)
+			markWatermarked(7)
+
+			onNodeUpdated({ fileid: 7, attributes: {} })
+
+			expect(document.querySelectorAll(INDICATOR_SELECTOR)).toHaveLength(1)
+		})
+
 		it('observes the fileid attribute so in-place recycled rows are re-decorated', () => {
 			// The virtual scroller reuses a <tr> for a different file by patching its
 			// fileid attribute rather than remounting; a childList-only observer would

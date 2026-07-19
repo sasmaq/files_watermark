@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ImageWatermarker;
+use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -30,6 +31,7 @@ class WatermarkServiceTest extends TestCase {
     private IUserSession&MockObject           $userSession;
     private ISystemTagObjectMapper&MockObject $tagObjectMapper;
     private LoggerInterface&MockObject         $logger;
+    private OriginalStore&MockObject          $originalStore;
     private WatermarkService                  $service;
 
     protected function setUp(): void {
@@ -43,6 +45,7 @@ class WatermarkServiceTest extends TestCase {
         $this->userSession      = $this->createMock(IUserSession::class);
         $this->tagObjectMapper  = $this->createMock(ISystemTagObjectMapper::class);
         $this->logger           = $this->createMock(LoggerInterface::class);
+        $this->originalStore    = $this->createMock(OriginalStore::class);
 
         $this->service = new WatermarkService(
             $this->configMapper,
@@ -53,6 +56,7 @@ class WatermarkServiceTest extends TestCase {
             $this->userSession,
             $this->tagObjectMapper,
             $this->logger,
+            $this->originalStore,
         );
     }
 
@@ -702,6 +706,102 @@ class WatermarkServiceTest extends TestCase {
         $file->expects($this->once())->method('putContent')->with('watermarked-bytes');
 
         $this->assertTrue($this->service->watermarkInPlace($file, 'on_demand', $config));
+    }
+
+    public function testWatermarkInPlacePreservesOriginalBeforeOverwriting(): void {
+        // The burn is irreversible, so the pre-watermark bytes must be handed to the
+        // store — and it has to happen while getContent() still returns the clean file.
+        $config = new WatermarkConfig();
+        $config->setType('image');
+        $config->setTextTemplate('{username}');
+        $config->setTrigger('on_demand');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/png');
+        $file->method('getName')->willReturn('photo.png');
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+        $file->method('getContent')->willReturn('original-bytes');
+        $this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
+        $this->imageWatermarker->method('apply')
+            ->willReturnCallback(function (string $src, string $dest): void {
+                file_put_contents($dest, 'watermarked-bytes');
+            });
+
+        $order = [];
+        $this->originalStore->expects($this->once())
+            ->method('store')
+            ->with(11, 'original-bytes')
+            ->willReturnCallback(function () use (&$order): bool {
+                $order[] = 'store';
+                return true;
+            });
+        $file->expects($this->once())
+            ->method('putContent')
+            ->willReturnCallback(function () use (&$order): void {
+                $order[] = 'putContent';
+            });
+
+        $this->assertTrue($this->service->watermarkInPlace($file, 'on_demand', $config));
+        $this->assertSame(['store', 'putContent'], $order, 'original must be preserved before the overwrite');
+    }
+
+    public function testRemoveWatermarkRestoresPreservedOriginal(): void {
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $this->userSession->method('getUser')->willReturn($user);
+
+        $file = $this->createMock(File::class);
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+
+        $this->originalStore->method('read')->with(11)->willReturn('original-bytes');
+        $file->expects($this->once())->method('putContent')->with('original-bytes');
+        // Discarded only after the restore lands, and recorded so the file stops
+        // counting as watermarked.
+        $this->originalStore->expects($this->once())->method('discard')->with(11);
+        $this->logMapper->expects($this->once())
+            ->method('insertLog')
+            ->with('alice', 11, '/alice/files/photo.png', 'removed', null);
+
+        $this->assertTrue($this->service->removeWatermark($file));
+    }
+
+    public function testRemoveWatermarkReportsWhenNoOriginalPreserved(): void {
+        // A file watermarked before backups existed: nothing to restore, and the file
+        // must be left exactly as it is rather than half-processed.
+        $file = $this->createMock(File::class);
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+
+        $this->originalStore->method('read')->with(11)->willReturn(null);
+        $file->expects($this->never())->method('putContent');
+        $this->originalStore->expects($this->never())->method('discard');
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        $this->assertFalse($this->service->removeWatermark($file));
+    }
+
+    public function testRemoveWatermarkKeepsBackupWhenRestoreFails(): void {
+        // If the write throws, the backup is the only copy of the original left — it
+        // must survive so the user can try again.
+        $file = $this->createMock(File::class);
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+
+        $this->originalStore->method('read')->with(11)->willReturn('original-bytes');
+        $file->method('putContent')->willThrowException(new \RuntimeException('storage full'));
+        $this->originalStore->expects($this->never())->method('discard');
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        $this->expectException(\RuntimeException::class);
+        $this->service->removeWatermark($file);
     }
 
     public function testWatermarkInPlaceSkipsAlreadyWatermarkedFile(): void {
