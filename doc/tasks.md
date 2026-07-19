@@ -66,12 +66,29 @@ they are implemented.
     triggering write still holds a lock on the node, so `putContent()` from there throws
     `LockedException`. Not DAV-specific — a plain Files-API `newFile()` fails identically.
     The listener therefore only enqueues; `WatermarkOnUploadJob` does the write once the
-    lock is gone, which makes on-upload watermarking **eventually consistent** (the file
-    is clean until cron runs the job)
+    lock is gone
+  - [x] **Prompt for DAV uploads** (`UploadWatermarkPlugin`). The job alone is only as
+    prompt as cron, and on a default AJAX-cron instance an upload sits clean for minutes —
+    which reads as "on-upload is broken" in the Files UI. `afterMethod:PUT` runs after
+    Sabre's handler returns, by which point the write's lock is released (verified), so the
+    burn happens in-request and the file is watermarked before the upload response is sent
+    - `afterMethod:MOVE` is hooked too: chunked uploads (large files from the web UI and
+      desktop client) assemble into place with a MOVE and never PUT the final path
+    - the job stays as the fallback for non-DAV writes (Files API, `occ`, other apps) and
+      for a failed inline burn — which is why the inline path leaves the queued job alone
+      on error, and only removes it on success
+    - **gap:** public file-drop uploads have no session to attribute a watermark to, so
+      they are watermarked by neither path. Not a confidentiality leak (the dropper is
+      watermarking their own upload), but on-upload does not cover them
   - the job has no session, so it passes the uploading user to `watermarkInPlace()`
     explicitly — otherwise `{username}` renders "Unknown" and the audit row says "system"
   - the job's own write re-fires `NodeWrittenEvent`; `NodeWrittenListener::suppressFor()`
-    stops that queueing a second job for the same file
+    stops that queueing a second job for the same file (the inline path uses it too)
+  - **not unit-tested:** `UploadWatermarkPlugin` — like every other plugin in `lib/Dav/` —
+    has no unit tests, because the test harness has neither Sabre nor `OCA\DAV` available
+    (`tests/Unit/Dav/` does not exist). Verified end-to-end against the S3 stack instead:
+    plain PUT, chunked PUT+MOVE, non-DAV write falling back to the job, one audit row per
+    upload, and the queue draining to empty. A Sabre stub harness is the outstanding gap
 - [x] **On download** — `DownloadController` streams a watermarked temp copy; original untouched
   - [x] Temp file cleaned up after the response is sent
 - [x] **On share** — watermarked at *delivery* time, not at share-creation time

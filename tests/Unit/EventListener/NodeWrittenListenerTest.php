@@ -134,6 +134,15 @@ class NodeWrittenListenerTest extends TestCase {
         });
     }
 
+    /**
+     * UploadWatermarkPlugin reads watermarkInPlace()'s "applied" boolean back through
+     * suppressFor() to decide whether to drop the queued job, so the value must pass through.
+     */
+    public function testSuppressForReturnsTheCallbackResult(): void {
+        $this->assertTrue(NodeWrittenListener::suppressFor(1, fn (): bool => true));
+        $this->assertFalse(NodeWrittenListener::suppressFor(1, fn (): bool => false));
+    }
+
     public function testSuppressionIsLiftedAfterTheCallback(): void {
         $this->watermarkService->method('isSupported')->willReturn(true);
         $this->watermarkService->method('resolveConfig')->willReturn($this->config('on_upload'));
