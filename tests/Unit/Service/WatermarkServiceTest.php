@@ -1082,4 +1082,83 @@ class WatermarkServiceTest extends TestCase {
             @rmdir(dirname($tmpPath));
         }
     }
+
+    /**
+     * A node on either a shared or an own-home storage, owned by $ownerUid.
+     */
+    private function nodeOnStorage(bool $shared, string $ownerUid = 'admin'): \OCP\Files\FileInfo&MockObject {
+        $owner = $this->createMock(IUser::class);
+        $owner->method('getUID')->willReturn($ownerUid);
+
+        $node = $this->createMock(\OCP\Files\FileInfo::class);
+        $node->method('getOwner')->willReturn($owner);
+        $node->method('getStorage')->willReturn($this->storage($shared));
+        return $node;
+    }
+
+    private function shareConfig(): WatermarkConfig {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_share');
+        return $config;
+    }
+
+    public function testDeliveryTriggerForReportsOnShareForAReceivedShare(): void {
+        $this->configMapper->method('findByUser')->willReturn([]);
+        $this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
+
+        $bob = $this->createMock(IUser::class);
+        $bob->method('getUID')->willReturn('bob');
+        $this->userSession->method('getUser')->willReturn($bob);
+
+        $this->assertSame('on_share', $this->service->deliveryTriggerFor($this->nodeOnStorage(true)));
+    }
+
+    /**
+     * The regression behind the ZIP leak: a *container* cannot answer for its members.
+     *
+     * A received single-file share is mounted inside the recipient's own home, so the
+     * folder holding it is not an ISharedStorage and reports "owner access" — while the
+     * member itself is a share that must be watermarked. Gating an archive on the folder
+     * therefore shipped clean originals; ZipInterceptorPlugin now gates on
+     * hasDeliveryTriggerConfigured() and judges each member with deliveryTriggerFor().
+     */
+    public function testDeliveryTriggerForReportsNothingForTheRecipientsOwnHomeFolder(): void {
+        $this->configMapper->method('findByUser')->willReturn([]);
+        $this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
+
+        $bob = $this->createMock(IUser::class);
+        $bob->method('getUID')->willReturn('bob');
+        $this->userSession->method('getUser')->willReturn($bob);
+
+        // The home folder itself: not a shared mount.
+        $home = $this->nodeOnStorage(false, 'bob');
+
+        $this->assertNull(
+            $this->service->deliveryTriggerFor($home),
+            'the container must not report on_share — only members can answer',
+        );
+        // ...while a member inside it does, which is what the archive path must ask.
+        $this->assertSame('on_share', $this->service->deliveryTriggerFor($this->nodeOnStorage(true)));
+    }
+
+    public function testHasDeliveryTriggerConfiguredDelegatesToTheMapper(): void {
+        $this->configMapper->expects($this->once())->method('hasDeliveryTrigger')->willReturn(true);
+        $this->assertTrue($this->service->hasDeliveryTriggerConfigured());
+    }
+
+    public function testResolveConfigIsMemoisedPerRequest(): void {
+        // A folder download resolves the policy once per member; without the memo that is
+        // two queries a file.
+        $global = new WatermarkConfig();
+        $global->setTrigger('on_share');
+
+        $this->configMapper->expects($this->once())->method('findByUser')->with('alice')->willReturn([]);
+        $this->configMapper->expects($this->once())->method('findGlobal')->willReturn($global);
+
+        $first  = $this->service->resolveConfig('alice');
+        $second = $this->service->resolveConfig('alice');
+
+        $this->assertSame($first, $second);
+    }
 }

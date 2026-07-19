@@ -113,10 +113,18 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
         $folder = $node->getNode();
 
-        // Coarse gate: no delivery trigger for this fetch means core's archive is already
-        // correct (on_demand / on_upload burn the watermark into the stored bytes, so a
-        // plain archive carries it), and taking over would only add risk.
-        if (!$this->watermarkService->deliveryApplies($folder, $this->publicContext)) {
+        // Coarse gate: with no delivery-triggered policy anywhere, no member of any archive
+        // can need a watermark (on_demand / on_upload burn it into the stored bytes, so a
+        // plain archive already carries it) and core's path is left completely untouched.
+        //
+        // This deliberately does *not* test the container. `deliveryApplies($folder)` was
+        // the gate here and it leaked: a shared *single file* is mounted in the recipient's
+        // own home, so the folder reports "owner access" under on_share while the member
+        // itself is a received share — every "download selected" on a single-file share
+        // shipped the clean original. Only members can answer this, and preRender asks them
+        // one by one; when it finds nothing to substitute we hand the request back to core
+        // below, so being permissive here costs nothing.
+        if (!$this->watermarkService->hasDeliveryTriggerConfigured()) {
             return true;
         }
 
@@ -162,6 +170,15 @@ class ZipInterceptorPlugin extends ServerPlugin {
                 'reason' => $e->getMessage(),
                 'path'   => $folder->getPath(),
             ]);
+            return true;
+        }
+
+        if ($rendered === []) {
+            // No member needed substituting — every one would be streamed from its own
+            // bytes, so core's archive is identical to the one we would build. Hand it
+            // back rather than duplicating the work. (on_share never reaches here with a
+            // member it failed to render: preRender denies first.)
+            $this->cleanup();
             return true;
         }
 

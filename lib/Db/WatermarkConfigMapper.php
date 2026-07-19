@@ -32,6 +32,31 @@ class WatermarkConfigMapper extends QBMapper {
         return $this->findEntities($qb);
     }
 
+    /**
+     * Whether *any* config uses a delivery trigger (`on_download` / `on_share`).
+     *
+     * One indexed lookup that answers "could this request need watermarking at all",
+     * without knowing whose policy applies. The archive interceptor uses it to stay off
+     * core's path entirely in the common on_demand / on_upload case, where no member of
+     * any archive can ever need a watermark.
+     */
+    public function hasDeliveryTrigger(): bool {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('id')
+            ->from($this->getTableName())
+            ->where($qb->expr()->in('trigger', $qb->createNamedParameter(
+                ['on_download', 'on_share'],
+                IQueryBuilder::PARAM_STR_ARRAY,
+            )))
+            ->setMaxResults(1);
+
+        $result = $qb->executeQuery();
+        $row    = $result->fetch();
+        $result->closeCursor();
+
+        return $row !== false;
+    }
+
     public function findGlobal(): WatermarkConfig {
         $qb = $this->db->getQueryBuilder();
         $qb->select('*')

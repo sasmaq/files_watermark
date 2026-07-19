@@ -129,8 +129,8 @@ applies.
 #### Per-mode behaviour
 
 - [x] **On demand** — no work needed: the watermark is burned into the stored bytes, so a
-  plain archive already carries it. The coarse gate (`deliveryApplies`) returns false and
-  core handles the request untouched
+  plain archive already carries it. The coarse gate (`hasDeliveryTriggerConfigured()`)
+  returns false and core handles the request untouched
 - [x] **On upload** — same as on demand
 - [x] **On download** — every supported member watermarked, for any downloader (verified:
   owner's own folder download is watermarked in this mode)
@@ -138,6 +138,19 @@ applies.
   owner's own folder download is untouched
   - [x] Shares the `isShareAccess()` rule with the single-file path
   - [x] Registered on both DAV servers (`SabrePluginAddListener` / `SabrePublicPluginAddListener`)
+  - [x] **The gate is per member, never per container.** This was a real leak: the coarse
+    gate used to be `deliveryApplies($folder)`, but a received *single-file* share is
+    mounted inside the recipient's own home, so the containing folder is not an
+    `ISharedStorage` and reported "owner access" while the member itself was a share.
+    Effect: the single file downloaded watermarked, but **"download selected" on that same
+    file shipped the clean original**. Folder shares hid it, since there the container *is*
+    the shared mount. Now gated on `hasDeliveryTriggerConfigured()` (one indexed query,
+    owner-agnostic) with each member judged by `deliveryTriggerFor()`; when `preRender`
+    finds nothing to substitute the request is handed back to core, so being permissive at
+    the gate costs nothing. `deliveryApplies()` was deleted rather than left available
+  - verified on `docker-compose.s3.yml` across: recipient single-file share (zip + direct),
+    recipient folder share, public-link zip, owner's own zip (correctly untouched), and
+    `on_download` / `on_demand` modes
   - [x] **Deny rather than leak:** members are rendered *before* any bytes are sent, so a
     failed render aborts with a real 403 instead of a truncated archive
 - [ ] **Tar archives are broken in core** (`Accept: application/x-tar` yields a truncated

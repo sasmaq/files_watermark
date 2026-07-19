@@ -26,6 +26,9 @@ class WatermarkService {
     /** Log trigger recorded when a watermark is undone; see {@see removeWatermark}. */
     public const TRIGGER_REMOVED = 'removed';
 
+    /** Per-request memo for {@see resolveConfig}, keyed by user id ('' for none). */
+    private array $configCache = [];
+
     public function __construct(
         private WatermarkConfigMapper  $configMapper,
         private WatermarkLogMapper     $logMapper,
@@ -261,8 +264,13 @@ class WatermarkService {
      * when the node should be served unmodified.
      *
      * This is the type-agnostic half of {@see resolveDelivery}: owner policy lookup plus
-     * the on_download / on_share(+non-owner) rule, with no per-file exclusions. Splitting
-     * it out lets a *folder* be gated by the same rule — see {@see deliveryApplies}.
+     * the on_download / on_share(+non-owner) rule, with no per-file exclusions.
+     *
+     * Only ever ask this about a *file*. A folder cannot answer for its members under
+     * on_share: a received single-file share is mounted inside the recipient's own home,
+     * so the containing folder reports owner access while the member is a share. Gating an
+     * archive on its container is what leaked clean originals; {@see deliveryTriggerFor}
+     * per member is the correct question.
      */
     private function deliveryConfig(FileInfo $node, bool $publicContext = false): ?WatermarkConfig {
         $ownerUid = $node->getOwner()?->getUID() ?? $this->userSession->getUser()?->getUID();
@@ -280,19 +288,6 @@ class WatermarkService {
         }
 
         return $config;
-    }
-
-    /**
-     * Whether a delivery trigger applies to this fetch of $node, ignoring the per-file
-     * exclusions (supported type, mime whitelist, folder tag).
-     *
-     * Coarse gate for the archive interceptor: it must decide whether to take over a
-     * *folder* download before it has looked at any member. Each member is then judged
-     * individually by {@see watermarkForDownload}, so an excluded or unsupported file
-     * inside a folder this returns true for is still streamed untouched.
-     */
-    public function deliveryApplies(FileInfo $node, bool $publicContext = false): bool {
-        return $this->deliveryConfig($node, $publicContext) !== null;
     }
 
     /**
@@ -412,7 +407,29 @@ class WatermarkService {
         return $this->originalStore->has($fileId);
     }
 
+    /**
+     * Whether any configured policy uses a delivery trigger.
+     *
+     * Coarse, owner-agnostic gate for the archive interceptor — see
+     * {@see WatermarkConfigMapper::hasDeliveryTrigger}.
+     */
+    public function hasDeliveryTriggerConfigured(): bool {
+        return $this->configMapper->hasDeliveryTrigger();
+    }
+
     public function resolveConfig(?string $userId = null): WatermarkConfig {
+        // Memoised for the request: a folder download resolves the policy once per member,
+        // which is two queries a file without this. Configs are not mutated mid-request —
+        // the settings endpoints write and return, they do not then re-read through here.
+        $key = $userId ?? '';
+        if (isset($this->configCache[$key])) {
+            return $this->configCache[$key];
+        }
+
+        return $this->configCache[$key] = $this->resolveConfigUncached($userId);
+    }
+
+    private function resolveConfigUncached(?string $userId = null): WatermarkConfig {
         if ($userId !== null) {
             $userConfigs = $this->configMapper->findByUser($userId);
             if (!empty($userConfigs)) {
