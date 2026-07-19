@@ -33,10 +33,9 @@ services:
     volumes:
       - rustfs_data:/data
     healthcheck:
-      # RustFS answers S3 requests on :9000; curl or wget is used depending on
-      # what the image ships. If neither is present, drop this block and switch
-      # the nextcloud depends_on to `condition: service_started`.
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/ >/dev/null 2>&1 || wget -qO- http://localhost:9000/ >/dev/null 2>&1 || exit 1"]
+      # Probe /health, not /. The S3 root returns 403 AccessDenied to an
+      # unauthenticated GET, which `curl -f` treats as a failure.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health >/dev/null 2>&1 || wget -qO- http://localhost:9000/health >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20

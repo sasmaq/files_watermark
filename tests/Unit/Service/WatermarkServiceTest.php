@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
+use OCA\FilesWatermark\Db\WatermarkLog;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\OriginalStore;
@@ -838,6 +839,124 @@ class WatermarkServiceTest extends TestCase {
 
         $this->assertTrue($this->service->watermarkInPlace($file, 'on_demand', $config));
         $this->assertSame(['store', 'putContent'], $order, 'original must be preserved before the overwrite');
+    }
+
+    /**
+     * @return array{0: File&MockObject, 1: WatermarkConfig}
+     */
+    private function inPlaceFixture(): array {
+        $config = new WatermarkConfig();
+        $config->setType('image');
+        $config->setTextTemplate('{username}');
+        $config->setTrigger('on_upload');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/png');
+        $file->method('getName')->willReturn('photo.png');
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+        $file->method('getContent')->willReturn('original-bytes');
+        $this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
+
+        return [$file, $config];
+    }
+
+    public function testWatermarkInPlaceDoesNotLogWhenTheWriteFails(): void {
+        // A phantom audit row is worse than a missing one: isAlreadyWatermarked() reads
+        // this log, so a row for content that was never written makes every retry skip
+        // the file for good.
+        [$file, $config] = $this->inPlaceFixture();
+
+        $rendered = null;
+        $this->imageWatermarker->method('apply')
+            ->willReturnCallback(function (string $src, string $dest) use (&$rendered): void {
+                file_put_contents($dest, 'watermarked-bytes');
+                $rendered = $dest;
+            });
+
+        $file->method('putContent')->willThrowException(new \RuntimeException('is locked'));
+
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        $this->expectException(\RuntimeException::class);
+        try {
+            $this->service->watermarkInPlace($file, 'on_upload', $config);
+        } finally {
+            // ...and the plaintext render must not be left behind in the temp dir.
+            $this->assertNotNull($rendered);
+            $this->assertFileDoesNotExist($rendered);
+            $this->assertDirectoryDoesNotExist(dirname($rendered));
+        }
+    }
+
+    public function testWatermarkInPlaceLogsAfterTheWriteLands(): void {
+        [$file, $config] = $this->inPlaceFixture();
+
+        $this->imageWatermarker->method('apply')
+            ->willReturnCallback(function (string $src, string $dest): void {
+                file_put_contents($dest, 'watermarked-bytes');
+            });
+
+        $order = [];
+        $file->method('putContent')->willReturnCallback(function () use (&$order): void {
+            $order[] = 'putContent';
+        });
+        $this->logMapper->expects($this->once())
+            ->method('insertLog')
+            ->with('alice', 11, '/alice/files/photo.png', 'on_upload', null)
+            ->willReturnCallback(function () use (&$order) {
+                $order[] = 'insertLog';
+                return new WatermarkLog();
+            });
+
+        $this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config));
+        $this->assertSame(['putContent', 'insertLog'], $order, 'the audit row must follow the write');
+    }
+
+    public function testWatermarkInPlaceAttributesToAnExplicitActorWithoutASession(): void {
+        // How the background job runs: no session, so the uploader is passed in. Without
+        // it the watermark would read "Unknown" and the audit row "system".
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setTrigger('on_upload');
+
+        $this->userSession->method('getUser')->willReturn(null);
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        $actor = $this->createMock(IUser::class);
+        $actor->method('getUID')->willReturn('bob');
+        $actor->method('getDisplayName')->willReturn('Bob');
+        $actor->method('getEMailAddress')->willReturn('bob@example.com');
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/png');
+        $file->method('getName')->willReturn('photo.png');
+        $file->method('getId')->willReturn(11);
+        $file->method('getPath')->willReturn('/bob/files/photo.png');
+        $file->method('getContent')->willReturn('original-bytes');
+        $this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
+
+        $placeholders = null;
+        $this->imageWatermarker->method('apply')
+            ->willReturnCallback(function (string $src, string $dest, $cfg, array $ph) use (&$placeholders): void {
+                file_put_contents($dest, 'watermarked-bytes');
+                $placeholders = $ph;
+            });
+
+        $this->logMapper->expects($this->once())
+            ->method('insertLog')
+            ->with('bob', 11, '/bob/files/photo.png', 'on_upload', null);
+
+        $this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config, $actor));
+        $this->assertSame('Bob', $placeholders['username']);
+        $this->assertSame('bob@example.com', $placeholders['email']);
     }
 
     public function testRemoveWatermarkRestoresPreservedOriginal(): void {

@@ -12,6 +12,7 @@ use OCP\Files\File;
 use OCP\Files\FileInfo;
 use OCP\Files\IRootFolder;
 use OCP\Files\Storage\ISharedStorage;
+use OCP\IUser;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
 use Psr\Log\LoggerInterface;
@@ -41,19 +42,37 @@ class WatermarkService {
     /**
      * Apply a watermark and return the path of the watermarked temporary copy.
      * Caller is responsible for deleting the temp file after use.
+     *
+     * For the streaming triggers the render *is* the deliverable, so the audit row is
+     * recorded here. The in-place triggers must not use this — their deliverable is the
+     * persisted write, so they render via {@see renderToTemp} and log only once that
+     * write lands. See {@see watermarkInPlace}.
      */
     public function watermarkFile(File $file, string $trigger, ?WatermarkConfig $config = null): string {
+        [$tmpPath, $resolved] = $this->renderToTemp($file, $trigger, $config);
+        $this->recordLog($file, $trigger, $resolved);
+
+        return $tmpPath;
+    }
+
+    /**
+     * Render the watermarked copy to a temp path, without recording anything.
+     *
+     * @return array{0: string, 1: WatermarkConfig} the temp path and the config the
+     *         render actually resolved to (callers need its id for the audit row)
+     */
+    private function renderToTemp(File $file, string $trigger, ?WatermarkConfig $config, ?IUser $actor = null): array {
         $mime = $file->getMimeType();
         $this->assertSupported($mime, $file);
 
         if ($config === null) {
-            $config = $this->resolveConfig($this->userSession->getUser()?->getUID());
+            $config = $this->resolveConfig(($actor ?? $this->userSession->getUser())?->getUID());
         }
 
         $this->assertMimeAllowed($mime, $config);
         $this->assertFolderTagMatches($file, $config);
 
-        $placeholders = $this->buildPlaceholders($file, $trigger);
+        $placeholders = $this->buildPlaceholders($file, $trigger, $actor);
         $tmpPath      = $this->createTempPath($file->getName());
 
         $srcTmp = $tmpPath . '_src';
@@ -87,7 +106,14 @@ class WatermarkService {
         $this->discardLogo($logoTmp);
         unlink($srcTmp);
 
-        $user = $this->userSession->getUser();
+        return [$tmpPath, $config];
+    }
+
+    /**
+     * Record the audit row for a watermark that has actually been delivered.
+     */
+    private function recordLog(File $file, string $trigger, WatermarkConfig $config, ?IUser $actor = null): void {
+        $user = $actor ?? $this->userSession->getUser();
         $this->logMapper->insertLog(
             $user?->getUID() ?? $this->anonymousLabel($trigger, 'public-link', 'system'),
             $file->getId(),
@@ -95,8 +121,6 @@ class WatermarkService {
             $trigger,
             $config->getId(),
         );
-
-        return $tmpPath;
     }
 
     /**
@@ -303,7 +327,7 @@ class WatermarkService {
      * @return bool true when the watermark was applied, false when it was skipped
      *              because the file is already watermarked
      */
-    public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null): bool {
+    public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null, ?IUser $actor = null): bool {
         if ($this->isAlreadyWatermarked($file->getId())) {
             $this->logger->info('files_watermark: skipping already-watermarked file {path}', [
                 'path'   => $file->getPath(),
@@ -312,18 +336,30 @@ class WatermarkService {
             return false;
         }
 
-        $tmpPath = $this->watermarkFile($file, $trigger, $config);
+        [$tmpPath, $resolved] = $this->renderToTemp($file, $trigger, $config, $actor);
 
-        // Preserve the pre-watermark bytes before they are overwritten — this burn is
-        // destructive and irreversible, so this copy is the only route back. Read the
-        // original *now*, while the stored content is still clean. A failed backup is
-        // logged and does not abort the watermark; the user simply won't be able to undo
-        // it, which removeWatermark() reports rather than pretending to restore.
-        $this->originalStore->store($file->getId(), $file->getContent());
+        try {
+            // Preserve the pre-watermark bytes before they are overwritten — this burn is
+            // destructive and irreversible, so this copy is the only route back. Read the
+            // original *now*, while the stored content is still clean. A failed backup is
+            // logged and does not abort the watermark; the user simply won't be able to undo
+            // it, which removeWatermark() reports rather than pretending to restore.
+            $this->originalStore->store($file->getId(), $file->getContent());
 
-        $file->putContent(file_get_contents($tmpPath));
-        unlink($tmpPath);
-        @rmdir(dirname($tmpPath));
+            $file->putContent(file_get_contents($tmpPath));
+        } finally {
+            // $tmpPath holds a plaintext watermarked copy of the file. putContent() can
+            // throw (a locked node, a full quota), and without this the copy is left
+            // readable in the temp dir — the same leak discardTemp() exists to prevent on
+            // the render path.
+            $this->discardTemp($tmpPath);
+        }
+
+        // Only once the write has landed. Logging before it would assert a watermark that
+        // isn't in the file, and because isAlreadyWatermarked() reads this same log that
+        // phantom row would then permanently skip the file on every retry.
+        $this->recordLog($file, $trigger, $resolved, $actor);
+
         return true;
     }
 
@@ -446,8 +482,13 @@ class WatermarkService {
         return $trigger === 'on_share' ? $publicLabel : $default;
     }
 
-    private function buildPlaceholders(File $file, string $trigger): array {
-        $user = $this->userSession->getUser();
+    /**
+     * @param ?IUser $actor the user the watermark is attributed to; null falls back to the
+     *        session user. Background jobs have no session, so they must pass it explicitly
+     *        or every watermark would render as "Unknown".
+     */
+    private function buildPlaceholders(File $file, string $trigger, ?IUser $actor = null): array {
+        $user = $actor ?? $this->userSession->getUser();
         return [
             'username' => $user?->getDisplayName() ?? $this->anonymousLabel($trigger, 'Public link', 'Unknown'),
             'email'    => $user?->getEMailAddress() ?? '',

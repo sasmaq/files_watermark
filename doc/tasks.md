@@ -59,9 +59,19 @@ they are implemented.
 ### Triggers
 
 - [x] **On demand** — file-action menu apply (in place)
-- [x] **On upload** — `NodeWrittenListener` on `NodeWrittenEvent`
+- [x] **On upload** — `NodeWrittenListener` on `NodeWrittenEvent` queues `WatermarkOnUploadJob`
   - [x] Only trigger when config `trigger = on_upload`
   - [x] Guard against infinite loop (watermarked write re-triggering the listener)
+  - the burn **cannot** run inline in the listener: `NodeWrittenEvent` fires while the
+    triggering write still holds a lock on the node, so `putContent()` from there throws
+    `LockedException`. Not DAV-specific — a plain Files-API `newFile()` fails identically.
+    The listener therefore only enqueues; `WatermarkOnUploadJob` does the write once the
+    lock is gone, which makes on-upload watermarking **eventually consistent** (the file
+    is clean until cron runs the job)
+  - the job has no session, so it passes the uploading user to `watermarkInPlace()`
+    explicitly — otherwise `{username}` renders "Unknown" and the audit row says "system"
+  - the job's own write re-fires `NodeWrittenEvent`; `NodeWrittenListener::suppressFor()`
+    stops that queueing a second job for the same file
 - [x] **On download** — `DownloadController` streams a watermarked temp copy; original untouched
   - [x] Temp file cleaned up after the response is sent
 - [x] **On share** — watermarked at *delivery* time, not at share-creation time
@@ -386,14 +396,28 @@ the watermark into the PDF/image content (destructive, non-reversible), "remove"
 Storage-agnostic by design: all file I/O goes through the Files API
 (`getContent` / `putContent` / `newFile`); only short-lived temp copies touch the
 local filesystem. No S3-specific code needed. `docker-compose.s3.yml` (Nextcloud +
-MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
+RustFS) is provided to verify — see README "Testing with S3 storage (RustFS)".
 
 - [x] `DownloadController` serves watermarked copy on S3-backed storage
   - stages content to a local temp via `getContent()` and streams that temp; original S3 object untouched (asserted in `DownloadControllerTest`)
-- [ ] Verify on-demand / on-upload watermarking on an S3 primary-storage instance
-  - harness ready (`docker-compose.s3.yml`); needs a manual run to tick off
-- [ ] Verify on external S3 storage mount
-  - `occ files_external:create` steps documented in README; needs a manual run to tick off
+- [x] Verify on-demand / on-upload watermarking on an S3 primary-storage instance
+  - manual run on `docker-compose.s3.yml` (NC 31.0.14.1, RustFS, S3 primary storage):
+    on-demand burn ✅, on-download watermarked stream with the S3 object byte-identical
+    before/after ✅, on-upload ✅ (after the fix below)
+  - the run surfaced three real bugs, all fixed and regression-tested; **none were
+    S3-specific** — they reproduce on local storage too:
+    1. on-upload threw `LockedException` and never watermarked anything — see the
+       on-upload notes under Goal 3
+    2. the audit row was written inside `watermarkFile()`, *before* `putContent()`, so a
+       failed write left a row asserting a watermark that wasn't in the file. Because
+       `isAlreadyWatermarked()` reads that same log, the phantom row then made every
+       retry skip the file permanently. Logging moved after the write lands
+       (`renderToTemp()` renders, `recordLog()` records)
+    3. a failed in-place write leaked the plaintext watermarked temp copy — `discardTemp()`
+       now runs in a `finally`
+  - note: the Nextcloud skeleton PDFs are PDF 1.5+ with compressed xref, which FPDI cannot
+    parse. It fails gracefully and leaves the original intact, but it means the PDF path
+    can't be exercised with the built-in sample files (see the Goal 1 FPDI item)
 
 ---
 
@@ -404,8 +428,6 @@ MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
 - [ ] `watermark_config` columns include `mime_types`, `folder_tag`, and `metadata` type support
   - `mime_types` and `folder_tag` columns present; **`metadata` type not yet supported** (`ApiController::VALID_TYPES` is `text` / `image` / `combined`)
 - [x] `WatermarkConfigMapper` — `findByUser`, `findGlobal`, `findById`, `findByUserAndMimeType`
-- [ ] Config resolution order: user → group → global → defaults
-  - `resolveConfig` does user → global → default; **group override (`group_id`) still not wired in**
 - [x] `WatermarkLogMapper` — `findAll` with pagination (`findAll(int $limit = 100, int $offset = 0)`)
 
 ---
