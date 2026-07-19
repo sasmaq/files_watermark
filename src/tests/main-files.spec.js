@@ -12,6 +12,7 @@ import {
 	startIndicator,
 } from '../main-files.js'
 import { __setState, __resetState } from '@nextcloud/initial-state'
+import { emit } from '@nextcloud/event-bus'
 import axios from '@nextcloud/axios'
 
 // @nextcloud/files, event-bus, router, l10n and initial-state are stubbed via
@@ -69,6 +70,7 @@ describe('main-files', () => {
 		// action availability hold; the trigger-gating suite overrides it per case.
 		__setState('files_watermark', 'effective-trigger', 'on_demand')
 		axios.get.mockReset()
+		emit.mockClear()
 	})
 
 	describe('isNodeWatermarked', () => {
@@ -108,6 +110,15 @@ describe('main-files', () => {
 
 		it('is disabled once the file is watermarked (from the PROPFIND property)', () => {
 			expect(isApplyActionEnabled([node({ watermarked: true })])).toBe(false)
+		})
+
+		it('is disabled when the file carries the indicator badge, even if its DAV property is stale', () => {
+			// Post-apply / reconcile path: the id is in the badge set (so the indicator
+			// shows) while the node's is-watermarked attribute is still 0.
+			markWatermarked(42)
+			expect(isApplyActionEnabled([node({ fileid: 42, watermarked: false })])).toBe(false)
+			// A different, un-badged file of the same type stays enabled.
+			expect(isApplyActionEnabled([node({ fileid: 99, watermarked: false })])).toBe(true)
 		})
 
 		it('is disabled when the effective trigger is not on_demand', () => {
@@ -253,6 +264,19 @@ describe('main-files', () => {
 			)
 			expect(document.querySelector('[data-cy-files-list-row-fileid="2"]').querySelector(INDICATOR_SELECTOR)).not.toBeNull()
 			expect(document.querySelector('[data-cy-files-list-row-fileid="1"]').querySelector(INDICATOR_SELECTOR)).toBeNull()
+		})
+
+		it('stamps the node and emits a node update so the memoized Apply action re-hides', async () => {
+			const n2 = bareNode(2)
+			axios.get.mockResolvedValue({ data: { watermarked: [2] } })
+
+			await reconcileMissingStatus([bareNode(1), n2])
+
+			// The discovered node now reports watermarked, so a re-evaluated enabled()
+			// (and the indicator) both see it, and the Files app is told to re-render.
+			expect(n2.attributes['is-watermarked']).toBe(1)
+			expect(emit).toHaveBeenCalledWith('files:node:updated', n2)
+			expect(isApplyActionEnabled([n2])).toBe(false)
 		})
 
 		it('does not query when the property is present (present-but-0 is trusted)', async () => {

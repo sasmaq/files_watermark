@@ -1,6 +1,6 @@
 import { createApp, h } from 'vue'
 import { registerFileAction, FileAction, registerDavProperty } from '@nextcloud/files'
-import { subscribe } from '@nextcloud/event-bus'
+import { subscribe, emit } from '@nextcloud/event-bus'
 import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
@@ -75,14 +75,25 @@ export function isSingleSupportedFile(files) {
 /**
  * Whether the "Apply watermark" action should be offered for the selection:
  * a single supported-MIME file, in on_demand mode, that is not already
- * watermarked. The watermarked status comes from the WebDAV property PROPFIND
- * delivers with the listing, so this decides synchronously without a backend
- * round-trip.
+ * watermarked.
+ *
+ * "Watermarked" mirrors the on-screen indicator's source of truth exactly: the
+ * WebDAV property PROPFIND delivers with the listing, OR the badge id-set (which
+ * also holds files just watermarked via `markWatermarked` and any folded in by the
+ * REST reconcile). So whenever a file shows the indicator, its Apply action is
+ * hidden — even in the window where the node's DAV attribute is still stale.
  * @param {object[]} files - selected Files `Node` objects
  * @return {boolean} true when the action should be shown
  */
 export function isApplyActionEnabled(files) {
-	return isSingleSupportedFile(files) && !isNodeWatermarked(files[0])
+	if (!isSingleSupportedFile(files)) {
+		return false
+	}
+	const node = files[0]
+	const id = Number(node?.fileid ?? node?.id)
+	const watermarked = isNodeWatermarked(node)
+		|| (Number.isInteger(id) && watermarkedIds.has(id))
+	return !watermarked
 }
 
 // Small badge SVG (distinct from the action icon: a filled tag/seal mark).
@@ -152,6 +163,15 @@ registerFileAction(new FileAction({
 		// re-render, so the observer keeps the badge painted afterwards.
 		if (result === true) {
 			markWatermarked(Number(file.fileid ?? file.id))
+			// Stamp the watermarked state onto the node itself and notify the Files
+			// app so it re-renders this row. Nextcloud memoizes a FileAction's
+			// `enabled()` per node, so without this the just-watermarked file keeps
+			// offering "Apply watermark" until a full folder reload; updating the node
+			// forces `enabled()` to re-run (now false) and the action disappears.
+			if (file.attributes) {
+				file.attributes[DAV_WATERMARKED_PROP] = 1
+			}
+			emit('files:node:updated', file)
 		}
 		return result
 	},
@@ -226,11 +246,17 @@ export function markWatermarked(id) {
  */
 export async function reconcileMissingStatus(nodes) {
 	const missing = []
+	// Map ids back to their nodes so a discovered watermarked file can have its
+	// status stamped onto the node and the Files app notified (below).
+	const nodeById = new Map()
 	for (const node of nodes) {
 		const present = node?.attributes?.[DAV_WATERMARKED_PROP] !== undefined
 		const id = Number(node?.fileid ?? node?.id)
-		if (!present && Number.isInteger(id) && id > 0) {
-			missing.push(id)
+		if (Number.isInteger(id) && id > 0) {
+			nodeById.set(id, node)
+			if (!present) {
+				missing.push(id)
+			}
 		}
 	}
 	if (missing.length === 0) {
@@ -247,6 +273,19 @@ export async function reconcileMissingStatus(nodes) {
 			if (Number.isInteger(id) && id > 0 && !watermarkedIds.has(id)) {
 				watermarkedIds.add(id)
 				changed = true
+				// The Apply action's enabled() was already evaluated (and memoized by
+				// Nextcloud) as true for this node during the initial render — because
+				// the DAV property was missing at that point. Stamp the now-known status
+				// onto the node and emit a node update so the action re-evaluates to
+				// false and the button disappears; without this it lingers until the
+				// next folder navigation. Same mechanism the post-apply path uses.
+				const node = nodeById.get(id)
+				if (node) {
+					if (node.attributes) {
+						node.attributes[DAV_WATERMARKED_PROP] = 1
+					}
+					emit('files:node:updated', node)
+				}
 			}
 		}
 		if (changed) {
