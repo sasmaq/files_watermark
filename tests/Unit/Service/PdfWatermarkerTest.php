@@ -87,6 +87,29 @@ class PdfWatermarkerTest extends TestCase {
         $this->assertSame(2, $reader->setSourceFile($dest));
     }
 
+    public function testLongWatermarkTextRendersWithoutError(): void {
+        // Regression: tile spacing used to be a fixed multiple of the font size,
+        // so text wider than a few characters overflowed its cell and adjacent
+        // tiles collided into an illegible smear. Spacing now derives from the
+        // measured text width, so even a long resolved string renders cleanly.
+        $source = $this->createSourcePdf(1);
+        $dest   = $this->tmpDir . '/long.pdf';
+
+        $config = $this->makeConfig('text');
+        $config->setTextTemplate('{username} — Confidential — {date} — Do Not Distribute');
+
+        $this->watermarker->apply($source, $dest, $config, [
+            'username' => 'Alexandra Featherstonehaugh',
+            'date'     => '2026-07-19',
+        ]);
+
+        $this->assertFileExists($dest);
+        $this->assertStringStartsWith('%PDF', (string) file_get_contents($dest));
+
+        $reader = new Fpdi();
+        $this->assertSame(1, $reader->setSourceFile($dest));
+    }
+
     public function testCorruptOrEncryptedPdfThrowsRuntimeException(): void {
         $bad  = $this->tmpDir . '/bad.pdf';
         file_put_contents($bad, 'this is not a real PDF document');

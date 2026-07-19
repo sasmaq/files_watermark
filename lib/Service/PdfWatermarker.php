@@ -51,20 +51,36 @@ class PdfWatermarker {
         $color  = $this->hexToRgb($config->getColor());
         $alpha  = round($config->getOpacity() / 100, 2);
 
-        $pdf->SetFont('helvetica', 'B', $config->getFontSize());
+        $fontSize = $config->getFontSize();
+        $pdf->SetFont('helvetica', 'B', $fontSize);
         $pdf->SetTextColor($color[0], $color[1], $color[2]);
         $pdf->SetAlpha($alpha);
 
-        $angle    = -$config->getRotation();
-        $stepX    = max(85, $config->getFontSize() * 4);
-        $stepY    = max(55, $config->getFontSize() * 3);
+        // TCPDF's Rotate is counter-clockwise-positive, the opposite of SVG's
+        // clockwise-positive `rotate()` used by the settings live preview. The preview
+        // tilts by `rotate(-rotation)` (uphill ↗), so to match it visually TCPDF must
+        // rotate by +rotation — passing -rotation here tilted the text the other way.
+        $angle = $config->getRotation();
 
-        for ($x = -$stepX; $x < $width + $stepX; $x += $stepX) {
-            for ($y = -$stepY; $y < $height + $stepY; $y += $stepY) {
+        // Space each tile by the *actual* rendered text size, not an arbitrary
+        // multiple of the font size — otherwise real watermark text (which is far
+        // wider than a few characters) overflows its cell and neighbouring tiles
+        // collide into an illegible diagonal smear. GetStringWidth measures the
+        // string in the current font; the gaps give the repetitions breathing room.
+        $textWidth = max(1.0, $pdf->GetStringWidth($text));
+        $lineHeight = $fontSize * 1.2;
+        $stepX = $textWidth + $fontSize * 4;
+        $stepY = $lineHeight + $fontSize * 4;
+
+        // Draw a grid of individually-rotated tiles, extended a full step beyond
+        // every edge so the rotation still fills the page corners.
+        for ($y = -$stepY; $y < $height + $stepY; $y += $stepY) {
+            for ($x = -$stepX; $x < $width + $stepX; $x += $stepX) {
                 $pdf->StartTransform();
-                $pdf->Rotate($angle, $x + $stepX / 2, $y + $stepY / 2);
+                // Pivot on the text's own centre so the grid spacing is preserved.
+                $pdf->Rotate($angle, $x + $textWidth / 2, $y + $lineHeight / 2);
                 $pdf->SetXY($x, $y);
-                $pdf->Cell($stepX, $stepY, $text, 0, 0, 'C');
+                $pdf->Cell($textWidth, $lineHeight, $text, 0, 0, 'C');
                 $pdf->StopTransform();
             }
         }
