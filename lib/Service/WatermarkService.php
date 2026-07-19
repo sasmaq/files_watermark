@@ -54,10 +54,20 @@ class WatermarkService {
         $srcTmp = $tmpPath . '_src';
         file_put_contents($srcTmp, $file->getContent());
 
-        if (in_array($mime, self::SUPPORTED_PDF, true)) {
-            $this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
-        } else {
-            $this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
+        try {
+            if (in_array($mime, self::SUPPORTED_PDF, true)) {
+                $this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
+            } else {
+                $this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
+            }
+        } catch (\Throwable $e) {
+            // $srcTmp holds a plaintext copy of the file. A render failure is routine
+            // (unparseable PDFs, and every on_share deny path goes through one), so
+            // without this it accumulates readable copies of user content in the temp
+            // dir indefinitely — the caller only ever gets an exception, never a path
+            // it could clean up itself.
+            $this->discardTemp($tmpPath, $srcTmp);
+            throw $e;
         }
 
         unlink($srcTmp);
@@ -190,17 +200,8 @@ class WatermarkService {
             return null;
         }
 
-        $ownerUid = $file->getOwner()?->getUID() ?? $this->userSession->getUser()?->getUID();
-
-        try {
-            $config = $this->resolveConfig($ownerUid);
-        } catch (\Throwable) {
-            return null;
-        }
-
-        $trigger = $config->getTrigger();
-
-        if ($trigger !== 'on_download' && !($trigger === 'on_share' && $this->isShareAccess($file, $publicContext))) {
+        $config = $this->deliveryConfig($file, $publicContext);
+        if ($config === null) {
             return null;
         }
 
@@ -213,7 +214,56 @@ class WatermarkService {
             return null;
         }
 
-        return [$trigger, $config];
+        return [$config->getTrigger(), $config];
+    }
+
+    /**
+     * The owner's config when a delivery trigger applies to this fetch of $node, or null
+     * when the node should be served unmodified.
+     *
+     * This is the type-agnostic half of {@see resolveDelivery}: owner policy lookup plus
+     * the on_download / on_share(+non-owner) rule, with no per-file exclusions. Splitting
+     * it out lets a *folder* be gated by the same rule — see {@see deliveryApplies}.
+     */
+    private function deliveryConfig(FileInfo $node, bool $publicContext = false): ?WatermarkConfig {
+        $ownerUid = $node->getOwner()?->getUID() ?? $this->userSession->getUser()?->getUID();
+
+        try {
+            $config = $this->resolveConfig($ownerUid);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $trigger = $config->getTrigger();
+
+        if ($trigger !== 'on_download' && !($trigger === 'on_share' && $this->isShareAccess($node, $publicContext))) {
+            return null;
+        }
+
+        return $config;
+    }
+
+    /**
+     * Whether a delivery trigger applies to this fetch of $node, ignoring the per-file
+     * exclusions (supported type, mime whitelist, folder tag).
+     *
+     * Coarse gate for the archive interceptor: it must decide whether to take over a
+     * *folder* download before it has looked at any member. Each member is then judged
+     * individually by {@see watermarkForDownload}, so an excluded or unsupported file
+     * inside a folder this returns true for is still streamed untouched.
+     */
+    public function deliveryApplies(FileInfo $node, bool $publicContext = false): bool {
+        return $this->deliveryConfig($node, $publicContext) !== null;
+    }
+
+    /**
+     * The delivery trigger that applies to $node ignoring per-file exclusions, or null.
+     *
+     * Lets the archive interceptor tell "this member had to be watermarked and the render
+     * failed" (deny) from "this member was never a candidate" (stream as-is).
+     */
+    public function deliveryTriggerFor(FileInfo $node, bool $publicContext = false): ?string {
+        return $this->deliveryConfig($node, $publicContext)?->getTrigger();
     }
 
     /**
@@ -352,6 +402,22 @@ class WatermarkService {
                 'path' => $file?->getPath(),
             ]);
             throw new \RuntimeException("Unsupported file type: $mime");
+        }
+    }
+
+    /**
+     * Remove the temp working files for a render, and the private dir holding them.
+     */
+    private function discardTemp(string ...$paths): void {
+        $dir = null;
+        foreach ($paths as $path) {
+            $dir ??= dirname($path);
+            if (file_exists($path)) {
+                @unlink($path);
+            }
+        }
+        if ($dir !== null) {
+            @rmdir($dir);
         }
     }
 

@@ -127,6 +127,45 @@ class WatermarkServiceTest extends TestCase {
         $this->service->watermarkFile($file, 'on_demand');
     }
 
+    public function testWatermarkFileCleansUpTempFilesWhenRenderFails(): void {
+        // A failed render must not leave the plaintext source copy behind: the caller
+        // only receives an exception, so it has no path it could clean up itself.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('broken.pdf');
+        $file->method('getContent')->willReturn('not really a pdf');
+
+        $captured = null;
+        $this->pdfWatermarker->method('apply')->willReturnCallback(
+            function (string $src) use (&$captured): void {
+                $captured = $src;
+                throw new \RuntimeException('cannot parse PDF');
+            },
+        );
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        try {
+            $this->service->watermarkFile($file, 'on_demand');
+            $this->fail('Expected the render failure to propagate');
+        } catch (\RuntimeException) {
+            // expected
+        }
+
+        $this->assertNotNull($captured, 'renderer should have been handed a source path');
+        $this->assertFileDoesNotExist($captured, 'plaintext source copy leaked');
+        $this->assertDirectoryDoesNotExist(dirname($captured), 'temp dir leaked');
+    }
+
     public function testWatermarkFileThrowsWhenMimeNotInWhitelist(): void {
         $config = new WatermarkConfig();
         $config->setType('text');

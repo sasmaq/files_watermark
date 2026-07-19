@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\EventListener;
 
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
+use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\EventDispatcher\Event;
+use OCP\EventDispatcher\IEventDispatcher;
 use OCP\EventDispatcher\IEventListener;
+use OCP\IDateTimeZone;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 
 /**
  * Registers {@see DownloadInterceptorPlugin} on the *public-link* WebDAV server, so a
@@ -52,6 +56,16 @@ class SabrePublicPluginAddListener implements IEventListener {
 
         $server->addPlugin(new DownloadInterceptorPlugin(
             $this->container->get(WatermarkService::class),
+            true,
+        ));
+
+        // Folder shares are downloaded as an archive, which the single-file interceptor
+        // never sees — same gap as on the authenticated server.
+        $server->addPlugin(new ZipInterceptorPlugin(
+            $this->container->get(WatermarkService::class),
+            $this->container->get(IDateTimeZone::class),
+            $this->container->get(IEventDispatcher::class),
+            $this->container->get(LoggerInterface::class),
             true,
         ));
     }
