@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Controller;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Controller;
@@ -29,6 +30,7 @@ class ApiController extends Controller {
         private IRootFolder           $rootFolder,
         private IUserSession          $userSession,
         private IGroupManager         $groupManager,
+        private WatermarkImageStore   $imageStore,
     ) {
         parent::__construct($appName, $request);
     }
@@ -92,6 +94,16 @@ class ApiController extends Controller {
             );
         }
 
+        // The image may only be one this app stored from an upload. It used to be a
+        // free-text server path that the renderers read directly, which let any account
+        // composite an arbitrary server-readable image into its watermarks.
+        if ($imagePath !== null && $imagePath !== '' && !WatermarkImageStore::isReference($imagePath)) {
+            return new DataResponse(
+                ['error' => 'Invalid watermark image. Upload an image instead of specifying a path.'],
+                Http::STATUS_BAD_REQUEST,
+            );
+        }
+
         if ($textTemplate !== null) {
             preg_match_all('/\{([^}]+)\}/', $textTemplate, $matches);
             $invalid = array_diff($matches[1], self::VALID_TOKENS);
@@ -147,6 +159,42 @@ class ApiController extends Controller {
         }
 
         return new DataResponse($config->jsonSerialize());
+    }
+
+    /**
+     * Store an uploaded watermark logo and return the reference to save on a config.
+     *
+     * Admin-only: the image is a server-wide asset written into the app's appdata, and the
+     * settings page that uses this is itself an admin section. Validation (real image type
+     * from content, size ceiling) lives in {@see WatermarkImageStore}.
+     */
+    public function uploadImage(): DataResponse {
+        $user = $this->userSession->getUser();
+        if ($user === null || !$this->groupManager->isAdmin($user->getUID())) {
+            return new DataResponse(['error' => 'Forbidden'], Http::STATUS_FORBIDDEN);
+        }
+
+        $upload = $this->request->getUploadedFile('image');
+        if (!is_array($upload) || !isset($upload['tmp_name'], $upload['error'])) {
+            return new DataResponse(['error' => 'No image was uploaded.'], Http::STATUS_BAD_REQUEST);
+        }
+
+        if ($upload['error'] !== UPLOAD_ERR_OK) {
+            // Covers the PHP-level ceilings too (upload_max_filesize / post_max_size),
+            // which reject the request before our own size check ever sees the file.
+            $message = in_array($upload['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)
+                ? 'The image is too large.'
+                : 'The image could not be uploaded.';
+            return new DataResponse(['error' => $message], Http::STATUS_BAD_REQUEST);
+        }
+
+        try {
+            $reference = $this->imageStore->store($upload['tmp_name']);
+        } catch (\RuntimeException $e) {
+            return new DataResponse(['error' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
+        }
+
+        return new DataResponse(['imagePath' => $reference]);
     }
 
     #[NoAdminRequired]

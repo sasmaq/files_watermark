@@ -35,6 +35,7 @@ class WatermarkService {
         private ISystemTagObjectMapper $tagObjectMapper,
         private LoggerInterface        $logger,
         private OriginalStore          $originalStore,
+        private WatermarkImageStore    $imageStore,
     ) {}
 
     /**
@@ -58,6 +59,14 @@ class WatermarkService {
         $srcTmp = $tmpPath . '_src';
         file_put_contents($srcTmp, $file->getContent());
 
+        // The renderers open the logo as a plain file path, but the config only holds an
+        // opaque reference to an uploaded image — resolve it to a temp copy for the render
+        // and hand them a config pointing at that. Anything the store does not recognise
+        // (notably a legacy hand-typed absolute path) resolves to null and renders as
+        // text-only rather than reading the server's filesystem.
+        $logoTmp = $this->imageStore->localPath($config->getImagePath());
+        $config  = $this->withImagePath($config, $logoTmp);
+
         try {
             if (in_array($mime, self::SUPPORTED_PDF, true)) {
                 $this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
@@ -65,6 +74,7 @@ class WatermarkService {
                 $this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
             }
         } catch (\Throwable $e) {
+            $this->discardLogo($logoTmp);
             // $srcTmp holds a plaintext copy of the file. A render failure is routine
             // (unparseable PDFs, and every on_share deny path goes through one), so
             // without this it accumulates readable copies of user content in the temp
@@ -74,6 +84,7 @@ class WatermarkService {
             throw $e;
         }
 
+        $this->discardLogo($logoTmp);
         unlink($srcTmp);
 
         $user = $this->userSession->getUser();
@@ -463,6 +474,23 @@ class WatermarkService {
                 'path' => $file?->getPath(),
             ]);
             throw new \RuntimeException("Unsupported file type: $mime");
+        }
+    }
+
+    /**
+     * A copy of $config whose image path is $path, so the renderers see a real file (or
+     * none) instead of the stored reference. Copied rather than mutated: $config is often
+     * the entity the mapper handed us, and it must not be dirtied by a render.
+     */
+    private function withImagePath(WatermarkConfig $config, ?string $path): WatermarkConfig {
+        $resolved = clone $config;
+        $resolved->setImagePath($path);
+        return $resolved;
+    }
+
+    private function discardLogo(?string $tmpPath): void {
+        if ($tmpPath !== null && file_exists($tmpPath)) {
+            @unlink($tmpPath);
         }
     }
 

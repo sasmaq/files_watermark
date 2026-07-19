@@ -67,11 +67,34 @@
 					<p class="wm-card__desc">
 						{{ t('files_watermark', 'The logo is centered on each page at 30% of its width.') }}
 					</p>
-					<NcTextField v-model="form.imagePath"
-						:label="t('files_watermark', 'Image path in Nextcloud')"
-						:placeholder="t('files_watermark', '/path/to/logo.png')" />
+					<input ref="fileInput"
+						type="file"
+						class="wm-file-input"
+						accept="image/png,image/jpeg"
+						@change="onImageSelected">
+					<div class="wm-upload">
+						<NcButton type="secondary" :disabled="uploading" @click="pickImage">
+							<template #icon>
+								<NcLoadingIcon v-if="uploading" :size="20" />
+							</template>
+							{{ form.imagePath ? t('files_watermark', 'Replace image') : t('files_watermark', 'Upload image') }}
+						</NcButton>
+						<NcButton v-if="form.imagePath"
+							type="tertiary"
+							:disabled="uploading"
+							@click="clearImage">
+							{{ t('files_watermark', 'Remove image') }}
+						</NcButton>
+						<img v-if="imagePreviewUrl"
+							:src="imagePreviewUrl"
+							class="wm-upload__thumb"
+							:alt="t('files_watermark', 'Watermark image preview')">
+						<span v-if="form.imagePath && !imagePreviewUrl" class="wm-upload__name">
+							{{ t('files_watermark', 'Image uploaded') }}
+						</span>
+					</div>
 					<p class="wm-help">
-						{{ t('files_watermark', 'Point to a PNG, JPG, or SVG file stored in Nextcloud.') }}
+						{{ t('files_watermark', 'Upload a PNG or JPEG image, up to {max} MB.', { max: MAX_IMAGE_MB }) }}
 					</p>
 					<p v-if="imagePathError" class="wm-field-error">
 						{{ imagePathError }}
@@ -314,7 +337,9 @@
 </template>
 
 <script setup>
-import { reactive, watch, computed } from 'vue'
+import { reactive, ref, watch, computed } from 'vue'
+import axios from '@nextcloud/axios'
+import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
@@ -400,16 +425,87 @@ const previewText = computed(() => {
 
 const displayText = computed(() => previewText.value || `${SAMPLE.username} — ${SAMPLE.date}`)
 
-const ALLOWED_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'svg']
+// Kept in step with WatermarkImageStore::MAX_BYTES and its allowed types. Checking here
+// too only saves the user a round-trip — the server re-validates from the file's actual
+// content, which is the check that counts.
+const MAX_IMAGE_MB = 2
+const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg']
 
-const imagePathError = computed(() => {
-	if (!form.imagePath) return null
-	const ext = form.imagePath.split('.').pop().toLowerCase()
-	if (!ALLOWED_IMAGE_EXTS.includes(ext)) {
-		return t('files_watermark', 'Image must be a PNG, JPG, or SVG file.')
+const fileInput = ref(null)
+const uploading = ref(false)
+const uploadError = ref(null)
+// Object URL of the just-picked file, so the admin sees what they uploaded without the
+// server having to serve the stored image back.
+const imagePreviewUrl = ref(null)
+
+const imagePathError = computed(() => uploadError.value)
+
+/**
+ * Validate a picked file before uploading it.
+ * @param {File} file - the file the admin chose
+ * @return {string|null} an error message, or null when acceptable
+ */
+function validateImageFile(file) {
+	if (!file) return null
+	if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+		return t('files_watermark', 'Image must be a PNG or JPEG file.')
+	}
+	if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+		return t('files_watermark', 'Image must be smaller than {max} MB.', { max: MAX_IMAGE_MB })
 	}
 	return null
-})
+}
+
+/**
+ *
+ */
+function pickImage() {
+	fileInput.value?.click()
+}
+
+/**
+ * Upload the picked image and store the reference the server hands back. The config keeps
+ * only that reference — the bytes live in the app's appdata.
+ * @param {Event} event - the file input's change event
+ */
+async function onImageSelected(event) {
+	const file = event.target?.files?.[0]
+	if (!file) return
+
+	uploadError.value = validateImageFile(file)
+	if (uploadError.value) {
+		event.target.value = ''
+		return
+	}
+
+	uploading.value = true
+	try {
+		const body = new FormData()
+		body.append('image', file)
+		const res = await axios.post(generateUrl('/apps/files_watermark/api/v1/image'), body)
+		form.imagePath = res?.data?.imagePath ?? ''
+		if (imagePreviewUrl.value) URL.revokeObjectURL(imagePreviewUrl.value)
+		imagePreviewUrl.value = URL.createObjectURL(file)
+	} catch (e) {
+		uploadError.value = e?.response?.data?.error ?? e.message
+	} finally {
+		uploading.value = false
+		// Let the same file be picked again after a failure.
+		event.target.value = ''
+	}
+}
+
+/**
+ *
+ */
+function clearImage() {
+	form.imagePath = ''
+	uploadError.value = null
+	if (imagePreviewUrl.value) {
+		URL.revokeObjectURL(imagePreviewUrl.value)
+		imagePreviewUrl.value = null
+	}
+}
 
 const appearanceDesc = computed(() => form.type === 'image'
 	? t('files_watermark', 'Adjust how strongly the logo shows through.')
@@ -462,11 +558,9 @@ const logo = computed(() => {
 	return { w, h, x: (PV_W - w) / 2, y: (PV_H - h) / 2 }
 })
 
-const logoLabel = computed(() => {
-	if (!form.imagePath) return 'LOGO'
-	const base = form.imagePath.split('/').pop() || 'LOGO'
-	return base.length > 16 ? base.slice(0, 15) + '…' : base
-})
+// The stored value is an opaque reference now, not a filename, so there is nothing
+// human-readable to show — the preview box just marks where the logo sits.
+const logoLabel = computed(() => (form.imagePath ? t('files_watermark', 'LOGO') : 'LOGO'))
 
 const contentLines = [
 	{ y: 74, w: 232 }, { y: 106, w: 210 }, { y: 138, w: 244 },
@@ -706,6 +800,38 @@ const contentLines = [
 
 .wm-help {
     margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--color-text-maxcontrast);
+}
+/* The real input is driven by the buttons above it; hidden rather than removed so it
+   stays focusable and keeps native file-picker behaviour. */
+.wm-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+.wm-upload {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.wm-upload__thumb {
+    max-width: 64px;
+    max-height: 40px;
+    object-fit: contain;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    background: var(--color-background-dark);
+    padding: 2px;
+}
+.wm-upload__name {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }

@@ -202,8 +202,16 @@ here because every `on_share` deny goes through a failed render.
 - [x] Scope config UI — per-folder system-tag targeting (`folder_tag`)
 - [x] `AuditLog.vue` — paginated table (page size selector, prev/next) wired to `GET /api/v1/log`
 - [x] `WatermarkForm.vue` — live preview of template with variable substitution
-- [ ] `WatermarkForm.vue` — image upload field: validate type (PNG/SVG) and size
-  - current UI is a Nextcloud **path** field with extension-type validation; **no file upload + no size check**
+- [x] `WatermarkForm.vue` — image upload field: validate type and size
+  - the old **path** field is gone: the admin now picks a file, it uploads to
+    `POST /api/v1/image`, and the config stores only the opaque reference it returns
+  - client-side checks (type + 2 MB) are a convenience; `WatermarkImageStore` re-validates
+    server-side from the file's **actual bytes**, which is the check that counts
+  - **PNG/JPEG only — SVG was dropped deliberately.** It never worked in two of the three
+    render paths (the GD fallback decodes only PNG/JPEG, and TCPDF's `Image()` cannot place
+    an SVG), and storing attacker-authored markup that ImageMagick may parse with
+    external-entity/remote-fetch delegates is not worth the one path where it did
+  - preview thumbnail + Replace/Remove controls; uploads are admin-only
 - [x] `WatermarkModal.vue` — show file name + estimated processing time before on-demand apply
 - [x] `main-admin.js` — Vue 3 entry mounts in the admin content area
 - [x] `main-files.js` — register an "Apply Watermark" `FileAction` in the Files file/context menu
@@ -427,7 +435,21 @@ MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
 - [ ] Validate ownership / read permission before processing
 - [ ] Audit-log endpoint admin-only (403 otherwise)
 - [ ] Sanitize watermark template output to prevent XSS in the settings UI
-- [ ] Validate & store uploaded watermark images (MIME + size) outside the web root
+- [x] Validate & store uploaded watermark images (MIME + size) outside the web root
+  - `WatermarkImageStore` writes to the app's appdata, names files itself (nothing
+    client-supplied reaches the filesystem), caps at 2 MB and derives the type from the
+    file's real bytes rather than its name or declared MIME
+- [x] **Fixed: any account could make the renderers read an arbitrary server file.**
+  `saveConfig` is `#[NoAdminRequired]` and stored `imagePath` verbatim, while the renderers
+  `file_exists()`ed it as a raw server path — so a regular user could point their personal
+  watermark at any image readable by the web server and have it composited into files they
+  downloaded. Confirmed exploitable on the test instance before the fix
+  - [x] `saveConfig` now rejects anything that is not a store-issued reference (400)
+  - [x] `WatermarkImageStore::localPath()` refuses non-references at *render* time too, so
+    configs already holding a path (they survive in the DB) resolve to no image and log a
+    warning instead of reading the file — verified against the pre-fix row
+  - [ ] Consider a migration that clears legacy `image_path` values, so the stale rows do
+        not sit there looking valid; admins must re-upload either way
 - [ ] On-download temp file written to a secure temp dir and deleted after response
 - [ ] Rate-limit / queue on-demand requests for large files
 - [ ] Review FPDI licence compatibility for PDF 1.5+ / encrypted PDFs

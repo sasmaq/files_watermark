@@ -8,6 +8,8 @@ return [
         ['name' => 'api#getConfig',      'url' => '/api/v1/config',      'verb' => 'GET'],
         ['name' => 'api#saveConfig',     'url' => '/api/v1/config',      'verb' => 'POST'],
         ['name' => 'api#deleteConfig',   'url' => '/api/v1/config/{id}', 'verb' => 'DELETE'],
+        // Uploads the watermark logo; returns the reference to store on a config
+        ['name' => 'api#uploadImage',    'url' => '/api/v1/image',       'verb' => 'POST'],
         ['name' => 'api#applyWatermark', 'url' => '/api/v1/apply',       'verb' => 'POST'],
         // Restores the pre-watermark original preserved at apply time
         ['name' => 'api#removeWatermark', 'url' => '/api/v1/remove',     'verb' => 'POST'],

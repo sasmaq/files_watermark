@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\PdfWatermarker;
+use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
@@ -32,6 +33,7 @@ class WatermarkServiceTest extends TestCase {
     private ISystemTagObjectMapper&MockObject $tagObjectMapper;
     private LoggerInterface&MockObject         $logger;
     private OriginalStore&MockObject          $originalStore;
+    private WatermarkImageStore&MockObject    $imageStore;
     private WatermarkService                  $service;
 
     protected function setUp(): void {
@@ -46,6 +48,7 @@ class WatermarkServiceTest extends TestCase {
         $this->tagObjectMapper  = $this->createMock(ISystemTagObjectMapper::class);
         $this->logger           = $this->createMock(LoggerInterface::class);
         $this->originalStore    = $this->createMock(OriginalStore::class);
+        $this->imageStore       = $this->createMock(WatermarkImageStore::class);
 
         $this->service = new WatermarkService(
             $this->configMapper,
@@ -57,6 +60,7 @@ class WatermarkServiceTest extends TestCase {
             $this->tagObjectMapper,
             $this->logger,
             $this->originalStore,
+            $this->imageStore,
         );
     }
 
@@ -168,6 +172,90 @@ class WatermarkServiceTest extends TestCase {
         $this->assertNotNull($captured, 'renderer should have been handed a source path');
         $this->assertFileDoesNotExist($captured, 'plaintext source copy leaked');
         $this->assertDirectoryDoesNotExist(dirname($captured), 'temp dir leaked');
+    }
+
+    public function testWatermarkFileHandsRendererTheResolvedLogoPath(): void {
+        // The config stores an opaque reference; the renderer must receive a real local
+        // path, and the temp copy must not survive the render.
+        $config = new WatermarkConfig();
+        $config->setType('image');
+        $config->setImagePath(str_repeat('a', 32) . '.png');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('doc.pdf');
+        $file->method('getId')->willReturn(21);
+        $file->method('getPath')->willReturn('/alice/files/doc.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+
+        $logoTmp = sys_get_temp_dir() . '/wm_logo_' . bin2hex(random_bytes(6)) . '.png';
+        file_put_contents($logoTmp, 'logo-bytes');
+        $this->imageStore->method('localPath')
+            ->with(str_repeat('a', 32) . '.png')
+            ->willReturn($logoTmp);
+
+        $seen = null;
+        $this->pdfWatermarker->method('apply')->willReturnCallback(
+            function (string $src, string $dest, WatermarkConfig $c) use (&$seen): void {
+                $seen = $c->getImagePath();
+                file_put_contents($dest, 'out');
+            },
+        );
+
+        $tmpPath = $this->service->watermarkFile($file, 'on_demand');
+
+        $this->assertSame($logoTmp, $seen, 'renderer should get the materialised path');
+        $this->assertFileDoesNotExist($logoTmp, 'logo temp copy leaked');
+        // The stored config keeps its reference — only the render-time copy was rewritten.
+        $this->assertSame(str_repeat('a', 32) . '.png', $config->getImagePath());
+
+        @unlink($tmpPath);
+        @rmdir(dirname($tmpPath));
+    }
+
+    public function testWatermarkFileNeverPassesAnUnresolvableImageToRenderer(): void {
+        // A config left over from the free-text-path era: the store refuses it, and the
+        // renderer must be told there is no image rather than the raw path.
+        $config = new WatermarkConfig();
+        $config->setType('combined');
+        $config->setTextTemplate('{username}');
+        $config->setImagePath('/var/www/html/core/img/logo/logo.png');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('doc.pdf');
+        $file->method('getId')->willReturn(22);
+        $file->method('getPath')->willReturn('/alice/files/doc.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+
+        $this->imageStore->method('localPath')->willReturn(null);
+
+        $seen = 'unset';
+        $this->pdfWatermarker->method('apply')->willReturnCallback(
+            function (string $src, string $dest, WatermarkConfig $c) use (&$seen): void {
+                $seen = $c->getImagePath();
+                file_put_contents($dest, 'out');
+            },
+        );
+
+        $tmpPath = $this->service->watermarkFile($file, 'on_demand');
+
+        $this->assertNull($seen, 'legacy server path must not reach the renderer');
+
+        @unlink($tmpPath);
+        @rmdir(dirname($tmpPath));
     }
 
     public function testWatermarkFileThrowsWhenMimeNotInWhitelist(): void {
