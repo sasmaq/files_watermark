@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\EventListener;
 
 use OCA\DAV\Events\SabrePluginAddEvent;
+use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Dav\PropFindPlugin;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use Psr\Container\ContainerInterface;
 
 /**
- * Registers the watermark PROPFIND plugin on the Files WebDAV server so the
- * `{http://nextcloud.org/ns}is-watermarked` property is served for file nodes.
+ * Registers the watermark plugins on the Files WebDAV server: {@see PropFindPlugin}
+ * serves the `{http://nextcloud.org/ns}is-watermarked` property for file nodes, and
+ * {@see DownloadInterceptorPlugin} streams a watermarked copy on download when the
+ * effective trigger is `on_download`.
  *
  * @template-implements IEventListener<SabrePluginAddEvent>
  */
@@ -28,6 +31,8 @@ class SabrePluginAddListener implements IEventListener {
             return;
         }
 
-        $event->getServer()->addPlugin($this->container->get(PropFindPlugin::class));
+        $server = $event->getServer();
+        $server->addPlugin($this->container->get(PropFindPlugin::class));
+        $server->addPlugin($this->container->get(DownloadInterceptorPlugin::class));
     }
 }

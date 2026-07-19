@@ -234,6 +234,106 @@ class WatermarkServiceTest extends TestCase {
         $this->service->watermarkFile($file, 'on_demand');
     }
 
+    public function testWatermarkForDownloadReturnsNullForUnsupportedType(): void {
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('text/plain');
+
+        // Gated out before any config lookup or rendering.
+        $this->configMapper->expects($this->never())->method('findByUser');
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->imageWatermarker->expects($this->never())->method('apply');
+
+        $this->assertNull($this->service->watermarkForDownload($file));
+    }
+
+    public function testWatermarkForDownloadReturnsNullWhenTriggerIsNotOnDownload(): void {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_demand');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+
+        // Trigger mismatch: the original is served, nothing is rendered or logged.
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->imageWatermarker->expects($this->never())->method('apply');
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        $this->assertNull($this->service->watermarkForDownload($file));
+    }
+
+    public function testWatermarkForDownloadRendersWatermarkedCopyWhenOnDownload(): void {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setOpacity(80);
+        $config->setFontSize(24);
+        $config->setColor('#cccccc');
+        $config->setRotation(45);
+        $config->setTrigger('on_download');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $user->method('getEMailAddress')->willReturn('alice@example.com');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('doc.pdf');
+        $file->method('getId')->willReturn(7);
+        $file->method('getPath')->willReturn('/alice/files/doc.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        // The clean original is never modified — only a temp copy is rendered ...
+        $file->expects($this->never())->method('putContent');
+        $this->pdfWatermarker->expects($this->once())->method('apply');
+        // ... and every download is audited.
+        $this->logMapper->expects($this->once())->method('insertLog');
+
+        $tmpPath = $this->service->watermarkForDownload($file);
+
+        $this->assertNotNull($tmpPath);
+        $this->assertStringContainsString('doc.pdf', $tmpPath);
+
+        if (file_exists($tmpPath)) {
+            unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
+        }
+    }
+
+    public function testWatermarkForDownloadDegradesToNullOnRenderFailure(): void {
+        // on_download trigger, but a MIME whitelist that excludes this file — so
+        // watermarkFile throws and the download must fall back to the original.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_download');
+        $config->setMimeTypes('application/pdf');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/jpeg');
+        $file->method('getPath')->willReturn('/alice/files/photo.jpg');
+
+        $this->logger->expects($this->once())
+            ->method('error')
+            ->with($this->stringContains('failed to watermark on download'), $this->anything());
+
+        $this->assertNull($this->service->watermarkForDownload($file));
+    }
+
     public function testWatermarkInPlaceReplacesFileContent(): void {
         $config = new WatermarkConfig();
         $config->setType('image');

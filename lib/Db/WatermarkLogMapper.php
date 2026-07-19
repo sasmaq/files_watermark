@@ -29,9 +29,13 @@ class WatermarkLogMapper extends QBMapper {
     }
 
     /**
-     * Return the subset of the given file ids that have at least one log row,
-     * i.e. that have ever been watermarked. Runs as a single batched `IN (...)`
-     * query and returns distinct ids.
+     * Return the subset of the given file ids whose *stored* content has been
+     * watermarked. Runs as a single batched `IN (...)` query and returns distinct ids.
+     *
+     * `on_download` log rows are excluded: that trigger streams a watermarked temp
+     * copy and leaves the original on storage untouched, so it must not flag the file
+     * in the Files-list indicator (nor count towards the in-place double-burn guard).
+     * Only the triggers that burn the mark into the file itself qualify.
      *
      * @param int[] $fileIds
      * @return int[]
@@ -49,6 +53,10 @@ class WatermarkLogMapper extends QBMapper {
             ->where($qb->expr()->in(
                 'file_id',
                 $qb->createNamedParameter($fileIds, IQueryBuilder::PARAM_INT_ARRAY),
+            ))
+            ->andWhere($qb->expr()->neq(
+                'trigger',
+                $qb->createNamedParameter('on_download'),
             ));
 
         $result = $qb->executeQuery();

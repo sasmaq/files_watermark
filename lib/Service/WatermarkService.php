@@ -73,6 +73,44 @@ class WatermarkService {
     }
 
     /**
+     * Render a watermarked copy for an on-download request, or return null to serve
+     * the clean original.
+     *
+     * The gate for the `on_download` trigger: null is returned for an unsupported
+     * type, when the effective trigger is not `on_download`, or on any rendering
+     * failure — a broken watermark must degrade to the untouched original rather
+     * than break the download. On success the path of a watermarked temp copy is
+     * returned; the caller owns it and must delete it after streaming.
+     *
+     * @return string|null temp file path to stream, or null to serve the original
+     */
+    public function watermarkForDownload(File $file): ?string {
+        if (!$this->isSupported($file->getMimeType())) {
+            return null;
+        }
+
+        try {
+            $config = $this->resolveConfig($this->userSession->getUser()?->getUID());
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($config->getTrigger() !== 'on_download') {
+            return null;
+        }
+
+        try {
+            return $this->watermarkFile($file, 'on_download', $config);
+        } catch (\Throwable $e) {
+            $this->logger->error('files_watermark: failed to watermark on download: ' . $e->getMessage(), [
+                'exception' => $e,
+                'path'      => $file->getPath(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
      * Whether the file has ever been watermarked (has any row in `watermark_log`).
      *
      * Mirrors the Files-list indicator's definition. It is the guard used to skip
