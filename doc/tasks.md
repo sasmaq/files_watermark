@@ -64,8 +64,95 @@ they are implemented.
   - [x] Guard against infinite loop (watermarked write re-triggering the listener)
 - [x] **On download** — `DownloadController` streams a watermarked temp copy; original untouched
   - [x] Temp file cleaned up after the response is sent
-- [x] **On share** — `ShareCreatedListener` on `ShareCreatedEvent`
-  - [x] Save `{name}_shared.{ext}` copy in the same folder as the original
+- [x] **On share** — watermarked at *delivery* time, not at share-creation time
+  - the SDD's original design (`ShareCreatedListener` on `ShareCreatedEvent` saving a
+    `{name}_shared.{ext}` copy) was **not** built: it duplicates storage and leaves the
+    original reachable through the same share. `DownloadInterceptorPlugin` streams a
+    watermarked copy per fetch instead, keying off `WatermarkService::isShareAccess()`
+  - [x] Internal share recipients receive a watermarked copy; the owner's own fetch is untouched
+  - [x] Public links receive the same treatment — they are served by a *separate* Sabre
+    server (`public.php/dav`, `BeforeSabrePubliclyLoadedEvent`) that never fires
+    `SabrePluginAddEvent`, so it needs its own registration (`SabrePublicPluginAddListener`)
+  - [x] Public links are served off the *owner's* storage, so the `ISharedStorage` test alone
+    reports "owner access" — `isShareAccess()` also takes an explicit public-context flag and
+    the anonymous-request signal
+  - [x] Previews are blocked for recipients and public-link visitors (they render from the
+    clean original and are cached per file, not per viewer)
+  - [x] A render failure denies the fetch (403) rather than serving the clean original
+  - [ ] Folder / multi-file downloads still bypass this entirely — see the ZIP section below
+
+### Folder / multi-file (ZIP) downloads — *new*
+
+Downloading a **folder**, or a multi-file selection, streams an archive that bypasses the
+watermark entirely — in every mode. `ZipFolderPlugin` (`apps/dav/.../ZipFolderPlugin.php`)
+registers on `method:GET` at priority **100** and, for a `Directory` node with a zip/tar
+`Accept` header or `?accept=zip`, streams each member straight from `$node->fopen('rb')`.
+`DownloadInterceptorPlugin` runs earlier (priority 90) but returns immediately for
+non-`DavFile` nodes, so it never sees the members.
+
+This affects both the authenticated Files app ("Download" on a folder, "Download selected"
+via the `files=` / `X-NC-Files` filter) and public links (`/s/{token}/download` on a folder
+share redirects to `?accept=zip` on the public DAV endpoint).
+
+#### Decide the interception strategy (prerequisite — blocks everything below)
+
+- [ ] Pick how archive members get watermarked; the two viable options:
+  - **Own `method:GET` handler at priority < 100** that claims zip/tar requests on a
+    `Directory`, then rebuilds the archive via `\OC\Streamer`, substituting a watermarked
+    temp copy for each supported member. Full control; duplicates upstream Streamer logic
+    and must be kept in step with it across Nextcloud releases.
+  - **Read-stream storage wrapper** so `fopen('rb')` yields watermarked bytes. Covers zip
+    and every other reader in one place, but is a much larger architectural change.
+- [ ] **Size constraint (either option):** `streamNode()` passes `$node->getSize()` — the
+  *original* size — to `addFileFromStream()`. Watermarked bytes differ in length, so the
+  member size must be recomputed from the rendered copy or the archive is corrupt.
+- [ ] Confirm `BeforeZipCreatedEvent` is only an allow/deny lever (it cannot substitute
+  content) and is therefore the hook for the **deny** fallback below, not for rendering
+
+#### Per-mode behaviour
+
+- [ ] **On demand** — verify no work is needed: the watermark is already burned into the
+  stored file, so members are watermarked by construction. Add a regression test that
+  pins this (a future change to in-place burning must not silently break it).
+- [ ] **On upload** — same as on demand; verify and pin with a test
+- [ ] **On download** — watermark every supported member of the archive, for any downloader
+- [ ] **On share** — watermark members when the archive is fetched by a share recipient or a
+  public-link visitor; leave the owner's own folder download untouched
+  - [ ] Reuse `WatermarkService::isShareAccess()` so internal shares, public links and the
+    anonymous-request signal are all covered by one rule
+  - [ ] Register the handler on **both** DAV servers (authenticated + `public.php/dav`),
+    mirroring `SabrePluginAddListener` / `SabrePublicPluginAddListener`
+  - [ ] **Deny rather than leak:** if a member should be watermarked but rendering fails,
+    abort the whole archive (403 via `BeforeZipCreatedEvent::setErrorMessage()`) instead of
+    shipping the clean original — the archive equivalent of the single-file rule in
+    `DownloadInterceptorPlugin`
+
+#### Cross-cutting concerns
+
+- [ ] Non-watermarkable members (unsupported MIME, excluded by the config's MIME whitelist
+  or folder tag) pass through untouched — decide and document whether an `on_share` archive
+  containing such a file is allowed at all, or denied as a leak
+- [ ] Keep archive generation streaming: render each member to a temp file, add it, delete
+  it before moving on — never materialize the whole archive or all members at once
+- [ ] Guard large/deep folders (member count + total size ceiling) so an archive of hundreds
+  of PDFs cannot exhaust CPU or the temp filesystem; decide the over-limit behaviour
+  (deny vs. serve unwatermarked) per mode
+- [ ] Audit log: decide granularity — one `watermark_log` row per watermarked member, or one
+  per archive — and keep it consistent with `findWatermarkedFileIds` (delivery triggers are
+  in `NON_DESTRUCTIVE_TRIGGERS`, so rows must not flag the file in the Files-list indicator)
+- [ ] Extend `DownloadController` (`/api/v1/download`) to accept a folder path, or document
+  that it stays single-file only (it currently returns "Path is not a file")
+
+#### Tests
+
+- [ ] Unit — the zip handler claims only `Directory` + zip/tar-accepting GETs and defers
+  everything else to upstream `ZipFolderPlugin`
+- [ ] Unit — member size in the archive matches the *watermarked* bytes, not the original
+- [ ] Unit — `on_share` archive for a recipient/public visitor is watermarked; the owner's
+  own download is byte-identical to the originals
+- [ ] Unit — a render failure under `on_share` denies the archive instead of leaking
+- [ ] Integration — folder download, "Download selected" multi-file download, and public-link
+  folder download each produce a valid, extractable archive with watermarked members
 
 ### Permissions
 
@@ -308,7 +395,10 @@ MinIO) is provided to verify — see README "Testing with S3 storage (MinIO)".
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest`
 - [ ] `ApiControllerTest` — auth guard, happy path, error responses per endpoint
   - `ApiControllerApplyWatermarkTest` (apply / already-watermarked) and `ApiControllerWatermarkedStatusTest` exist; `getConfig` / `saveConfig` / `deleteConfig` / `getLog` still untested
-- [x] `NodeWrittenListenerTest` / `ShareCreatedListenerTest` — trigger gating
+- [x] `NodeWrittenListenerTest` — trigger gating
+  - no `ShareCreatedListenerTest`: on-share is delivery-time, so it is covered by
+    `WatermarkServiceTest` (`deliveryTrigger` / `watermarkForDownload`, incl. the
+    public-link path) and `BeforePreviewFetchedListenerTest`
 
 ### Frontend (Jest)
 

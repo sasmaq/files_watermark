@@ -48,7 +48,7 @@ class WatermarkService {
         $this->assertMimeAllowed($mime, $config);
         $this->assertFolderTagMatches($file, $config);
 
-        $placeholders = $this->buildPlaceholders($file);
+        $placeholders = $this->buildPlaceholders($file, $trigger);
         $tmpPath      = $this->createTempPath($file->getName());
 
         $srcTmp = $tmpPath . '_src';
@@ -64,7 +64,7 @@ class WatermarkService {
 
         $user = $this->userSession->getUser();
         $this->logMapper->insertLog(
-            $user?->getUID() ?? 'system',
+            $user?->getUID() ?? $this->anonymousLabel($trigger, 'public-link', 'system'),
             $file->getId(),
             $file->getPath(),
             $trigger,
@@ -91,10 +91,13 @@ class WatermarkService {
      * untouched original rather than break the download). On success the path of a
      * watermarked temp copy is returned; the caller owns it and must delete it.
      *
+     * @param bool $publicContext true when the fetch arrives over the public-link
+     *                            endpoint, where share access cannot be detected from
+     *                            the storage ({@see isShareAccess})
      * @return string|null temp file path to stream, or null to serve the original
      */
-    public function watermarkForDownload(File $file): ?string {
-        $delivery = $this->resolveDelivery($file);
+    public function watermarkForDownload(File $file, bool $publicContext = false): ?string {
+        $delivery = $this->resolveDelivery($file, $publicContext);
         if ($delivery === null) {
             return null;
         }
@@ -121,8 +124,8 @@ class WatermarkService {
      * the renderer can't parse), the interceptor denies the request for `on_share`
      * rather than leaking the clean original to the recipient.
      */
-    public function deliveryTrigger(File $file): ?string {
-        $delivery = $this->resolveDelivery($file);
+    public function deliveryTrigger(File $file, bool $publicContext = false): ?string {
+        $delivery = $this->resolveDelivery($file, $publicContext);
         return $delivery === null ? null : $delivery[0];
     }
 
@@ -145,6 +148,31 @@ class WatermarkService {
     }
 
     /**
+     * Whether $file is being accessed by someone other than its owner — the full
+     * `on_share` audience: internal share recipients *and* public-link visitors.
+     *
+     * {@see isReceivedShare} alone does not cover public links. A public link is served
+     * from the *owner's* own storage (`public.php/dav` resolves the node through
+     * `getUserFolder($shareOwner)` and only wraps it in PermissionsMask /
+     * PublicOwnerWrapper), so the mount is never an ISharedStorage and the storage test
+     * reports "owner access" for an anonymous visitor — which would hand them the clean
+     * original. Two further signals close that hole:
+     *
+     *  - $publicContext — set by the caller that *knows* it is serving a public link
+     *    (the interceptor instance registered on the public DAV server).
+     *  - no session user — an anonymous request can only be reaching a file through a
+     *    public link, so it is never owner access. This also covers callers that have no
+     *    context flag to pass, such as public preview requests. Background jobs with no
+     *    session (e.g. preview pre-generation) fall in here too and are treated as share
+     *    access; erring towards watermarking/blocking keeps content from leaking.
+     */
+    public function isShareAccess(FileInfo $file, bool $publicContext = false): bool {
+        return $publicContext
+            || $this->isReceivedShare($file)
+            || $this->userSession->getUser() === null;
+    }
+
+    /**
      * Decide which delivery trigger (if any) applies to the current fetch of $file.
      *
      * Encapsulates the whole gate: supported type, the on_download / on_share(+non-
@@ -156,7 +184,7 @@ class WatermarkService {
      *
      * @return array{0: string, 1: WatermarkConfig}|null [trigger, config] or null
      */
-    private function resolveDelivery(File $file): ?array {
+    private function resolveDelivery(File $file, bool $publicContext = false): ?array {
         $mime = $file->getMimeType();
         if (!$this->isSupported($mime)) {
             return null;
@@ -172,7 +200,7 @@ class WatermarkService {
 
         $trigger = $config->getTrigger();
 
-        if ($trigger !== 'on_download' && !($trigger === 'on_share' && $this->isReceivedShare($file))) {
+        if ($trigger !== 'on_download' && !($trigger === 'on_share' && $this->isShareAccess($file, $publicContext))) {
             return null;
         }
 
@@ -287,10 +315,19 @@ class WatermarkService {
         }
     }
 
-    private function buildPlaceholders(File $file): array {
+    /**
+     * The name to stamp / log when there is no session user. Under `on_share` that can
+     * only be an anonymous public-link visitor, so naming them as such makes a leaked
+     * copy show how it was obtained; other triggers keep the old generic fallbacks.
+     */
+    private function anonymousLabel(string $trigger, string $publicLabel, string $default): string {
+        return $trigger === 'on_share' ? $publicLabel : $default;
+    }
+
+    private function buildPlaceholders(File $file, string $trigger): array {
         $user = $this->userSession->getUser();
         return [
-            'username' => $user?->getDisplayName() ?? 'Unknown',
+            'username' => $user?->getDisplayName() ?? $this->anonymousLabel($trigger, 'Public link', 'Unknown'),
             'email'    => $user?->getEMailAddress() ?? '',
             'date'     => date('Y-m-d'),
             'datetime' => date('Y-m-d H:i:s'),

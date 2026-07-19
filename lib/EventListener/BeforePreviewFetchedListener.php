@@ -11,7 +11,8 @@ use OCP\Files\NotFoundException;
 use OCP\Preview\BeforePreviewFetchedEvent;
 
 /**
- * Denies file previews to share recipients when the file's policy is `on_share`.
+ * Denies file previews to share recipients and public-link visitors when the file's
+ * policy is `on_share`.
  *
  * On-share watermarking is applied at download time (a streamed watermarked copy),
  * but previews are rendered from the clean original and cached globally — so without
@@ -48,9 +49,12 @@ class BeforePreviewFetchedListener implements IEventListener {
         }
 
         // Only restrict share recipients / public-link visitors — the owner viewing
-        // their own file keeps normal previews. Detected from the storage backend, not
-        // by comparing user ids (which is unreliable in the preview request context).
-        if (!$this->watermarkService->isReceivedShare($node)) {
+        // their own file keeps normal previews. Detected from the storage backend plus
+        // the anonymous-request signal, not by comparing user ids (which is unreliable
+        // in the preview request context). The anonymous half is what covers the public
+        // share page: its previews are rendered from the owner's own storage, so the
+        // storage test alone would wave them through unwatermarked.
+        if (!$this->watermarkService->isShareAccess($node)) {
             return;
         }
 

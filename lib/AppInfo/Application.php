@@ -10,7 +10,9 @@ use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
+use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
 use OCP\AppFramework\App;
+use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
@@ -39,6 +41,9 @@ class Application extends App implements IBootstrap {
         $context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
         $context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
         $context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
+        // Public links are served by a *separate* Sabre server that never fires
+        // SabrePluginAddEvent — it needs its own registration to be watermarked.
+        $context->registerEventListener(BeforeSabrePubliclyLoadedEvent::class, SabrePublicPluginAddListener::class);
         $context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
     }
 

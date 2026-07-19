@@ -421,6 +421,75 @@ class WatermarkServiceTest extends TestCase {
         $this->assertNull($this->service->deliveryTrigger($file));
     }
 
+    public function testWatermarkForDownloadWatermarksPublicLinkVisitorWhenOnShare(): void {
+        // A public link is served off the *owner's* own storage (public.php/dav resolves
+        // the node through the owner's user folder), so the shared-storage test says
+        // "owner access". The public interceptor passes $publicContext = true, which is
+        // what keeps the anonymous visitor from receiving the clean original.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setOpacity(80);
+        $config->setFontSize(24);
+        $config->setColor('#cccccc');
+        $config->setRotation(45);
+        $config->setTrigger('on_share');
+
+        // Anonymous visitor: no session user at all.
+        $this->userSession->method('getUser')->willReturn(null);
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('report.pdf');
+        $file->method('getId')->willReturn(7);
+        $file->method('getPath')->willReturn('/alice/files/report.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+        $file->method('getOwner')->willReturn($alice);
+        // Not a shared mount — the giveaway that the storage test alone is insufficient.
+        $file->method('getStorage')->willReturn($this->storage(false));
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+        $file->expects($this->never())->method('putContent');
+        $this->pdfWatermarker->expects($this->once())->method('apply');
+        $this->logMapper->expects($this->once())->method('insertLog');
+
+        $this->assertSame('on_share', $this->service->deliveryTrigger($file, true));
+
+        $tmpPath = $this->service->watermarkForDownload($file, true);
+
+        $this->assertNotNull($tmpPath);
+        if (file_exists($tmpPath)) {
+            unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
+        }
+    }
+
+    public function testIsShareAccessTreatsAnonymousRequestAsShareAccess(): void {
+        // Callers with no context flag to pass (public preview requests) rely on the
+        // anonymous signal: no session user can only mean a public-link visitor.
+        $this->userSession->method('getUser')->willReturn(null);
+
+        $file = $this->createMock(File::class);
+        $file->method('getStorage')->willReturn($this->storage(false));
+
+        $this->assertTrue($this->service->isShareAccess($file));
+    }
+
+    public function testIsShareAccessIsFalseForOwnerOnOwnStorage(): void {
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->userSession->method('getUser')->willReturn($alice);
+
+        $file = $this->createMock(File::class);
+        $file->method('getStorage')->willReturn($this->storage(false));
+
+        $this->assertFalse($this->service->isShareAccess($file));
+    }
+
     public function testWatermarkForDownloadWatermarksSharedAccessWhenOnShare(): void {
         // Owner 'alice' has an on_share policy; recipient 'bob' fetches the shared file.
         $config = new WatermarkConfig();

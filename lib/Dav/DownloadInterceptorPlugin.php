@@ -28,6 +28,15 @@ use Sabre\HTTP\ResponseInterface;
  * The decision and rendering — supported-type check, trigger gating and watermark
  * generation — live in {@see WatermarkService::watermarkForDownload}; this plugin is
  * the thin Sabre adapter that resolves the node, streams the copy and cleans up.
+ *
+ * The plugin is registered on two DAV servers, which is what gives public links the
+ * same treatment as internal shares: the authenticated Files server (via
+ * {@see \OCA\FilesWatermark\EventListener\SabrePluginAddListener}) and the public-link
+ * server behind `public.php/dav` (via
+ * {@see \OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener}). The public
+ * instance is constructed with $publicContext = true because a public link is served
+ * off the owner's own storage, so the service cannot tell it is share access from the
+ * mount alone — see {@see WatermarkService::isShareAccess}.
  */
 class DownloadInterceptorPlugin extends ServerPlugin {
 
@@ -35,6 +44,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 
     public function __construct(
         private WatermarkService $watermarkService,
+        private bool $publicContext = false,
     ) {
     }
 
@@ -72,7 +82,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
             return true;
         }
 
-        $tmpPath = $this->watermarkService->watermarkForDownload($file);
+        $tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
         if ($tmpPath === null) {
             // No watermarked copy was produced. For `on_share` a recipient must never
             // receive the clean original — so if the file *should* have been
@@ -80,7 +90,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
             // renderer can't parse), deny the fetch instead of leaking the original.
             // This closes the viewer/inline-view bypass. (`on_download` keeps its
             // best-effort fallback of serving the original on failure.)
-            if ($this->watermarkService->deliveryTrigger($file) === 'on_share') {
+            if ($this->watermarkService->deliveryTrigger($file, $this->publicContext) === 'on_share') {
                 throw new Forbidden('This shared file is only available watermarked, which could not be generated.');
             }
             return true;

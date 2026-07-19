@@ -51,8 +51,8 @@ class BeforePreviewFetchedListenerTest extends TestCase {
     public function testBlocksPreviewForRecipientWhenOnShare(): void {
         $node = $this->node();
         $this->watermarkService->method('isSupported')->willReturn(true);
-        // Received-share mount → recipient access.
-        $this->watermarkService->method('isReceivedShare')->with($node)->willReturn(true);
+        // Received-share mount or anonymous public-link request → non-owner access.
+        $this->watermarkService->method('isShareAccess')->with($node)->willReturn(true);
         $this->watermarkService->method('resolveConfig')->with('alice')->willReturn($this->config('on_share'));
 
         $this->expectException(NotFoundException::class);
@@ -62,8 +62,8 @@ class BeforePreviewFetchedListenerTest extends TestCase {
     public function testAllowsPreviewForOwner(): void {
         $node = $this->node();
         $this->watermarkService->method('isSupported')->willReturn(true);
-        // Owner's own file is not on a shared mount.
-        $this->watermarkService->method('isReceivedShare')->with($node)->willReturn(false);
+        // Owner's own file: not a shared mount, and the owner is logged in.
+        $this->watermarkService->method('isShareAccess')->with($node)->willReturn(false);
         $this->watermarkService->expects($this->never())->method('resolveConfig');
 
         $this->listener->handle($this->event($node));
@@ -73,7 +73,7 @@ class BeforePreviewFetchedListenerTest extends TestCase {
     public function testAllowsRecipientPreviewWhenNotOnShare(): void {
         $node = $this->node();
         $this->watermarkService->method('isSupported')->willReturn(true);
-        $this->watermarkService->method('isReceivedShare')->willReturn(true);
+        $this->watermarkService->method('isShareAccess')->willReturn(true);
         $this->watermarkService->method('resolveConfig')->with('alice')->willReturn($this->config('on_demand'));
 
         $this->listener->handle($this->event($node));
@@ -84,7 +84,7 @@ class BeforePreviewFetchedListenerTest extends TestCase {
         $node = $this->node('text/plain');
         $this->watermarkService->method('isSupported')->willReturn(false);
         // Short-circuited before the share/policy checks.
-        $this->watermarkService->expects($this->never())->method('isReceivedShare');
+        $this->watermarkService->expects($this->never())->method('isShareAccess');
         $this->watermarkService->expects($this->never())->method('resolveConfig');
 
         $this->listener->handle($this->event($node));
