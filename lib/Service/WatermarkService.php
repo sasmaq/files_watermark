@@ -9,7 +9,9 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
+use OCP\Files\FileInfo;
 use OCP\Files\IRootFolder;
+use OCP\Files\Storage\ISharedStorage;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
 use Psr\Log\LoggerInterface;
@@ -73,41 +75,117 @@ class WatermarkService {
     }
 
     /**
-     * Render a watermarked copy for an on-download request, or return null to serve
-     * the clean original.
+     * Render a watermarked copy for a file being fetched over WebDAV, or return null
+     * to serve the clean original. This is the single gate for both non-destructive
+     * delivery triggers:
      *
-     * The gate for the `on_download` trigger: null is returned for an unsupported
-     * type, when the effective trigger is not `on_download`, or on any rendering
-     * failure — a broken watermark must degrade to the untouched original rather
-     * than break the download. On success the path of a watermarked temp copy is
-     * returned; the caller owns it and must delete it after streaming.
+     *  - `on_download` — watermark on every download, whoever fetches the file.
+     *  - `on_share`    — watermark only when the file is fetched by someone other than
+     *                    its owner (a share recipient, or an anonymous public-link
+     *                    visitor). The owner reading their own file is left untouched.
+     *
+     * The applicable policy is the file *owner's* — they own the watermark rule for
+     * their file — not the downloader's, who may be a recipient with an unrelated
+     * personal config. Null is returned for an unsupported type, a trigger that does
+     * not apply to this access, or any rendering failure (which must degrade to the
+     * untouched original rather than break the download). On success the path of a
+     * watermarked temp copy is returned; the caller owns it and must delete it.
      *
      * @return string|null temp file path to stream, or null to serve the original
      */
     public function watermarkForDownload(File $file): ?string {
-        if (!$this->isSupported($file->getMimeType())) {
+        $delivery = $this->resolveDelivery($file);
+        if ($delivery === null) {
             return null;
         }
+        [$trigger, $config] = $delivery;
 
         try {
-            $config = $this->resolveConfig($this->userSession->getUser()?->getUID());
-        } catch (\Throwable) {
-            return null;
-        }
-
-        if ($config->getTrigger() !== 'on_download') {
-            return null;
-        }
-
-        try {
-            return $this->watermarkFile($file, 'on_download', $config);
+            return $this->watermarkFile($file, $trigger, $config);
         } catch (\Throwable $e) {
-            $this->logger->error('files_watermark: failed to watermark on download: ' . $e->getMessage(), [
+            $this->logger->error('files_watermark: failed to watermark on delivery: ' . $e->getMessage(), [
                 'exception' => $e,
+                'trigger'   => $trigger,
                 'path'      => $file->getPath(),
             ]);
             return null;
         }
+    }
+
+    /**
+     * The delivery trigger (`on_download` / `on_share`) that applies to the current
+     * fetch of $file, or null when the file should be served unmodified.
+     *
+     * The download interceptor uses this to tell an `on_share` recipient access apart:
+     * when {@see watermarkForDownload} cannot produce a watermarked copy (e.g. a PDF
+     * the renderer can't parse), the interceptor denies the request for `on_share`
+     * rather than leaking the clean original to the recipient.
+     */
+    public function deliveryTrigger(File $file): ?string {
+        $delivery = $this->resolveDelivery($file);
+        return $delivery === null ? null : $delivery[0];
+    }
+
+    /**
+     * Whether $file is being accessed through a share mount — i.e. the current user is
+     * a share recipient (internal share) or an anonymous public-link visitor, not the
+     * file's owner.
+     *
+     * Detected from the storage backend ({@see ISharedStorage}) rather than by
+     * comparing user ids: `getOwner()` vs the session user is unreliable in preview and
+     * viewer request contexts, which let `on_share` content leak to recipients. A
+     * received share is always mounted on a shared storage; the owner's own copy is not.
+     */
+    public function isReceivedShare(FileInfo $file): bool {
+        try {
+            return $file->getStorage()->instanceOfStorage(ISharedStorage::class);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Decide which delivery trigger (if any) applies to the current fetch of $file.
+     *
+     * Encapsulates the whole gate: supported type, the on_download / on_share(+non-
+     * owner) rule resolved against the *owner's* policy, and the config exclusions
+     * (mime whitelist, folder tag). Folding the exclusions in here means a file the
+     * policy would deliberately skip is reported as "not applicable" (serve the
+     * original) rather than as a watermark that later fails (which the interceptor
+     * would treat as a leak to deny).
+     *
+     * @return array{0: string, 1: WatermarkConfig}|null [trigger, config] or null
+     */
+    private function resolveDelivery(File $file): ?array {
+        $mime = $file->getMimeType();
+        if (!$this->isSupported($mime)) {
+            return null;
+        }
+
+        $ownerUid = $file->getOwner()?->getUID() ?? $this->userSession->getUser()?->getUID();
+
+        try {
+            $config = $this->resolveConfig($ownerUid);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $trigger = $config->getTrigger();
+
+        if ($trigger !== 'on_download' && !($trigger === 'on_share' && $this->isReceivedShare($file))) {
+            return null;
+        }
+
+        // A file the config would skip (excluded mime, missing folder tag) is not a
+        // watermark candidate — report "not applicable" so it is served untouched.
+        try {
+            $this->assertMimeAllowed($mime, $config);
+            $this->assertFolderTagMatches($file, $config);
+        } catch (\RuntimeException) {
+            return null;
+        }
+
+        return [$trigger, $config];
     }
 
     /**

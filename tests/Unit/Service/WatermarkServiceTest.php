@@ -56,6 +56,18 @@ class WatermarkServiceTest extends TestCase {
         );
     }
 
+    /**
+     * A storage mock that reports whether it is a received-share storage, so
+     * WatermarkService::isReceivedShare() can distinguish recipient from owner access.
+     */
+    private function storage(bool $shared): \OCP\Files\Storage\IStorage&MockObject {
+        $storage = $this->createMock(\OCP\Files\Storage\IStorage::class);
+        $storage->method('instanceOfStorage')->willReturnCallback(
+            fn (string $class): bool => $shared && $class === \OCP\Files\Storage\ISharedStorage::class,
+        );
+        return $storage;
+    }
+
     public function testIsSupportedMatchesKnownTypes(): void {
         $this->assertTrue($this->service->isSupported('application/pdf'));
         $this->assertTrue($this->service->isSupported('image/jpeg'));
@@ -311,8 +323,41 @@ class WatermarkServiceTest extends TestCase {
     }
 
     public function testWatermarkForDownloadDegradesToNullOnRenderFailure(): void {
-        // on_download trigger, but a MIME whitelist that excludes this file — so
-        // watermarkFile throws and the download must fall back to the original.
+        // on_download applies and the file is a watermark candidate, but the renderer
+        // itself fails — the download must degrade to null (and log) rather than throw.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setTrigger('on_download');
+
+        $user = $this->createMock(IUser::class);
+        $user->method('getUID')->willReturn('alice');
+        $user->method('getDisplayName')->willReturn('Alice');
+        $this->userSession->method('getUser')->willReturn($user);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('doc.pdf');
+        $file->method('getId')->willReturn(3);
+        $file->method('getPath')->willReturn('/alice/files/doc.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        // The renderer blows up (e.g. an unparseable PDF).
+        $this->pdfWatermarker->method('apply')
+            ->willThrowException(new \RuntimeException('Cannot process PDF'));
+
+        $this->logger->expects($this->once())
+            ->method('error')
+            ->with($this->stringContains('failed to watermark on delivery'), $this->anything());
+
+        $this->assertNull($this->service->watermarkForDownload($file));
+    }
+
+    public function testWatermarkForDownloadExcludedMimeIsNotApplicable(): void {
+        // on_download applies but a mime whitelist excludes this file: it is "not
+        // applicable" (served untouched, no error logged) — not a watermark failure.
         $config = new WatermarkConfig();
         $config->setType('text');
         $config->setTrigger('on_download');
@@ -325,11 +370,193 @@ class WatermarkServiceTest extends TestCase {
 
         $file = $this->createMock(File::class);
         $file->method('getMimeType')->willReturn('image/jpeg');
-        $file->method('getPath')->willReturn('/alice/files/photo.jpg');
 
-        $this->logger->expects($this->once())
-            ->method('error')
-            ->with($this->stringContains('failed to watermark on download'), $this->anything());
+        $this->logger->expects($this->never())->method('error');
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->imageWatermarker->expects($this->never())->method('apply');
+
+        $this->assertNull($this->service->watermarkForDownload($file));
+        // ... and it is reported as not-applicable, so the interceptor won't deny it.
+        $this->assertNull($this->service->deliveryTrigger($file));
+    }
+
+    public function testDeliveryTriggerReportsOnShareForRecipientButNotOwner(): void {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_share');
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getOwner')->willReturn($alice);
+        // Received-share mount → recipient access, so on_share applies.
+        $file->method('getStorage')->willReturn($this->storage(true));
+
+        $bob = $this->createMock(IUser::class);
+        $bob->method('getUID')->willReturn('bob');
+        $this->userSession->method('getUser')->willReturn($bob);
+        $this->assertSame('on_share', $this->service->deliveryTrigger($file));
+    }
+
+    public function testDeliveryTriggerIsNullForOwnerUnderOnShare(): void {
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_share');
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->userSession->method('getUser')->willReturn($alice);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getOwner')->willReturn($alice);
+        $file->method('getStorage')->willReturn($this->storage(false));
+
+        // Owner reading own file → not applicable, so the interceptor never denies.
+        $this->assertNull($this->service->deliveryTrigger($file));
+    }
+
+    public function testWatermarkForDownloadWatermarksSharedAccessWhenOnShare(): void {
+        // Owner 'alice' has an on_share policy; recipient 'bob' fetches the shared file.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setOpacity(80);
+        $config->setFontSize(24);
+        $config->setColor('#cccccc');
+        $config->setRotation(45);
+        $config->setTrigger('on_share');
+
+        $bob = $this->createMock(IUser::class);
+        $bob->method('getUID')->willReturn('bob');
+        $bob->method('getDisplayName')->willReturn('Bob');
+        $bob->method('getEMailAddress')->willReturn('bob@example.com');
+        $this->userSession->method('getUser')->willReturn($bob);
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        // The owner's policy governs the file, so we resolve alice's config, not bob's.
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getName')->willReturn('report.pdf');
+        $file->method('getId')->willReturn(5);
+        $file->method('getPath')->willReturn('/alice/files/report.pdf');
+        $file->method('getContent')->willReturn('%PDF-fake');
+        $file->method('getOwner')->willReturn($alice);
+        $file->method('getStorage')->willReturn($this->storage(true));
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+        $file->expects($this->never())->method('putContent');
+        $this->pdfWatermarker->expects($this->once())->method('apply');
+        $this->logMapper->expects($this->once())->method('insertLog');
+
+        $tmpPath = $this->service->watermarkForDownload($file);
+
+        $this->assertNotNull($tmpPath);
+        if (file_exists($tmpPath)) {
+            unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
+        }
+    }
+
+    public function testWatermarkForDownloadWatermarksImageForSharedRecipient(): void {
+        // Images go through the same on_share delivery gate, but render via the image
+        // watermarker (GD/Imagick) — which, unlike the PDF path, doesn't fail on
+        // real-world files, so a recipient reliably gets a watermarked image.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTextTemplate('{username}');
+        $config->setOpacity(80);
+        $config->setFontSize(24);
+        $config->setColor('#cccccc');
+        $config->setRotation(45);
+        $config->setTrigger('on_share');
+
+        $bob = $this->createMock(IUser::class);
+        $bob->method('getUID')->willReturn('bob');
+        $bob->method('getDisplayName')->willReturn('Bob');
+        $this->userSession->method('getUser')->willReturn($bob);
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('image/png');
+        $file->method('getName')->willReturn('photo.png');
+        $file->method('getId')->willReturn(8);
+        $file->method('getPath')->willReturn('/alice/files/photo.png');
+        $file->method('getContent')->willReturn('img-bytes');
+        $file->method('getOwner')->willReturn($alice);
+        $file->method('getStorage')->willReturn($this->storage(true));
+
+        $this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+        // Image path, never the PDF path.
+        $this->imageWatermarker->expects($this->once())->method('apply');
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->logMapper->expects($this->once())->method('insertLog');
+
+        $tmpPath = $this->service->watermarkForDownload($file);
+
+        $this->assertNotNull($tmpPath);
+        if (file_exists($tmpPath)) {
+            unlink($tmpPath);
+            @rmdir(dirname($tmpPath));
+        }
+    }
+
+    public function testWatermarkForDownloadSkipsOwnerAccessWhenOnShare(): void {
+        // on_share must NOT watermark when the owner reads their own file — only
+        // when a non-owner (share recipient / public visitor) fetches it.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_share');
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->userSession->method('getUser')->willReturn($alice);
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getOwner')->willReturn($alice);
+        // Owner's own copy lives on a normal (non-shared) storage.
+        $file->method('getStorage')->willReturn($this->storage(false));
+
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->imageWatermarker->expects($this->never())->method('apply');
+        $this->logMapper->expects($this->never())->method('insertLog');
+
+        $this->assertNull($this->service->watermarkForDownload($file));
+    }
+
+    public function testWatermarkForDownloadSkipsSharedAccessWhenOnDemand(): void {
+        // A shared file whose owner policy is on_demand is not watermarked on delivery.
+        $config = new WatermarkConfig();
+        $config->setType('text');
+        $config->setTrigger('on_demand');
+
+        $bob = $this->createMock(IUser::class);
+        $bob->method('getUID')->willReturn('bob');
+        $this->userSession->method('getUser')->willReturn($bob);
+
+        $alice = $this->createMock(IUser::class);
+        $alice->method('getUID')->willReturn('alice');
+        $this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+
+        $file = $this->createMock(File::class);
+        $file->method('getMimeType')->willReturn('application/pdf');
+        $file->method('getOwner')->willReturn($alice);
+
+        $this->pdfWatermarker->expects($this->never())->method('apply');
+        $this->logMapper->expects($this->never())->method('insertLog');
 
         $this->assertNull($this->service->watermarkForDownload($file));
     }

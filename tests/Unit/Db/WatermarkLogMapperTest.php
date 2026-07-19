@@ -43,11 +43,12 @@ class WatermarkLogMapperTest extends TestCase {
             ->method('in')
             ->with('file_id', 'param')
             ->willReturn('file_id IN (:param)');
-        // `on_download` rows are filtered out — they don't watermark stored content.
+        // Non-destructive delivery rows (on_download, on_share) are filtered out —
+        // they stream a copy and never watermark stored content.
         $expr->expects($this->once())
-            ->method('neq')
+            ->method('notIn')
             ->with('trigger', 'triggerParam')
-            ->willReturn('trigger <> :triggerParam');
+            ->willReturn('trigger NOT IN (:triggerParam)');
 
         $qb = $this->createMock(IQueryBuilder::class);
         $qb->method('expr')->willReturn($expr);
@@ -62,7 +63,7 @@ class WatermarkLogMapperTest extends TestCase {
                 if ($value === [1, 2, 5] && $type === IQueryBuilder::PARAM_INT_ARRAY) {
                     return 'param';
                 }
-                if ($value === 'on_download') {
+                if ($value === ['on_download', 'on_share'] && $type === IQueryBuilder::PARAM_STR_ARRAY) {
                     return 'triggerParam';
                 }
                 $this->fail('unexpected createNamedParameter argument');
@@ -74,7 +75,7 @@ class WatermarkLogMapperTest extends TestCase {
             ->willReturnSelf();
         $qb->expects($this->once())
             ->method('andWhere')
-            ->with('trigger <> :triggerParam')
+            ->with('trigger NOT IN (:triggerParam)')
             ->willReturnSelf();
         $qb->method('executeQuery')->willReturn($result);
 

@@ -6,16 +6,16 @@ namespace OCA\FilesWatermark\AppInfo;
 
 use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\Files\Event\LoadAdditionalScriptsEvent;
+use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
-use OCA\FilesWatermark\EventListener\ShareCreatedListener;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\Files\Events\Node\NodeWrittenEvent;
-use OCP\Share\Events\ShareCreatedEvent;
+use OCP\Preview\BeforePreviewFetchedEvent;
 
 class Application extends App implements IBootstrap {
 
@@ -37,9 +37,9 @@ class Application extends App implements IBootstrap {
 
     public function register(IRegistrationContext $context): void {
         $context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
-        $context->registerEventListener(ShareCreatedEvent::class, ShareCreatedListener::class);
         $context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
         $context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
+        $context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
     }
 
     public function boot(IBootContext $context): void {

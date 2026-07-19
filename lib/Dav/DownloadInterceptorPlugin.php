@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Dav;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
+use Sabre\DAV\Exception\Forbidden;
 use Sabre\DAV\Exception\NotFound;
 use Sabre\DAV\Server;
 use Sabre\DAV\ServerPlugin;
@@ -73,6 +74,15 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 
         $tmpPath = $this->watermarkService->watermarkForDownload($file);
         if ($tmpPath === null) {
+            // No watermarked copy was produced. For `on_share` a recipient must never
+            // receive the clean original — so if the file *should* have been
+            // watermarked for this shared access but couldn't be (e.g. a PDF the
+            // renderer can't parse), deny the fetch instead of leaking the original.
+            // This closes the viewer/inline-view bypass. (`on_download` keeps its
+            // best-effort fallback of serving the original on failure.)
+            if ($this->watermarkService->deliveryTrigger($file) === 'on_share') {
+                throw new Forbidden('This shared file is only available watermarked, which could not be generated.');
+            }
             return true;
         }
 

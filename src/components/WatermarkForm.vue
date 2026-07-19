@@ -373,7 +373,7 @@ const TYPE_OPTIONS = [
 const TRIGGER_OPTIONS = [
 	{ value: 'on_demand', label: t('files_watermark', 'On demand'), desc: t('files_watermark', 'Only when someone picks “Apply watermark” on a file.') },
 	{ value: 'on_download', label: t('files_watermark', 'On download'), desc: t('files_watermark', 'Each time the file is downloaded.') },
-	{ value: 'on_share', label: t('files_watermark', 'On share'), desc: t('files_watermark', 'When the file is shared with someone.') },
+	{ value: 'on_share', label: t('files_watermark', 'On share'), desc: t('files_watermark', 'When a share recipient downloads the file. Your original stays untouched.') },
 	{ value: 'on_upload', label: t('files_watermark', 'On upload'), desc: t('files_watermark', 'Automatically when a matching file is uploaded.') },
 ]
 
