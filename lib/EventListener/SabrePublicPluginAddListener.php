@@ -38,35 +38,35 @@ use Psr\Log\LoggerInterface;
  */
 class SabrePublicPluginAddListener implements IEventListener {
 
-    public function __construct(
-        private ContainerInterface $container,
-    ) {
-    }
+	public function __construct(
+		private ContainerInterface $container,
+	) {
+	}
 
-    public function handle(Event $event): void {
-        if (!($event instanceof BeforeSabrePubliclyLoadedEvent)) {
-            return;
-        }
+	public function handle(Event $event): void {
+		if (!($event instanceof BeforeSabrePubliclyLoadedEvent)) {
+			return;
+		}
 
-        // getServer() is nullable on the base SabrePluginEvent.
-        $server = $event->getServer();
-        if ($server === null) {
-            return;
-        }
+		// getServer() is nullable on the base SabrePluginEvent.
+		$server = $event->getServer();
+		if ($server === null) {
+			return;
+		}
 
-        $server->addPlugin(new DownloadInterceptorPlugin(
-            $this->container->get(WatermarkService::class),
-            true,
-        ));
+		$server->addPlugin(new DownloadInterceptorPlugin(
+			$this->container->get(WatermarkService::class),
+			true,
+		));
 
-        // Folder shares are downloaded as an archive, which the single-file interceptor
-        // never sees — same gap as on the authenticated server.
-        $server->addPlugin(new ZipInterceptorPlugin(
-            $this->container->get(WatermarkService::class),
-            $this->container->get(IDateTimeZone::class),
-            $this->container->get(IEventDispatcher::class),
-            $this->container->get(LoggerInterface::class),
-            true,
-        ));
-    }
+		// Folder shares are downloaded as an archive, which the single-file interceptor
+		// never sees — same gap as on the authenticated server.
+		$server->addPlugin(new ZipInterceptorPlugin(
+			$this->container->get(WatermarkService::class),
+			$this->container->get(IDateTimeZone::class),
+			$this->container->get(IEventDispatcher::class),
+			$this->container->get(LoggerInterface::class),
+			true,
+		));
+	}
 }

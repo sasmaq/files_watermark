@@ -28,116 +28,116 @@ use Psr\Log\LoggerInterface;
  */
 class OriginalStore {
 
-    private const FOLDER = 'originals';
+	private const FOLDER = 'originals';
 
-    public function __construct(
-        private IAppDataFactory $appDataFactory,
-        private LoggerInterface $logger,
-    ) {
-    }
+	public function __construct(
+		private IAppDataFactory $appDataFactory,
+		private LoggerInterface $logger,
+	) {
+	}
 
-    /**
-     * Whether a pre-watermark original is held for this file id.
-     */
-    public function has(int $fileId): bool {
-        $folder = $this->folder(false);
-        return $folder !== null && $folder->fileExists($this->name($fileId));
-    }
+	/**
+	 * Whether a pre-watermark original is held for this file id.
+	 */
+	public function has(int $fileId): bool {
+		$folder = $this->folder(false);
+		return $folder !== null && $folder->fileExists($this->name($fileId));
+	}
 
-    /**
-     * Preserve $content as the pre-watermark original for $fileId.
-     *
-     * An existing backup is never overwritten — re-watermarking an already-watermarked file
-     * would otherwise replace the true original with the watermarked bytes, quietly making
-     * the file impossible to restore.
-     *
-     * @return bool true when a backup is in place (already existed or was just written)
-     */
-    public function store(int $fileId, string $content): bool {
-        if ($this->has($fileId)) {
-            return true;
-        }
+	/**
+	 * Preserve $content as the pre-watermark original for $fileId.
+	 *
+	 * An existing backup is never overwritten — re-watermarking an already-watermarked file
+	 * would otherwise replace the true original with the watermarked bytes, quietly making
+	 * the file impossible to restore.
+	 *
+	 * @return bool true when a backup is in place (already existed or was just written)
+	 */
+	public function store(int $fileId, string $content): bool {
+		if ($this->has($fileId)) {
+			return true;
+		}
 
-        $folder = $this->folder(true);
-        if ($folder === null) {
-            return false;
-        }
+		$folder = $this->folder(true);
+		if ($folder === null) {
+			return false;
+		}
 
-        try {
-            $folder->newFile($this->name($fileId), $content);
-            return true;
-        } catch (\Throwable $e) {
-            $this->logger->error('files_watermark: could not preserve original for file {fileId}', [
-                'fileId'    => $fileId,
-                'exception' => $e,
-            ]);
-            return false;
-        }
-    }
+		try {
+			$folder->newFile($this->name($fileId), $content);
+			return true;
+		} catch (\Throwable $e) {
+			$this->logger->error('files_watermark: could not preserve original for file {fileId}', [
+				'fileId' => $fileId,
+				'exception' => $e,
+			]);
+			return false;
+		}
+	}
 
-    /**
-     * The preserved original's content, or null when none is held.
-     */
-    public function read(int $fileId): ?string {
-        $folder = $this->folder(false);
-        if ($folder === null) {
-            return null;
-        }
+	/**
+	 * The preserved original's content, or null when none is held.
+	 */
+	public function read(int $fileId): ?string {
+		$folder = $this->folder(false);
+		if ($folder === null) {
+			return null;
+		}
 
-        try {
-            return $folder->getFile($this->name($fileId))->getContent();
-        } catch (NotFoundException) {
-            return null;
-        } catch (\Throwable $e) {
-            $this->logger->error('files_watermark: could not read preserved original for file {fileId}', [
-                'fileId'    => $fileId,
-                'exception' => $e,
-            ]);
-            return null;
-        }
-    }
+		try {
+			return $folder->getFile($this->name($fileId))->getContent();
+		} catch (NotFoundException) {
+			return null;
+		} catch (\Throwable $e) {
+			$this->logger->error('files_watermark: could not read preserved original for file {fileId}', [
+				'fileId' => $fileId,
+				'exception' => $e,
+			]);
+			return null;
+		}
+	}
 
-    /**
-     * Drop the preserved original once it has been restored (or is no longer wanted).
-     */
-    public function discard(int $fileId): void {
-        $folder = $this->folder(false);
-        if ($folder === null) {
-            return;
-        }
+	/**
+	 * Drop the preserved original once it has been restored (or is no longer wanted).
+	 */
+	public function discard(int $fileId): void {
+		$folder = $this->folder(false);
+		if ($folder === null) {
+			return;
+		}
 
-        try {
-            $folder->getFile($this->name($fileId))->delete();
-        } catch (NotFoundException) {
-            // Nothing to discard.
-        } catch (\Throwable $e) {
-            $this->logger->warning('files_watermark: could not discard preserved original for file {fileId}', [
-                'fileId'    => $fileId,
-                'exception' => $e,
-            ]);
-        }
-    }
+		try {
+			$folder->getFile($this->name($fileId))->delete();
+		} catch (NotFoundException) {
+			// Nothing to discard.
+		} catch (\Throwable $e) {
+			$this->logger->warning('files_watermark: could not discard preserved original for file {fileId}', [
+				'fileId' => $fileId,
+				'exception' => $e,
+			]);
+		}
+	}
 
-    /**
-     * @param bool $create create the backing folder when it does not exist yet
-     */
-    private function folder(bool $create): ?ISimpleFolder {
-        try {
-            $appData = $this->appDataFactory->get('files_watermark');
-            try {
-                return $appData->getFolder(self::FOLDER);
-            } catch (NotFoundException) {
-                return $create ? $appData->newFolder(self::FOLDER) : null;
-            }
-        } catch (\Throwable $e) {
-            $this->logger->error('files_watermark: appdata unavailable for original backups', [
-                'exception' => $e,
-            ]);
-            return null;
-        }
-    }
+	/**
+	 * @param bool $create create the backing folder when it does not exist yet
+	 */
+	private function folder(bool $create): ?ISimpleFolder {
+		try {
+			$appData = $this->appDataFactory->get('files_watermark');
+			try {
+				return $appData->getFolder(self::FOLDER);
+			} catch (NotFoundException) {
+				return $create ? $appData->newFolder(self::FOLDER) : null;
+			}
+		} catch (\Throwable $e) {
+			$this->logger->error('files_watermark: appdata unavailable for original backups', [
+				'exception' => $e,
+			]);
+			return null;
+		}
+	}
 
-    private function name(int $fileId): string {
-        return (string) $fileId;
-    }
+	private function name(int $fileId): string {
+		return (string)$fileId;
+	}
 }

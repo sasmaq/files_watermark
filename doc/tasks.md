@@ -597,37 +597,57 @@ RustFS) is provided to verify — see README "Testing with S3 storage (RustFS)".
 
 ## Testing (SDD §11)
 
-### DAV plugin test harness — *the priority gap*
+### DAV plugin test harness — *closed*
 
-**Nothing in `lib/Dav/` has a single unit test**, because the PHPUnit harness has neither
-Sabre nor `OCA\DAV` on its path (`tests/Unit/Dav/` does not exist). This is not a cosmetic
-gap: every delivery-time bug found so far lived in exactly that untested layer, and each was
+`lib/Dav/` now has 48 unit tests under `tests/Unit/Dav/`. This was the priority gap because
+every delivery-time bug found so far lived in exactly that untested layer, and each was
 caught only by driving a real instance by hand —
 
 - the archive gate keyed off the *container*, leaking clean originals for single-file shares
 - `NodeWrittenEvent` firing under a lock, so on-upload never applied at all
 - on-upload applying, but only as promptly as cron
 
-- [ ] Stub `Sabre\DAV\{Server, ServerPlugin, Tree}`, `Sabre\HTTP\{RequestInterface,
-  ResponseInterface}`, `Sabre\DAV\Exception\{NotFound, Forbidden, ServiceUnavailable}` and
-  `OCA\DAV\Connector\Sabre\{File, Directory, Node}` in `tests/bootstrap.php`
-  - same pattern the bootstrap already uses for `OC\Hooks\Emitter` and the Doctrine
-    constants; keep them out of composer autoload so they never shadow the real classes
-  - **risk to weigh:** hand-written stubs can drift from real Sabre and give false green.
-    `ZipInterceptorPlugin` already carries this hazard by duplicating core's `streamNode`
-    (see the ZIP section), so stub fidelity needs re-checking on Nextcloud upgrades
-- [ ] `DownloadInterceptorPluginTest` — on_download streams a copy; on_share denies (403)
+- [x] Put Sabre and `OCA\DAV` on the test path
+  - **Sabre is not stubbed.** `sabre/dav` is a real `require-dev` dependency (4.7.1), so
+    `Server`, `ServerPlugin`, `Tree`, `PropFind`, the `Sabre\HTTP` request/response pair and
+    the exception hierarchy are the genuine classes under test. This closes the false-green
+    risk the plan flagged, for everything except core itself — and it earned its keep
+    immediately: real Sabre rejected three wrong assumptions while the tests were written
+    (`Request::setQueryParameters()` does not exist; query params come off the URL).
+  - `vendor/` is gitignored and rebuilt at package time, so a `require-dev` Sabre can never
+    ship to production or shadow core's copy.
+  - [x] `OCA\DAV\Connector\Sabre\{Node, File, Directory}` and `OC\Streamer` stubbed in
+    `tests/stubs/CoreStubs.php` (required from `bootstrap.php`, kept out of composer
+    autoload). These live in the server tree and are not installable from packagist, so
+    they are the one place stubs remain.
+    - **fidelity:** signatures transcribed verbatim from the `nextcloud:31.0.14-apache`
+      image rather than written from memory. `CoreStubs.php` carries the `docker create` /
+      `docker cp` recipe to re-verify them on upgrade.
+    - `OC\Streamer` records its calls to a static log, because `ZipInterceptorPlugin`
+      constructs it directly and it cannot be injected as a mock. That log is what makes
+      the archive's *shape* — member set, names, sizes, bytes — assertable.
+- [x] `DownloadInterceptorPluginTest` (9) — on_download streams a copy; on_share denies (403)
   when a render fails rather than serving the original; owner fetch untouched;
-  `$publicContext` forces share treatment
-- [ ] `ZipInterceptorPluginTest` — **regression: gate per member, never per container**
+  `$publicContext` forces share treatment; hooks `method:GET` and never `beforeMethod:GET`
+- [x] `ZipInterceptorPluginTest` (18) — **regression: gate per member, never per container**
   (a shared single file inside the recipient's own home must still be watermarked); archive
   naming / root path for whole-folder vs selection; `files=` + `X-NC-Files` parsing;
   `BeforeZipCreatedEvent` veto honoured; `MAX_MEMBERS` / `MAX_BYTES` → 403 under on_share
   but plain archive under on_download; defer to core when nothing was substituted
-- [ ] `UploadWatermarkPluginTest` — **regression: `afterMethod:MOVE` is hooked** (chunked
-  uploads never PUT their final path); job removed only on success and left queued on
-  failure; no session / wrong trigger / unsupported MIME all no-op
-- [ ] `PropFindPluginTest` — `is-watermarked` property for file nodes only
+  - the per-member gate was **mutation-tested**: reinstating the old
+    `deliveryTriggerFor($folder)` container gate makes the regression test fail, so the
+    guard is real rather than merely green
+- [x] `UploadWatermarkPluginTest` (12) — **regression: `afterMethod:MOVE` is hooked** (chunked
+  uploads never PUT their final path, so a PUT-only hook silently skips every large file);
+  job removed only on success and left queued on failure; no session / wrong trigger /
+  unsupported MIME / unresolvable config all no-op
+- [x] `PropFindPluginTest` (9) — `is-watermarked` for file nodes only; a folder listing costs
+  a constant two queries (the child batch, plus the folder's own id) rather than one per child
+
+Still worth doing here:
+
+- [ ] `ZipInterceptorPlugin::streamNode` duplicates core's — the stubs cannot catch it
+  drifting from `ZipFolderPlugin`. Re-diff against core on each Nextcloud upgrade.
 
 ### Unit (PHPUnit)
 
@@ -704,6 +724,26 @@ Cross-check every result against the *clean* original's checksum, not just file 
 - [ ] Folder + multi-select ZIP download → every supported member watermarked
 - [ ] Download via `/api/v1/download` → original untouched
 - [ ] Run the full flow on an S3-backed instance
+
+### Linting / CI
+
+- [x] PHP syntax lint + Nextcloud coding standard, enforced in CI
+  - `nextcloud/coding-standard` (v1.5) with a verbatim `NextcloudCodingStandard` ruleset in
+    `.php-cs-fixer.dist.php`; `composer lint` / `cs:check` / `cs:fix`
+  - `.github/workflows/php.yml` is the single PHP workflow — `lint` (syntax, 8.2 + 8.3, no
+    composer install needed so it is the first signal on a PR), `coding-standard` (once on
+    8.2) and `phpunit` (8.2 + 8.3). It supersedes the separate `phpunit.yml` / `lint-php.yml`;
+    the three jobs run in parallel under one `php-` concurrency group, so a new push cancels
+    the whole PHP run rather than leaving half of it going.
+  - **the codebase was reformatted to the standard**: tabs, unaligned operators — 47 of 49
+    files, in one whitespace-dominated commit. `git blame` across that commit needs
+    `-w`, and `git log`/`git diff` are easier to read with `-w` for anything spanning it.
+  - both gates were verified to actually fail (a bad-syntax file exits 1, a space-indented
+    file exits 8) rather than being decorative
+  - real findings the reformat surfaced, beyond whitespace: unused imports in
+    `WatermarkConfigMapper` and `WatermarkConfigMapperTest`
+- [ ] Consider Psalm / PHPStan — neither `php -l` nor php-cs-fixer does any type analysis,
+  so the DAV stubs' fidelity to core is still unchecked by any static tool
 
 ---
 

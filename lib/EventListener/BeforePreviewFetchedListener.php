@@ -30,42 +30,42 @@ use OCP\Preview\BeforePreviewFetchedEvent;
  */
 class BeforePreviewFetchedListener implements IEventListener {
 
-    public function __construct(
-        private WatermarkService $watermarkService,
-    ) {
-    }
+	public function __construct(
+		private WatermarkService $watermarkService,
+	) {
+	}
 
-    public function handle(Event $event): void {
-        if (!($event instanceof BeforePreviewFetchedEvent)) {
-            return;
-        }
+	public function handle(Event $event): void {
+		if (!($event instanceof BeforePreviewFetchedEvent)) {
+			return;
+		}
 
-        $node = $event->getNode();
+		$node = $event->getNode();
 
-        // Only guard the types we actually watermark; other types never carry a
-        // watermark on download, so denying their previews would protect nothing.
-        if (!$this->watermarkService->isSupported($node->getMimetype())) {
-            return;
-        }
+		// Only guard the types we actually watermark; other types never carry a
+		// watermark on download, so denying their previews would protect nothing.
+		if (!$this->watermarkService->isSupported($node->getMimetype())) {
+			return;
+		}
 
-        // Only restrict share recipients / public-link visitors — the owner viewing
-        // their own file keeps normal previews. Detected from the storage backend plus
-        // the anonymous-request signal, not by comparing user ids (which is unreliable
-        // in the preview request context). The anonymous half is what covers the public
-        // share page: its previews are rendered from the owner's own storage, so the
-        // storage test alone would wave them through unwatermarked.
-        if (!$this->watermarkService->isShareAccess($node)) {
-            return;
-        }
+		// Only restrict share recipients / public-link visitors — the owner viewing
+		// their own file keeps normal previews. Detected from the storage backend plus
+		// the anonymous-request signal, not by comparing user ids (which is unreliable
+		// in the preview request context). The anonymous half is what covers the public
+		// share page: its previews are rendered from the owner's own storage, so the
+		// storage test alone would wave them through unwatermarked.
+		if (!$this->watermarkService->isShareAccess($node)) {
+			return;
+		}
 
-        try {
-            $config = $this->watermarkService->resolveConfig($node->getOwner()?->getUID());
-        } catch (\Throwable) {
-            return;
-        }
+		try {
+			$config = $this->watermarkService->resolveConfig($node->getOwner()?->getUID());
+		} catch (\Throwable) {
+			return;
+		}
 
-        if ($config->getTrigger() === 'on_share') {
-            throw new NotFoundException('Preview blocked: file is watermarked on share.');
-        }
-    }
+		if ($config->getTrigger() === 'on_share') {
+			throw new NotFoundException('Preview blocked: file is watermarked on share.');
+		}
+	}
 }

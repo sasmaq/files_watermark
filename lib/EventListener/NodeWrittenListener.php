@@ -26,76 +26,77 @@ use Psr\Log\LoggerInterface;
  */
 class NodeWrittenListener implements IEventListener {
 
-    /** File IDs whose writes must not queue a job; see {@see suppressFor}. */
-    private static array $suppressed = [];
+	/** File IDs whose writes must not queue a job; see {@see suppressFor}. */
+	private static array $suppressed = [];
 
-    public function __construct(
-        private WatermarkService $watermarkService,
-        private IUserSession     $userSession,
-        private IJobList         $jobList,
-        private LoggerInterface  $logger,
-    ) {}
+	public function __construct(
+		private WatermarkService $watermarkService,
+		private IUserSession $userSession,
+		private IJobList $jobList,
+		private LoggerInterface $logger,
+	) {
+	}
 
-    public function handle(Event $event): void {
-        if (!($event instanceof NodeWrittenEvent)) {
-            return;
-        }
+	public function handle(Event $event): void {
+		if (!($event instanceof NodeWrittenEvent)) {
+			return;
+		}
 
-        $node = $event->getNode();
+		$node = $event->getNode();
 
-        if (!($node instanceof File)) {
-            return;
-        }
+		if (!($node instanceof File)) {
+			return;
+		}
 
-        if (!$this->watermarkService->isSupported($node->getMimeType())) {
-            return;
-        }
+		if (!$this->watermarkService->isSupported($node->getMimeType())) {
+			return;
+		}
 
-        $fileId = $node->getId();
-        if (isset(self::$suppressed[$fileId])) {
-            return;
-        }
+		$fileId = $node->getId();
+		if (isset(self::$suppressed[$fileId])) {
+			return;
+		}
 
-        $uid = $this->userSession->getUser()?->getUID();
-        if ($uid === null) {
-            // No session to attribute the watermark to, and the job needs a uid to
-            // re-resolve the node. Nothing sensible to queue.
-            return;
-        }
+		$uid = $this->userSession->getUser()?->getUID();
+		if ($uid === null) {
+			// No session to attribute the watermark to, and the job needs a uid to
+			// re-resolve the node. Nothing sensible to queue.
+			return;
+		}
 
-        try {
-            $config = $this->watermarkService->resolveConfig($uid);
-        } catch (\Throwable) {
-            return;
-        }
+		try {
+			$config = $this->watermarkService->resolveConfig($uid);
+		} catch (\Throwable) {
+			return;
+		}
 
-        if ($config->getTrigger() !== 'on_upload') {
-            return;
-        }
+		if ($config->getTrigger() !== 'on_upload') {
+			return;
+		}
 
-        // Already burned in — the job would only skip it again. Cheap filter for the
-        // common case of a file being written repeatedly after its first watermark.
-        if ($this->watermarkService->isAlreadyWatermarked($fileId)) {
-            return;
-        }
+		// Already burned in — the job would only skip it again. Cheap filter for the
+		// common case of a file being written repeatedly after its first watermark.
+		if ($this->watermarkService->isAlreadyWatermarked($fileId)) {
+			return;
+		}
 
-        $this->jobList->add(WatermarkOnUploadJob::class, ['fileId' => $fileId, 'uid' => $uid]);
-    }
+		$this->jobList->add(WatermarkOnUploadJob::class, ['fileId' => $fileId, 'uid' => $uid]);
+	}
 
-    /**
-     * Run $callback with the on-upload trigger disabled for $fileId.
-     *
-     * The job's own `putContent()` fires another `NodeWrittenEvent`, which would queue a
-     * second job for the same file. That second job would skip harmlessly (the audit row
-     * exists by then), but it is a wasted cron cycle per upload — and the audit row is
-     * written *after* the content, so there is a window where it would not skip.
-     */
-    public static function suppressFor(int $fileId, callable $callback): mixed {
-        self::$suppressed[$fileId] = true;
-        try {
-            return $callback();
-        } finally {
-            unset(self::$suppressed[$fileId]);
-        }
-    }
+	/**
+	 * Run $callback with the on-upload trigger disabled for $fileId.
+	 *
+	 * The job's own `putContent()` fires another `NodeWrittenEvent`, which would queue a
+	 * second job for the same file. That second job would skip harmlessly (the audit row
+	 * exists by then), but it is a wasted cron cycle per upload — and the audit row is
+	 * written *after* the content, so there is a window where it would not skip.
+	 */
+	public static function suppressFor(int $fileId, callable $callback): mixed {
+		self::$suppressed[$fileId] = true;
+		try {
+			return $callback();
+		} finally {
+			unset(self::$suppressed[$fileId]);
+		}
+	}
 }

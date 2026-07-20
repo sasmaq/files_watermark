@@ -12,13 +12,13 @@ namespace OCA\FilesWatermark\Dav;
  */
 class WatermarkRequiredException extends \RuntimeException {
 
-    public function __construct(
-        private string $path,
-    ) {
-        parent::__construct("Member could not be watermarked: $path");
-    }
+	public function __construct(
+		private string $path,
+	) {
+		parent::__construct("Member could not be watermarked: $path");
+	}
 
-    public function getPath(): string {
-        return $this->path;
-    }
+	public function getPath(): string {
+		return $this->path;
+	}
 }

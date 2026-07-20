@@ -22,27 +22,27 @@ use OCP\AppFramework\Db\Entity;
  */
 class WatermarkLog extends Entity {
 
-    protected string $userId = '';
-    protected int $fileId = 0;
-    protected string $filePath = '';
-    protected string $trigger = '';
-    protected ?int $configId = null;
-    protected string $createdAt = '';
+	protected string $userId = '';
+	protected int $fileId = 0;
+	protected string $filePath = '';
+	protected string $trigger = '';
+	protected ?int $configId = null;
+	protected string $createdAt = '';
 
-    public function __construct() {
-        $this->addType('fileId', 'integer');
-        $this->addType('configId', 'integer');
-    }
+	public function __construct() {
+		$this->addType('fileId', 'integer');
+		$this->addType('configId', 'integer');
+	}
 
-    public function jsonSerialize(): array {
-        return [
-            'id'        => $this->id,
-            'userId'    => $this->userId,
-            'fileId'    => $this->fileId,
-            'filePath'  => $this->filePath,
-            'trigger'   => $this->trigger,
-            'configId'  => $this->configId,
-            'createdAt' => $this->createdAt,
-        ];
-    }
+	public function jsonSerialize(): array {
+		return [
+			'id' => $this->id,
+			'userId' => $this->userId,
+			'fileId' => $this->fileId,
+			'filePath' => $this->filePath,
+			'trigger' => $this->trigger,
+			'configId' => $this->configId,
+			'createdAt' => $this->createdAt,
+		];
+	}
 }

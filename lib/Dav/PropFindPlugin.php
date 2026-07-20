@@ -22,67 +22,67 @@ use Sabre\DAV\ServerPlugin;
  */
 class PropFindPlugin extends ServerPlugin {
 
-    public const WATERMARKED_PROPERTY = '{http://nextcloud.org/ns}is-watermarked';
+	public const WATERMARKED_PROPERTY = '{http://nextcloud.org/ns}is-watermarked';
 
-    /**
-     * file id => watermarked. Primed with one batched query per folder listing so a
-     * directory PROPFIND does not fan out into a query per child.
-     *
-     * @var array<int, bool>
-     */
-    private array $cache = [];
+	/**
+	 * file id => watermarked. Primed with one batched query per folder listing so a
+	 * directory PROPFIND does not fan out into a query per child.
+	 *
+	 * @var array<int, bool>
+	 */
+	private array $cache = [];
 
-    public function __construct(
-        private WatermarkLogMapper $logMapper,
-    ) {
-    }
+	public function __construct(
+		private WatermarkLogMapper $logMapper,
+	) {
+	}
 
-    public function initialize(Server $server): void {
-        $server->on('propFind', [$this, 'propFind']);
-    }
+	public function initialize(Server $server): void {
+		$server->on('propFind', [$this, 'propFind']);
+	}
 
-    public function propFind(PropFind $propFind, INode $node): void {
-        if (!in_array(self::WATERMARKED_PROPERTY, $propFind->getRequestedProperties(), true)) {
-            return;
-        }
+	public function propFind(PropFind $propFind, INode $node): void {
+		if (!in_array(self::WATERMARKED_PROPERTY, $propFind->getRequestedProperties(), true)) {
+			return;
+		}
 
-        if (!($node instanceof Node)) {
-            return;
-        }
+		if (!($node instanceof Node)) {
+			return;
+		}
 
-        // On a folder listing, resolve every child's status in a single query up front.
-        if ($node instanceof Directory && $propFind->getDepth() !== 0) {
-            $this->cacheFolder($node->getNode());
-        }
+		// On a folder listing, resolve every child's status in a single query up front.
+		if ($node instanceof Directory && $propFind->getDepth() !== 0) {
+			$this->cacheFolder($node->getNode());
+		}
 
-        $propFind->handle(self::WATERMARKED_PROPERTY, function () use ($node): string {
-            return $this->isWatermarked($node->getId()) ? '1' : '0';
-        });
-    }
+		$propFind->handle(self::WATERMARKED_PROPERTY, function () use ($node): string {
+			return $this->isWatermarked($node->getId()) ? '1' : '0';
+		});
+	}
 
-    private function cacheFolder(Folder $folder): void {
-        $childIds = array_map(
-            static fn($child) => $child->getId(),
-            $folder->getDirectoryListing(),
-        );
-        if ($childIds === []) {
-            return;
-        }
+	private function cacheFolder(Folder $folder): void {
+		$childIds = array_map(
+			static fn ($child) => $child->getId(),
+			$folder->getDirectoryListing(),
+		);
+		if ($childIds === []) {
+			return;
+		}
 
-        foreach ($this->logMapper->findWatermarkedFileIds($childIds) as $id) {
-            $this->cache[$id] = true;
-        }
-        // Everything else in the folder is known *not* watermarked — record it so the
-        // per-node handler never falls back to a second query.
-        foreach ($childIds as $id) {
-            $this->cache[$id] ??= false;
-        }
-    }
+		foreach ($this->logMapper->findWatermarkedFileIds($childIds) as $id) {
+			$this->cache[$id] = true;
+		}
+		// Everything else in the folder is known *not* watermarked — record it so the
+		// per-node handler never falls back to a second query.
+		foreach ($childIds as $id) {
+			$this->cache[$id] ??= false;
+		}
+	}
 
-    private function isWatermarked(int $fileId): bool {
-        if (!array_key_exists($fileId, $this->cache)) {
-            $this->cache[$fileId] = $this->logMapper->findWatermarkedFileIds([$fileId]) !== [];
-        }
-        return $this->cache[$fileId];
-    }
+	private function isWatermarked(int $fileId): bool {
+		if (!array_key_exists($fileId, $this->cache)) {
+			$this->cache[$fileId] = $this->logMapper->findWatermarkedFileIds([$fileId]) !== [];
+		}
+		return $this->cache[$fileId];
+	}
 }

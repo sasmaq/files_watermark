@@ -9,8 +9,10 @@
         "tecnickcom/tcpdf": "^6.7"
     },
     "require-dev": {
+        "nextcloud/coding-standard": "^1.3",
         "nextcloud/ocp": "dev-stable31",
-        "phpunit/phpunit": "^10.5"
+        "phpunit/phpunit": "^10.5",
+        "sabre/dav": "^4.6"
     },
     "autoload": {
         "psr-4": {
@@ -25,5 +27,17 @@
     "config": {
         "vendor-dir": "vendor",
         "sort-packages": true
+    },
+    "scripts": {
+        "lint": "find . -name '*.php' -not -path './vendor/*' -not -path './node_modules/*' -not -path './build/*' -print0 | xargs -0 -n1 php -l",
+        "cs:check": "php-cs-fixer fix --dry-run --diff",
+        "cs:fix": "php-cs-fixer fix",
+        "test": "phpunit"
+    },
+    "scripts-descriptions": {
+        "lint": "Check every PHP file for syntax errors",
+        "cs:check": "Report coding-standard violations without changing anything",
+        "cs:fix": "Apply the Nextcloud coding standard in place",
+        "test": "Run the PHPUnit suite"
     }
 }

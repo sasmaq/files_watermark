@@ -40,90 +40,90 @@ use Sabre\HTTP\ResponseInterface;
  */
 class DownloadInterceptorPlugin extends ServerPlugin {
 
-    private ?Server $server = null;
+	private ?Server $server = null;
 
-    public function __construct(
-        private WatermarkService $watermarkService,
-        private bool $publicContext = false,
-    ) {
-    }
+	public function __construct(
+		private WatermarkService $watermarkService,
+		private bool $publicContext = false,
+	) {
+	}
 
-    public function initialize(Server $server): void {
-        $this->server = $server;
-        // Hook the same event Sabre's CorePlugin streams file bodies on (`method:GET`),
-        // at a lower priority number so we run *first*. Returning false stops CorePlugin
-        // from serving the original, but — unlike returning false from `beforeMethod` —
-        // Sabre still runs `afterMethod` and flushes our response via `sendResponse`.
-        // (A false from `beforeMethod:GET` returns before `sendResponse`, sending 0 bytes.)
-        $server->on('method:GET', [$this, 'httpGet'], 90);
-    }
+	public function initialize(Server $server): void {
+		$this->server = $server;
+		// Hook the same event Sabre's CorePlugin streams file bodies on (`method:GET`),
+		// at a lower priority number so we run *first*. Returning false stops CorePlugin
+		// from serving the original, but — unlike returning false from `beforeMethod` —
+		// Sabre still runs `afterMethod` and flushes our response via `sendResponse`.
+		// (A false from `beforeMethod:GET` returns before `sendResponse`, sending 0 bytes.)
+		$server->on('method:GET', [$this, 'httpGet'], 90);
+	}
 
-    /**
-     * @return bool false when the download was handled (watermarked copy streamed),
-     *              true to let Sabre serve the file normally
-     */
-    public function httpGet(RequestInterface $request, ResponseInterface $response): bool {
-        if ($this->server === null) {
-            return true;
-        }
+	/**
+	 * @return bool false when the download was handled (watermarked copy streamed),
+	 *              true to let Sabre serve the file normally
+	 */
+	public function httpGet(RequestInterface $request, ResponseInterface $response): bool {
+		if ($this->server === null) {
+			return true;
+		}
 
-        try {
-            $node = $this->server->tree->getNodeForPath($request->getPath());
-        } catch (NotFound) {
-            return true;
-        }
+		try {
+			$node = $this->server->tree->getNodeForPath($request->getPath());
+		} catch (NotFound) {
+			return true;
+		}
 
-        if (!($node instanceof DavFile)) {
-            return true;
-        }
+		if (!($node instanceof DavFile)) {
+			return true;
+		}
 
-        $file = $node->getNode();
-        if (!($file instanceof File)) {
-            return true;
-        }
+		$file = $node->getNode();
+		if (!($file instanceof File)) {
+			return true;
+		}
 
-        $tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
-        if ($tmpPath === null) {
-            // No watermarked copy was produced. For `on_share` a recipient must never
-            // receive the clean original — so if the file *should* have been
-            // watermarked for this shared access but couldn't be (e.g. a PDF the
-            // renderer can't parse), deny the fetch instead of leaking the original.
-            // This closes the viewer/inline-view bypass. (`on_download` keeps its
-            // best-effort fallback of serving the original on failure.)
-            if ($this->watermarkService->deliveryTrigger($file, $this->publicContext) === 'on_share') {
-                throw new Forbidden('This shared file is only available watermarked, which could not be generated.');
-            }
-            return true;
-        }
+		$tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
+		if ($tmpPath === null) {
+			// No watermarked copy was produced. For `on_share` a recipient must never
+			// receive the clean original — so if the file *should* have been
+			// watermarked for this shared access but couldn't be (e.g. a PDF the
+			// renderer can't parse), deny the fetch instead of leaking the original.
+			// This closes the viewer/inline-view bypass. (`on_download` keeps its
+			// best-effort fallback of serving the original on failure.)
+			if ($this->watermarkService->deliveryTrigger($file, $this->publicContext) === 'on_share') {
+				throw new Forbidden('This shared file is only available watermarked, which could not be generated.');
+			}
+			return true;
+		}
 
-        $stream = @fopen($tmpPath, 'rb');
-        if ($stream === false) {
-            $this->cleanup($tmpPath);
-            return true;
-        }
+		$stream = @fopen($tmpPath, 'rb');
+		if ($stream === false) {
+			$this->cleanup($tmpPath);
+			return true;
+		}
 
-        // Delete the temp copy once the response has been flushed to the client.
-        register_shutdown_function(fn () => $this->cleanup($tmpPath));
+		// Delete the temp copy once the response has been flushed to the client.
+		register_shutdown_function(fn () => $this->cleanup($tmpPath));
 
-        // Status 200 with the full body deliberately ignores any Range header: the
-        // watermarked bytes differ from the original, so byte offsets into the
-        // source are meaningless and a partial response would be incoherent.
-        $response->setStatus(200);
-        $response->setHeader('Content-Type', $file->getMimeType());
-        $response->setHeader('Content-Length', (string) filesize($tmpPath));
-        $response->setHeader(
-            'Content-Disposition',
-            'attachment; filename="' . addslashes($file->getName()) . '"',
-        );
-        $response->setBody($stream);
+		// Status 200 with the full body deliberately ignores any Range header: the
+		// watermarked bytes differ from the original, so byte offsets into the
+		// source are meaningless and a partial response would be incoherent.
+		$response->setStatus(200);
+		$response->setHeader('Content-Type', $file->getMimeType());
+		$response->setHeader('Content-Length', (string)filesize($tmpPath));
+		$response->setHeader(
+			'Content-Disposition',
+			'attachment; filename="' . addslashes($file->getName()) . '"',
+		);
+		$response->setBody($stream);
 
-        return false;
-    }
+		return false;
+	}
 
-    private function cleanup(string $tmpPath): void {
-        if (file_exists($tmpPath)) {
-            @unlink($tmpPath);
-            @rmdir(dirname($tmpPath));
-        }
-    }
+	private function cleanup(string $tmpPath): void {
+		if (file_exists($tmpPath)) {
+			@unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
 }

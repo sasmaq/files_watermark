@@ -20,6 +20,8 @@ Thumbs.db
 *.swp
 *.swo
 
+.claude
+
 # Nextcloud app build artifacts
 /build/
 *.tar.gz
@@ -30,3 +32,6 @@ Thumbs.db
 
 # PHP Unit
 .phpunit.cache
+
+# PHP-CS-Fixer
+.php-cs-fixer.cache

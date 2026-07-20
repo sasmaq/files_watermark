@@ -8,182 +8,182 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
 
 class ImageWatermarker {
 
-    private bool $useImagick;
+	private bool $useImagick;
 
-    public function __construct() {
-        $this->useImagick = class_exists('Imagick');
-    }
+	public function __construct() {
+		$this->useImagick = class_exists('Imagick');
+	}
 
-    public function apply(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
-        if ($this->useImagick) {
-            $this->applyWithImagick($sourcePath, $destPath, $config, $placeholders);
-        } else {
-            $this->applyWithGd($sourcePath, $destPath, $config, $placeholders);
-        }
-    }
+	public function apply(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
+		if ($this->useImagick) {
+			$this->applyWithImagick($sourcePath, $destPath, $config, $placeholders);
+		} else {
+			$this->applyWithGd($sourcePath, $destPath, $config, $placeholders);
+		}
+	}
 
-    private function applyWithImagick(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
-        $image  = new \Imagick($sourcePath);
-        $width  = $image->getImageWidth();
-        $height = $image->getImageHeight();
-        $alpha  = $config->getOpacity() / 100;
+	private function applyWithImagick(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
+		$image = new \Imagick($sourcePath);
+		$width = $image->getImageWidth();
+		$height = $image->getImageHeight();
+		$alpha = $config->getOpacity() / 100;
 
-        if (in_array($config->getType(), ['text', 'combined'], true)) {
-            $text     = $this->resolvePlaceholders($config->getTextTemplate() ?? '{username} {date}', $placeholders);
-            $color    = $config->getColor();
-            $fontSize = $config->getFontSize();
-            $rotation = $config->getRotation();
+		if (in_array($config->getType(), ['text', 'combined'], true)) {
+			$text = $this->resolvePlaceholders($config->getTextTemplate() ?? '{username} {date}', $placeholders);
+			$color = $config->getColor();
+			$fontSize = $config->getFontSize();
+			$rotation = $config->getRotation();
 
-            $draw = new \ImagickDraw();
-            $draw->setFont('DejaVu-Sans-Bold');
-            $draw->setFontSize($fontSize);
-            $draw->setFillColor(new \ImagickPixel($color));
-            $draw->setFillOpacity($alpha);
+			$draw = new \ImagickDraw();
+			$draw->setFont('DejaVu-Sans-Bold');
+			$draw->setFontSize($fontSize);
+			$draw->setFillColor(new \ImagickPixel($color));
+			$draw->setFillOpacity($alpha);
 
-            $stepX = max(210, $fontSize * 10);
-            $stepY = max(225, $fontSize * 11);
+			$stepX = max(210, $fontSize * 10);
+			$stepY = max(225, $fontSize * 11);
 
-            // annotateImage places text at the given pixel coords and rotates it in place,
-            // avoiding the cumulative-transform bug that $draw->rotate() in a loop would cause.
-            for ($x = 0; $x < $width + $stepX; $x += $stepX) {
-                // Start near the top (baseline ~ one line down) so the tiling
-                // always covers the image even when the step is larger than it.
-                for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
-                    $image->annotateImage($draw, $x, $y, -$rotation, $text);
-                }
-            }
-        }
+			// annotateImage places text at the given pixel coords and rotates it in place,
+			// avoiding the cumulative-transform bug that $draw->rotate() in a loop would cause.
+			for ($x = 0; $x < $width + $stepX; $x += $stepX) {
+				// Start near the top (baseline ~ one line down) so the tiling
+				// always covers the image even when the step is larger than it.
+				for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
+					$image->annotateImage($draw, $x, $y, -$rotation, $text);
+				}
+			}
+		}
 
-        if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath() && file_exists($config->getImagePath())) {
-            $watermark = new \Imagick($config->getImagePath());
-            $wmW = intval($width * 0.3);
-            $wmH = intval($watermark->getImageHeight() * ($wmW / $watermark->getImageWidth()));
-            $watermark->resizeImage($wmW, $wmH, \Imagick::FILTER_LANCZOS, 1);
-            $watermark->evaluateImage(\Imagick::EVALUATE_MULTIPLY, $alpha, \Imagick::CHANNEL_ALPHA);
-            $image->compositeImage(
-                $watermark,
-                \Imagick::COMPOSITE_OVER,
-                intval(($width - $wmW) / 2),
-                intval(($height - $wmH) / 2)
-            );
-        }
+		if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath() && file_exists($config->getImagePath())) {
+			$watermark = new \Imagick($config->getImagePath());
+			$wmW = intval($width * 0.3);
+			$wmH = intval($watermark->getImageHeight() * ($wmW / $watermark->getImageWidth()));
+			$watermark->resizeImage($wmW, $wmH, \Imagick::FILTER_LANCZOS, 1);
+			$watermark->evaluateImage(\Imagick::EVALUATE_MULTIPLY, $alpha, \Imagick::CHANNEL_ALPHA);
+			$image->compositeImage(
+				$watermark,
+				\Imagick::COMPOSITE_OVER,
+				intval(($width - $wmW) / 2),
+				intval(($height - $wmH) / 2)
+			);
+		}
 
-        $image->writeImage($destPath);
-        $image->clear();
-    }
+		$image->writeImage($destPath);
+		$image->clear();
+	}
 
-    private function applyWithGd(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
-        $mime = mime_content_type($sourcePath);
+	private function applyWithGd(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
+		$mime = mime_content_type($sourcePath);
 
-        if ($mime === 'image/webp' && (!function_exists('imagecreatefromwebp') || !function_exists('imagewebp'))) {
-            throw new \RuntimeException('GD was compiled without WebP support. Install Imagick or recompile GD with libwebp.');
-        }
+		if ($mime === 'image/webp' && (!function_exists('imagecreatefromwebp') || !function_exists('imagewebp'))) {
+			throw new \RuntimeException('GD was compiled without WebP support. Install Imagick or recompile GD with libwebp.');
+		}
 
-        $src = match ($mime) {
-            'image/jpeg' => imagecreatefromjpeg($sourcePath),
-            'image/png'  => imagecreatefrompng($sourcePath),
-            'image/webp' => imagecreatefromwebp($sourcePath),
-            default      => throw new \RuntimeException("Unsupported image type: $mime"),
-        };
+		$src = match ($mime) {
+			'image/jpeg' => imagecreatefromjpeg($sourcePath),
+			'image/png' => imagecreatefrompng($sourcePath),
+			'image/webp' => imagecreatefromwebp($sourcePath),
+			default => throw new \RuntimeException("Unsupported image type: $mime"),
+		};
 
-        $width  = imagesx($src);
-        $height = imagesy($src);
+		$width = imagesx($src);
+		$height = imagesy($src);
 
-        if (in_array($config->getType(), ['text', 'combined'], true)) {
-            $text     = $this->resolvePlaceholders($config->getTextTemplate() ?? '{username} {date}', $placeholders);
-            $color    = $this->hexToRgb($config->getColor());
-            $opacity  = intval((1 - $config->getOpacity() / 100) * 127);
-            $textColor = imagecolorallocatealpha($src, $color[0], $color[1], $color[2], $opacity);
-            $fontSize = $config->getFontSize();
-            $rotation = $config->getRotation();
-            $fontPath = $this->findSystemFont();
+		if (in_array($config->getType(), ['text', 'combined'], true)) {
+			$text = $this->resolvePlaceholders($config->getTextTemplate() ?? '{username} {date}', $placeholders);
+			$color = $this->hexToRgb($config->getColor());
+			$opacity = intval((1 - $config->getOpacity() / 100) * 127);
+			$textColor = imagecolorallocatealpha($src, $color[0], $color[1], $color[2], $opacity);
+			$fontSize = $config->getFontSize();
+			$rotation = $config->getRotation();
+			$fontPath = $this->findSystemFont();
 
-            if ($fontPath !== null) {
-                $stepX = max(210, $fontSize * 10);
-                $stepY = max(225, $fontSize * 11);
-                for ($x = 0; $x < $width + $stepX; $x += $stepX) {
-                    for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
-                        imagettftext($src, $fontSize, $rotation, $x, $y, $textColor, $fontPath, $text);
-                    }
-                }
-            } else {
-                // No TTF font available: fall back to built-in pixelated font (no rotation).
-                $gdFontSize = max(1, intval($fontSize / 4));
-                $stepX      = max(140, $gdFontSize * 56);
-                $stepY      = max(140, $gdFontSize * 56);
-                for ($x = 0; $x < $width; $x += $stepX) {
-                    for ($y = 0; $y < $height; $y += $stepY) {
-                        imagestring($src, $gdFontSize, $x, $y, $text, $textColor);
-                    }
-                }
-            }
-        }
+			if ($fontPath !== null) {
+				$stepX = max(210, $fontSize * 10);
+				$stepY = max(225, $fontSize * 11);
+				for ($x = 0; $x < $width + $stepX; $x += $stepX) {
+					for ($y = $fontSize; $y < $height + $stepY; $y += $stepY) {
+						imagettftext($src, $fontSize, $rotation, $x, $y, $textColor, $fontPath, $text);
+					}
+				}
+			} else {
+				// No TTF font available: fall back to built-in pixelated font (no rotation).
+				$gdFontSize = max(1, intval($fontSize / 4));
+				$stepX = max(140, $gdFontSize * 56);
+				$stepY = max(140, $gdFontSize * 56);
+				for ($x = 0; $x < $width; $x += $stepX) {
+					for ($y = 0; $y < $height; $y += $stepY) {
+						imagestring($src, $gdFontSize, $x, $y, $text, $textColor);
+					}
+				}
+			}
+		}
 
-        if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath() && file_exists($config->getImagePath())) {
-            $watermarkMime = mime_content_type($config->getImagePath());
-            $wm = match ($watermarkMime) {
-                'image/png'  => imagecreatefrompng($config->getImagePath()),
-                'image/jpeg' => imagecreatefromjpeg($config->getImagePath()),
-                default      => null,
-            };
+		if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath() && file_exists($config->getImagePath())) {
+			$watermarkMime = mime_content_type($config->getImagePath());
+			$wm = match ($watermarkMime) {
+				'image/png' => imagecreatefrompng($config->getImagePath()),
+				'image/jpeg' => imagecreatefromjpeg($config->getImagePath()),
+				default => null,
+			};
 
-            if ($wm !== null) {
-                $wmOrigW = imagesx($wm);
-                $wmOrigH = imagesy($wm);
-                $wmW     = intval($width * 0.3);
-                $wmH     = intval($wmOrigH * ($wmW / $wmOrigW));
-                $scaled  = imagescale($wm, $wmW, $wmH);
-                imagedestroy($wm);
+			if ($wm !== null) {
+				$wmOrigW = imagesx($wm);
+				$wmOrigH = imagesy($wm);
+				$wmW = intval($width * 0.3);
+				$wmH = intval($wmOrigH * ($wmW / $wmOrigW));
+				$scaled = imagescale($wm, $wmW, $wmH);
+				imagedestroy($wm);
 
-                $dstX = intval(($width - $wmW) / 2);
-                $dstY = intval(($height - $wmH) / 2);
-                imagecopymerge($src, $scaled, $dstX, $dstY, 0, 0, $wmW, $wmH, $config->getOpacity());
-                imagedestroy($scaled);
-            }
-        }
+				$dstX = intval(($width - $wmW) / 2);
+				$dstY = intval(($height - $wmH) / 2);
+				imagecopymerge($src, $scaled, $dstX, $dstY, 0, 0, $wmW, $wmH, $config->getOpacity());
+				imagedestroy($scaled);
+			}
+		}
 
-        match ($mime) {
-            'image/jpeg' => imagejpeg($src, $destPath, 90),
-            'image/png'  => imagepng($src, $destPath),
-            'image/webp' => imagewebp($src, $destPath, 90),
-        };
+		match ($mime) {
+			'image/jpeg' => imagejpeg($src, $destPath, 90),
+			'image/png' => imagepng($src, $destPath),
+			'image/webp' => imagewebp($src, $destPath, 90),
+		};
 
-        imagedestroy($src);
-    }
+		imagedestroy($src);
+	}
 
-    private function findSystemFont(): ?string {
-        $candidates = [
-            // Linux (most Nextcloud servers)
-            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-            '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
-            '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-            '/usr/share/fonts/liberation/LiberationSans-Bold.ttf',
-            // macOS (development environments)
-            '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
-            '/System/Library/Fonts/Supplemental/Arial.ttf',
-            '/System/Library/Fonts/Geneva.ttf',
-            '/Library/Fonts/Arial.ttf',
-        ];
-        foreach ($candidates as $path) {
-            if (file_exists($path)) {
-                return $path;
-            }
-        }
-        return null;
-    }
+	private function findSystemFont(): ?string {
+		$candidates = [
+			// Linux (most Nextcloud servers)
+			'/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+			'/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+			'/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+			'/usr/share/fonts/liberation/LiberationSans-Bold.ttf',
+			// macOS (development environments)
+			'/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+			'/System/Library/Fonts/Supplemental/Arial.ttf',
+			'/System/Library/Fonts/Geneva.ttf',
+			'/Library/Fonts/Arial.ttf',
+		];
+		foreach ($candidates as $path) {
+			if (file_exists($path)) {
+				return $path;
+			}
+		}
+		return null;
+	}
 
-    private function resolvePlaceholders(string $template, array $placeholders): string {
-        $search  = array_map(fn($k) => '{' . $k . '}', array_keys($placeholders));
-        $replace = array_values($placeholders);
-        return str_replace($search, $replace, $template);
-    }
+	private function resolvePlaceholders(string $template, array $placeholders): string {
+		$search = array_map(fn ($k) => '{' . $k . '}', array_keys($placeholders));
+		$replace = array_values($placeholders);
+		return str_replace($search, $replace, $template);
+	}
 
-    private function hexToRgb(string $hex): array {
-        $hex = ltrim($hex, '#');
-        return [
-            hexdec(substr($hex, 0, 2)),
-            hexdec(substr($hex, 2, 2)),
-            hexdec(substr($hex, 4, 2)),
-        ];
-    }
+	private function hexToRgb(string $hex): array {
+		$hex = ltrim($hex, '#');
+		return [
+			hexdec(substr($hex, 0, 2)),
+			hexdec(substr($hex, 2, 2)),
+			hexdec(substr($hex, 4, 2)),
+		];
+	}
 }

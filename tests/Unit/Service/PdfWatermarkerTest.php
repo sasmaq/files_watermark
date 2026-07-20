@@ -16,146 +16,146 @@ use TCPDF;
  */
 class PdfWatermarkerTest extends TestCase {
 
-    private PdfWatermarker $watermarker;
-    private string $tmpDir;
+	private PdfWatermarker $watermarker;
+	private string $tmpDir;
 
-    protected function setUp(): void {
-        parent::setUp();
-        $this->watermarker = new PdfWatermarker();
-        $this->tmpDir = sys_get_temp_dir() . '/wm_pdf_test_' . bin2hex(random_bytes(6));
-        mkdir($this->tmpDir, 0700, true);
-    }
+	protected function setUp(): void {
+		parent::setUp();
+		$this->watermarker = new PdfWatermarker();
+		$this->tmpDir = sys_get_temp_dir() . '/wm_pdf_test_' . bin2hex(random_bytes(6));
+		mkdir($this->tmpDir, 0700, true);
+	}
 
-    protected function tearDown(): void {
-        foreach (glob($this->tmpDir . '/*') ?: [] as $file) {
-            @unlink($file);
-        }
-        @rmdir($this->tmpDir);
-        parent::tearDown();
-    }
+	protected function tearDown(): void {
+		foreach (glob($this->tmpDir . '/*') ?: [] as $file) {
+			@unlink($file);
+		}
+		@rmdir($this->tmpDir);
+		parent::tearDown();
+	}
 
-    public function testTextOverlayAppliedAcrossMultiplePages(): void {
-        $source = $this->createSourcePdf(3);
-        $dest   = $this->tmpDir . '/text.pdf';
+	public function testTextOverlayAppliedAcrossMultiplePages(): void {
+		$source = $this->createSourcePdf(3);
+		$dest = $this->tmpDir . '/text.pdf';
 
-        $config = $this->makeConfig('text');
-        $config->setTextTemplate('{username} — {date}');
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate('{username} — {date}');
 
-        $this->watermarker->apply($source, $dest, $config, [
-            'username' => 'Alice',
-            'date'     => '2026-06-27',
-        ]);
+		$this->watermarker->apply($source, $dest, $config, [
+			'username' => 'Alice',
+			'date' => '2026-06-27',
+		]);
 
-        $this->assertFileExists($dest);
-        $this->assertStringStartsWith('%PDF', (string) file_get_contents($dest));
+		$this->assertFileExists($dest);
+		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
 
-        // Page count must be preserved across the whole multi-page document.
-        $reader = new Fpdi();
-        $this->assertSame(3, $reader->setSourceFile($dest));
-    }
+		// Page count must be preserved across the whole multi-page document.
+		$reader = new Fpdi();
+		$this->assertSame(3, $reader->setSourceFile($dest));
+	}
 
-    public function testImageOverlayAppliedAndPreservesAspectRatio(): void {
-        $source = $this->createSourcePdf(1);
-        $logo   = $this->createPng(120, 90); // intentionally not 2:1
-        $dest   = $this->tmpDir . '/image.pdf';
+	public function testImageOverlayAppliedAndPreservesAspectRatio(): void {
+		$source = $this->createSourcePdf(1);
+		$logo = $this->createPng(120, 90); // intentionally not 2:1
+		$dest = $this->tmpDir . '/image.pdf';
 
-        $config = $this->makeConfig('image');
-        $config->setImagePath($logo);
+		$config = $this->makeConfig('image');
+		$config->setImagePath($logo);
 
-        $this->watermarker->apply($source, $dest, $config, []);
+		$this->watermarker->apply($source, $dest, $config, []);
 
-        $this->assertFileExists($dest);
-        $this->assertGreaterThan(0, filesize($dest));
+		$this->assertFileExists($dest);
+		$this->assertGreaterThan(0, filesize($dest));
 
-        $reader = new Fpdi();
-        $this->assertSame(1, $reader->setSourceFile($dest));
-    }
+		$reader = new Fpdi();
+		$this->assertSame(1, $reader->setSourceFile($dest));
+	}
 
-    public function testCombinedOverlayApplied(): void {
-        $source = $this->createSourcePdf(2);
-        $logo   = $this->createPng(100, 100);
-        $dest   = $this->tmpDir . '/combined.pdf';
+	public function testCombinedOverlayApplied(): void {
+		$source = $this->createSourcePdf(2);
+		$logo = $this->createPng(100, 100);
+		$dest = $this->tmpDir . '/combined.pdf';
 
-        $config = $this->makeConfig('combined');
-        $config->setTextTemplate('Confidential — {username}');
-        $config->setImagePath($logo);
+		$config = $this->makeConfig('combined');
+		$config->setTextTemplate('Confidential — {username}');
+		$config->setImagePath($logo);
 
-        $this->watermarker->apply($source, $dest, $config, ['username' => 'Bob']);
+		$this->watermarker->apply($source, $dest, $config, ['username' => 'Bob']);
 
-        $this->assertFileExists($dest);
-        $reader = new Fpdi();
-        $this->assertSame(2, $reader->setSourceFile($dest));
-    }
+		$this->assertFileExists($dest);
+		$reader = new Fpdi();
+		$this->assertSame(2, $reader->setSourceFile($dest));
+	}
 
-    public function testLongWatermarkTextRendersWithoutError(): void {
-        // Regression: tile spacing used to be a fixed multiple of the font size,
-        // so text wider than a few characters overflowed its cell and adjacent
-        // tiles collided into an illegible smear. Spacing now derives from the
-        // measured text width, so even a long resolved string renders cleanly.
-        $source = $this->createSourcePdf(1);
-        $dest   = $this->tmpDir . '/long.pdf';
+	public function testLongWatermarkTextRendersWithoutError(): void {
+		// Regression: tile spacing used to be a fixed multiple of the font size,
+		// so text wider than a few characters overflowed its cell and adjacent
+		// tiles collided into an illegible smear. Spacing now derives from the
+		// measured text width, so even a long resolved string renders cleanly.
+		$source = $this->createSourcePdf(1);
+		$dest = $this->tmpDir . '/long.pdf';
 
-        $config = $this->makeConfig('text');
-        $config->setTextTemplate('{username} — Confidential — {date} — Do Not Distribute');
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate('{username} — Confidential — {date} — Do Not Distribute');
 
-        $this->watermarker->apply($source, $dest, $config, [
-            'username' => 'Alexandra Featherstonehaugh',
-            'date'     => '2026-07-19',
-        ]);
+		$this->watermarker->apply($source, $dest, $config, [
+			'username' => 'Alexandra Featherstonehaugh',
+			'date' => '2026-07-19',
+		]);
 
-        $this->assertFileExists($dest);
-        $this->assertStringStartsWith('%PDF', (string) file_get_contents($dest));
+		$this->assertFileExists($dest);
+		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
 
-        $reader = new Fpdi();
-        $this->assertSame(1, $reader->setSourceFile($dest));
-    }
+		$reader = new Fpdi();
+		$this->assertSame(1, $reader->setSourceFile($dest));
+	}
 
-    public function testCorruptOrEncryptedPdfThrowsRuntimeException(): void {
-        $bad  = $this->tmpDir . '/bad.pdf';
-        file_put_contents($bad, 'this is not a real PDF document');
-        $dest = $this->tmpDir . '/out.pdf';
+	public function testCorruptOrEncryptedPdfThrowsRuntimeException(): void {
+		$bad = $this->tmpDir . '/bad.pdf';
+		file_put_contents($bad, 'this is not a real PDF document');
+		$dest = $this->tmpDir . '/out.pdf';
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Cannot process PDF');
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessage('Cannot process PDF');
 
-        $this->watermarker->apply($bad, $dest, $this->makeConfig('text'), []);
-    }
+		$this->watermarker->apply($bad, $dest, $this->makeConfig('text'), []);
+	}
 
-    private function makeConfig(string $type): WatermarkConfig {
-        $config = new WatermarkConfig();
-        $config->setType($type);
-        $config->setTextTemplate('{username}');
-        $config->setPosition('diagonal');
-        $config->setOpacity(80);
-        $config->setFontSize(24);
-        $config->setColor('#cccccc');
-        $config->setRotation(45);
-        $config->setTrigger('on_demand');
-        return $config;
-    }
+	private function makeConfig(string $type): WatermarkConfig {
+		$config = new WatermarkConfig();
+		$config->setType($type);
+		$config->setTextTemplate('{username}');
+		$config->setPosition('diagonal');
+		$config->setOpacity(80);
+		$config->setFontSize(24);
+		$config->setColor('#cccccc');
+		$config->setRotation(45);
+		$config->setTrigger('on_demand');
+		return $config;
+	}
 
-    /** Generates an FPDI-readable (PDF 1.4, uncompressed) multi-page fixture. */
-    private function createSourcePdf(int $pages): string {
-        $pdf = new TCPDF();
-        $pdf->setPDFVersion('1.4');
-        $pdf->SetCompression(false);
-        for ($i = 1; $i <= $pages; $i++) {
-            $pdf->AddPage();
-            $pdf->SetFont('helvetica', '', 12);
-            $pdf->Cell(0, 10, "Page $i");
-        }
-        $path = $this->tmpDir . '/source.pdf';
-        $pdf->Output($path, 'F');
-        return $path;
-    }
+	/** Generates an FPDI-readable (PDF 1.4, uncompressed) multi-page fixture. */
+	private function createSourcePdf(int $pages): string {
+		$pdf = new TCPDF();
+		$pdf->setPDFVersion('1.4');
+		$pdf->SetCompression(false);
+		for ($i = 1; $i <= $pages; $i++) {
+			$pdf->AddPage();
+			$pdf->SetFont('helvetica', '', 12);
+			$pdf->Cell(0, 10, "Page $i");
+		}
+		$path = $this->tmpDir . '/source.pdf';
+		$pdf->Output($path, 'F');
+		return $path;
+	}
 
-    private function createPng(int $width, int $height): string {
-        $img = imagecreatetruecolor($width, $height);
-        $blue = imagecolorallocate($img, 0, 0, 255);
-        imagefilledrectangle($img, 0, 0, $width - 1, $height - 1, $blue);
-        $path = $this->tmpDir . '/logo.png';
-        imagepng($img, $path);
-        imagedestroy($img);
-        return $path;
-    }
+	private function createPng(int $width, int $height): string {
+		$img = imagecreatetruecolor($width, $height);
+		$blue = imagecolorallocate($img, 0, 0, 255);
+		imagefilledrectangle($img, 0, 0, $width - 1, $height - 1, $blue);
+		$path = $this->tmpDir . '/logo.png';
+		imagepng($img, $path);
+		imagedestroy($img);
+		return $path;
+	}
 }

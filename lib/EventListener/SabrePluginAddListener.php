@@ -23,24 +23,24 @@ use Psr\Container\ContainerInterface;
  */
 class SabrePluginAddListener implements IEventListener {
 
-    public function __construct(
-        private ContainerInterface $container,
-    ) {
-    }
+	public function __construct(
+		private ContainerInterface $container,
+	) {
+	}
 
-    public function handle(Event $event): void {
-        if (!($event instanceof SabrePluginAddEvent)) {
-            return;
-        }
+	public function handle(Event $event): void {
+		if (!($event instanceof SabrePluginAddEvent)) {
+			return;
+		}
 
-        $server = $event->getServer();
-        $server->addPlugin($this->container->get(PropFindPlugin::class));
-        $server->addPlugin($this->container->get(DownloadInterceptorPlugin::class));
-        // Folder / multi-file downloads are served as an archive by core's
-        // ZipFolderPlugin, which the single-file interceptor never sees.
-        $server->addPlugin($this->container->get(ZipInterceptorPlugin::class));
-        // Burns the on_upload watermark in-request, so an upload does not sit clean until
-        // cron runs the queued job.
-        $server->addPlugin($this->container->get(UploadWatermarkPlugin::class));
-    }
+		$server = $event->getServer();
+		$server->addPlugin($this->container->get(PropFindPlugin::class));
+		$server->addPlugin($this->container->get(DownloadInterceptorPlugin::class));
+		// Folder / multi-file downloads are served as an archive by core's
+		// ZipFolderPlugin, which the single-file interceptor never sees.
+		$server->addPlugin($this->container->get(ZipInterceptorPlugin::class));
+		// Burns the on_upload watermark in-request, so an upload does not sit clean until
+		// cron runs the queued job.
+		$server->addPlugin($this->container->get(UploadWatermarkPlugin::class));
+	}
 }

@@ -44,104 +44,104 @@ use Sabre\HTTP\ResponseInterface;
  */
 class UploadWatermarkPlugin extends ServerPlugin {
 
-    private ?Server $server = null;
+	private ?Server $server = null;
 
-    public function __construct(
-        private WatermarkService $watermarkService,
-        private IUserSession     $userSession,
-        private IJobList         $jobList,
-        private LoggerInterface  $logger,
-    ) {
-    }
+	public function __construct(
+		private WatermarkService $watermarkService,
+		private IUserSession $userSession,
+		private IJobList $jobList,
+		private LoggerInterface $logger,
+	) {
+	}
 
-    public function initialize(Server $server): void {
-        $this->server = $server;
-        $server->on('afterMethod:PUT', [$this, 'afterWrite'], 200);
-        // Chunked uploads assemble into place with a MOVE, so a large file never sees PUT
-        // on its final path.
-        $server->on('afterMethod:MOVE', [$this, 'afterWrite'], 200);
-    }
+	public function initialize(Server $server): void {
+		$this->server = $server;
+		$server->on('afterMethod:PUT', [$this, 'afterWrite'], 200);
+		// Chunked uploads assemble into place with a MOVE, so a large file never sees PUT
+		// on its final path.
+		$server->on('afterMethod:MOVE', [$this, 'afterWrite'], 200);
+	}
 
-    public function afterWrite(RequestInterface $request, ResponseInterface $response): void {
-        if ($this->server === null) {
-            return;
-        }
+	public function afterWrite(RequestInterface $request, ResponseInterface $response): void {
+		if ($this->server === null) {
+			return;
+		}
 
-        $path = $this->targetPath($request);
-        if ($path === null) {
-            return;
-        }
+		$path = $this->targetPath($request);
+		if ($path === null) {
+			return;
+		}
 
-        try {
-            $davNode = $this->server->tree->getNodeForPath($path);
-        } catch (NotFound) {
-            return;
-        }
+		try {
+			$davNode = $this->server->tree->getNodeForPath($path);
+		} catch (NotFound) {
+			return;
+		}
 
-        if (!($davNode instanceof DavFile)) {
-            return;
-        }
+		if (!($davNode instanceof DavFile)) {
+			return;
+		}
 
-        $node = $davNode->getNode();
-        if (!($node instanceof File) || !$this->watermarkService->isSupported($node->getMimeType())) {
-            return;
-        }
+		$node = $davNode->getNode();
+		if (!($node instanceof File) || !$this->watermarkService->isSupported($node->getMimeType())) {
+			return;
+		}
 
-        $user = $this->userSession->getUser();
-        if ($user === null) {
-            return;
-        }
+		$user = $this->userSession->getUser();
+		if ($user === null) {
+			return;
+		}
 
-        try {
-            $config = $this->watermarkService->resolveConfig($user->getUID());
-        } catch (\Throwable) {
-            return;
-        }
+		try {
+			$config = $this->watermarkService->resolveConfig($user->getUID());
+		} catch (\Throwable) {
+			return;
+		}
 
-        if ($config->getTrigger() !== 'on_upload') {
-            return;
-        }
+		if ($config->getTrigger() !== 'on_upload') {
+			return;
+		}
 
-        $fileId = $node->getId();
+		$fileId = $node->getId();
 
-        try {
-            // The burn writes the file, re-firing NodeWrittenEvent — suppressed so the
-            // listener does not queue a job for what we are doing right here.
-            $applied = NodeWrittenListener::suppressFor($fileId, fn (): bool =>
-                $this->watermarkService->watermarkInPlace($node, 'on_upload', $config, $user));
-        } catch (\Throwable $e) {
-            // Leave the queued job alone — cron retries it out of band. An upload must not
-            // fail because its watermark could not be applied.
-            $this->logger->warning('files_watermark: inline on-upload watermark failed, leaving it to the job: ' . $e->getMessage(), [
-                'exception' => $e,
-                'path'      => $node->getPath(),
-            ]);
-            return;
-        }
+		try {
+			// The burn writes the file, re-firing NodeWrittenEvent — suppressed so the
+			// listener does not queue a job for what we are doing right here.
+			$applied = NodeWrittenListener::suppressFor($fileId, fn (): bool
+				=> $this->watermarkService->watermarkInPlace($node, 'on_upload', $config, $user));
+		} catch (\Throwable $e) {
+			// Leave the queued job alone — cron retries it out of band. An upload must not
+			// fail because its watermark could not be applied.
+			$this->logger->warning('files_watermark: inline on-upload watermark failed, leaving it to the job: ' . $e->getMessage(), [
+				'exception' => $e,
+				'path' => $node->getPath(),
+			]);
+			return;
+		}
 
-        if ($applied) {
-            // Done in-request, so the job the PUT queued has nothing left to do.
-            $this->jobList->remove(WatermarkOnUploadJob::class, ['fileId' => $fileId, 'uid' => $user->getUID()]);
-        }
-    }
+		if ($applied) {
+			// Done in-request, so the job the PUT queued has nothing left to do.
+			$this->jobList->remove(WatermarkOnUploadJob::class, ['fileId' => $fileId, 'uid' => $user->getUID()]);
+		}
+	}
 
-    /**
-     * The path the write landed on: the request path for PUT, the Destination for MOVE.
-     */
-    private function targetPath(RequestInterface $request): ?string {
-        if ($request->getMethod() !== 'MOVE') {
-            return $request->getPath();
-        }
+	/**
+	 * The path the write landed on: the request path for PUT, the Destination for MOVE.
+	 */
+	private function targetPath(RequestInterface $request): ?string {
+		if ($request->getMethod() !== 'MOVE') {
+			return $request->getPath();
+		}
 
-        $destination = $request->getHeader('Destination');
-        if ($destination === null || $destination === '') {
-            return null;
-        }
+		$destination = $request->getHeader('Destination');
+		if ($destination === null || $destination === '') {
+			return null;
+		}
 
-        try {
-            return $this->server->calculateUri($destination);
-        } catch (\Throwable) {
-            return null;
-        }
-    }
+		try {
+			return $this->server->calculateUri($destination);
+		} catch (\Throwable) {
+			return null;
+		}
+	}
 }
