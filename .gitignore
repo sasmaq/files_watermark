@@ -35,3 +35,7 @@ Thumbs.db
 
 # PHP-CS-Fixer
 .php-cs-fixer.cache
+
+# Jenkins workspace-local dependency caches
+/.composer-cache/
+/.npm-cache/
