@@ -45,16 +45,51 @@ say so rather than implying tamper-proofing.
 
 #### Dependency and environment
 
-- [ ] Confirm how to rasterise. Imagick's PDF delegate is **Ghostscript**, and most distro
-  ImageMagick builds ship a `policy.xml` that **disables PDF** by default over the
-  Ghostscript CVEs — so this will be unavailable on a large share of installs
-  - [ ] Check the actual policy in the shipped `nextcloud:31-apache` image and document it
-  - [ ] Evaluate alternatives that avoid the policy problem: `pdftoppm` (poppler-utils),
-    calling `gs` directly, or a PHP-native rasteriser
-- [ ] Detect availability at runtime and surface it in the admin UI — the option must be
-  disabled with an explanation, never fail silently at watermark time
-- [ ] Add the chosen binary to `docker-compose.yml` / `docker-compose.s3.yml` and document
-  it in the README's requirements
+The rebuild leg is **TCPDF, not Ghostscript.** Flattening is two steps — render each page to
+a bitmap, then write a new PDF containing those bitmaps — and only the first needs a PDF
+renderer. TCPDF is already a dependency (`tecnickcom/tcpdf ^6.7`, used by `PdfWatermarker`),
+so the output PDF is assembled in PHP with `Image()` on a page sized to the source page,
+never by shelling out to `gs`. That keeps the write path in-process, avoids the Ghostscript
+CVE surface, and reuses code and page-geometry handling the app already has.
+
+**Target platform is RHEL 9** (per the SDD's supported-OS row), which settles the
+**page→bitmap** renderer — the one remaining external dependency, and the one thing TCPDF
+cannot do:
+
+- [ ] Use **`pdftoppm` from `poppler-utils`** — in the RHEL 9 AppStream repo, so
+  `dnf install poppler-utils` needs no EPEL and no third-party repo. No Ghostscript, not
+  subject to ImageMagick's `policy.xml`, straightforward `-r <dpi> -png -f N -l N` invocation
+  that also gives the page-at-a-time streaming the memory cap needs
+  - [ ] Confirm the RHEL 9 package name and binary path (`/usr/bin/pdftoppm`) on the actual
+    target build, and pin the minimum version if the DPI/first-page/last-page flags differ
+- [ ] Do **not** plan on Imagick as the fallback here. On RHEL 9 that path is doubly weak:
+  ImageMagick is not in RHEL 9 base or AppStream at all (EPEL only), and its PDF delegate *is*
+  Ghostscript, gated by a `policy.xml` that disables the PDF/PS coders by default over the
+  Ghostscript CVEs. Requiring EPEL to re-introduce a Ghostscript dependency we just removed is
+  a bad trade — a single supported renderer with a clean disabled state beats a fallback that
+  drags in both
+  - [ ] If a fallback is wanted later, `pdftocairo` (same `poppler-utils` package) is the
+    cheap one, not Imagick
+- [ ] Note the **dev/prod divergence**: `docker-compose.yml` / `docker-compose.s3.yml` run
+  `nextcloud:31-apache`, which is Debian-based (`apt-get install poppler-utils`). Same binary,
+  different package manager — so the availability check must be a runtime probe of the binary,
+  never a distro assumption
+- [ ] Detect renderer availability at runtime and **hide the option entirely when the binary
+  is missing** — not a disabled control, not a warning: the toggle is simply not rendered, so
+  an admin never sees a setting the server cannot honour. Never fail silently at watermark
+  time either
+  - [ ] Expose availability as a flag on the config endpoint (e.g. `flattenAvailable`) so the
+    front end has something to branch on; `WatermarkForm` renders the toggle only when true
+  - [ ] Cache the probe result — do not shell out on every settings page load
+  - [ ] Because the control is hidden rather than disabled, an admin gets no on-screen reason.
+    Log the unavailability once at startup or on first probe so the cause is diagnosable from
+    the server log rather than invisible
+  - [ ] Server-side is the real gate: `ApiController::saveConfig` must reject `flatten_pdf`
+    when the renderer is absent regardless of what the client sends — hiding a control is not
+    an access check
+- [ ] Add `poppler-utils` to both compose files and document it in the README's requirements,
+  with the RHEL 9 `dnf` line for production installs (TCPDF itself needs nothing — it ships
+  via composer)
 
 #### Implementation
 
@@ -65,7 +100,16 @@ say so rather than implying tamper-proofing.
 - [ ] Accept + validate both in `ApiController::saveConfig`
 - [ ] Implement the rasterise pass in `PdfWatermarker` (or a `PdfFlattener` collaborator),
   applied **after** the overlay so the watermark is baked in
-- [ ] Stream page-by-page rather than holding every page bitmap in memory
+- [ ] Rebuild with TCPDF: for each page, `AddPage()` at the source page's width/height and
+  orientation, then `Image()` the bitmap at full bleed. Set margins/auto-page-break to zero
+  first, or TCPDF will inset the image and spill onto a second page
+  - [ ] Emit PNG or JPEG only — the two formats TCPDF's `Image()` handles reliably (the same
+    constraint that ruled SVG out of the logo upload). JPEG for photographic pages keeps the
+    size growth down; weigh it against the artefacts it adds to text
+  - [ ] Carry the source page dimensions through in points so page geometry survives the
+    round-trip; do not assume A4
+- [ ] Stream page-by-page rather than holding every page bitmap in memory — write each page
+  into the TCPDF instance and discard its bitmap (and its temp file) before rendering the next
 - [ ] Cap by page count / source size, mirroring `ZipInterceptorPlugin`'s `MAX_*` ceilings
 - [ ] Fail closed: if flattening is enabled and fails, do **not** fall back to the
   unflattened PDF — that would silently hand back the removable-overlay version. Skip +
@@ -85,19 +129,30 @@ say so rather than implying tamper-proofing.
 
 #### Admin UI
 
-- [ ] Toggle + DPI control in `WatermarkForm`, shown only for PDF-capable configs
+- [ ] Toggle + DPI control in `WatermarkForm`, shown only for PDF-capable configs **and only
+  when `flattenAvailable` is true** — when the renderer is missing the whole block is absent
+  from the form, no disabled control and no placeholder
 - [ ] Help text covering irreversibility, the a11y loss, and the size increase
-- [ ] Disabled state with the reason when the rasteriser is unavailable
+- [ ] Handle the config that already has `flatten_pdf` enabled but lands on a host without the
+  renderer (restore, host migration, package removed). The toggle is hidden, so it cannot be
+  turned off from the UI — decide between showing the block read-only in just this case or
+  having the server force the value off, and make sure saving the form does not silently
+  discard the stored setting
 
 #### Testing
 
 - [ ] `PdfFlattenerTest` — output has no extractable text layer (the actual security claim);
   page count and page dimensions preserved; DPI honoured
+- [ ] Non-A4 and mixed-size / landscape source pages keep their geometry through the TCPDF
+  rebuild, and each source page yields exactly one output page (catches the margin and
+  auto-page-break spill)
 - [ ] Round-trip: flattened output is still a valid PDF that Imagick/poppler can open
 - [ ] Watermark survives an overlay-stripping attempt (`qpdf --qdf` / `mutool clean`) —
   the regression that proves the feature works
 - [ ] Encrypted / corrupt source still fails gracefully, and fails *closed*
-- [ ] Missing rasteriser binary → option unavailable, no fatal
+- [ ] Missing rasteriser binary → `flattenAvailable` false, toggle absent from the rendered
+  form (not merely disabled), and `saveConfig` rejects `flatten_pdf` sent directly to the API.
+  No fatal anywhere on the path
 - [ ] Large multi-page document stays within the memory cap
 
 ### Images (`ImageWatermarker`)
