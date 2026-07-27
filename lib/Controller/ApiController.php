@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Controller;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
@@ -31,6 +32,7 @@ class ApiController extends Controller {
 		private IUserSession $userSession,
 		private IGroupManager $groupManager,
 		private WatermarkImageStore $imageStore,
+		private PdfFlattener $pdfFlattener,
 	) {
 		parent::__construct($appName, $request);
 	}
@@ -49,7 +51,14 @@ class ApiController extends Controller {
 			}
 		}
 
-		return new DataResponse(array_map(fn (WatermarkConfig $c) => $c->jsonSerialize(), $configs));
+		// `flattenAvailable` is what the settings form branches on: with no
+		// rasteriser on the host it omits the flattening block entirely, rather
+		// than offering a setting this server could not honour.
+		return new DataResponse([
+			'configs' => array_map(fn (WatermarkConfig $c) => $c->jsonSerialize(), $configs),
+			'flattenAvailable' => $this->pdfFlattener->isAvailable(),
+			'flattenDpiRange' => ['min' => PdfFlattener::MIN_DPI, 'max' => PdfFlattener::MAX_DPI],
+		]);
 	}
 
 	private const VALID_TYPES = ['text', 'image', 'combined'];
@@ -72,7 +81,20 @@ class ApiController extends Controller {
 		?string $userId = null,
 		?string $groupId = null,
 		?int $id = null,
+		bool $flattenPdf = false,
+		int $flattenDpi = PdfFlattener::DEFAULT_DPI,
 	): DataResponse {
+		// The real gate. The form hides the control on a host with no rasteriser,
+		// but hiding a control is not an access check — this rejects the value
+		// however it arrives.
+		if ($flattenPdf && !$this->pdfFlattener->isAvailable()) {
+			return new DataResponse(
+				['error' => 'Flattened PDFs need ' . PdfFlattener::RENDERER
+					. ' on the server (package poppler-utils). Install it, or leave flattening off.'],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+
 		if (!in_array($type, self::VALID_TYPES, true)) {
 			return new DataResponse(
 				['error' => "Invalid type '$type'. Allowed values: " . implode(', ', self::VALID_TYPES) . '.'],
@@ -148,6 +170,8 @@ class ApiController extends Controller {
 		$config->setTrigger($trigger);
 		$config->setMimeTypes($mimeTypes);
 		$config->setFolderTag($folderTag);
+		$config->setFlattenPdf($flattenPdf);
+		$config->setFlattenDpi(max(PdfFlattener::MIN_DPI, min(PdfFlattener::MAX_DPI, $flattenDpi)));
 		$config->setUserId($userId);
 		$config->setGroupId($groupId);
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));

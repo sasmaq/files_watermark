@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Controller;
 use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Http;
@@ -49,6 +50,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 			$this->userSession,
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
+			$this->createMock(PdfFlattener::class),
 		);
 	}
 

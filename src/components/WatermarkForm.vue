@@ -208,6 +208,45 @@
 						<small class="wm-help">{{ t('files_watermark', 'Only files carrying this system tag are watermarked.') }}</small>
 					</div>
 				</section>
+
+				<!--
+					6. Flattening. Absent entirely — not disabled, not a placeholder —
+					when the server has no rasteriser, so an admin never sees a setting
+					this host cannot honour.
+				-->
+				<section v-if="flattenAvailable && pdfCapable" class="wm-card">
+					<h4 class="wm-card__title">
+						{{ t('files_watermark', 'Tamper resistance (PDF)') }}
+					</h4>
+					<p class="wm-card__desc">
+						{{ t('files_watermark', 'Fuse the watermark into the page pixels instead of layering it on top.') }}
+					</p>
+					<div class="wm-field wm-field--stacked">
+						<NcCheckboxRadioSwitch v-model="form.flattenPdf" type="switch">
+							{{ t('files_watermark', 'Flatten watermarked PDFs') }}
+						</NcCheckboxRadioSwitch>
+						<small class="wm-help">
+							{{ t('files_watermark', 'Normally the watermark is a separate layer, which tools like qpdf can strip out. Flattening rebuilds every page as an image, so there is no layer left to remove. It makes removal impractical, not impossible — someone can still crop or retype the page.') }}
+						</small>
+						<small class="wm-help wm-help--warn">
+							{{ t('files_watermark', 'Costs: the text layer is destroyed, so no selection, copy, search or screen-reader access remains — check this against your accessibility obligations. Files also grow several times larger, and every download takes longer to prepare.') }}
+						</small>
+					</div>
+					<div v-if="form.flattenPdf" class="wm-field">
+						<label for="wm-flatten-dpi">{{ t('files_watermark', 'Render resolution') }}</label>
+						<div class="wm-inline">
+							<input id="wm-flatten-dpi"
+								v-model.number="form.flattenDpi"
+								type="range"
+								:min="flattenDpiRange.min"
+								:max="flattenDpiRange.max"
+								step="6"
+								class="wm-range">
+							<span class="wm-inline__val">{{ form.flattenDpi }} DPI</span>
+						</div>
+						<small class="wm-help">{{ t('files_watermark', 'Higher is sharper and bigger. 150 suits text documents; raise it for detailed scans.') }}</small>
+					</div>
+				</section>
 			</div>
 
 			<!-- Live preview -->
@@ -342,6 +381,7 @@ import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
+import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 
@@ -352,6 +392,9 @@ const props = defineProps({
 	saving: { type: Boolean, default: false },
 	saved: { type: Boolean, default: false },
 	saveError: { type: String, default: null },
+	/** Whether this server has a PDF rasteriser; false hides the flattening block. */
+	flattenAvailable: { type: Boolean, default: false },
+	flattenDpiRange: { type: Object, default: () => ({ min: 72, max: 600 }) },
 })
 
 const emit = defineEmits(['save', 'update:modelValue'])
@@ -367,9 +410,21 @@ const DEFAULTS = {
 	trigger: 'on_demand',
 	mimeTypes: '',
 	folderTag: '',
+	flattenPdf: false,
+	flattenDpi: 150,
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })
+
+/**
+ * Whether this config can ever touch a PDF. A blank type filter means every
+ * supported type, so flattening is only irrelevant when the admin has narrowed
+ * the filter to types that exclude PDFs.
+ */
+const pdfCapable = computed(() => {
+	const filter = (form.mimeTypes ?? '').trim()
+	return filter === '' || filter.split(',').some((m) => m.trim() === 'application/pdf')
+})
 
 watch(form, (val) => emit('update:modelValue', { ...val }))
 
@@ -803,6 +858,11 @@ const contentLines = [
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
+/* The flattening trade-offs are a genuine warning, not incidental help text. */
+.wm-help--warn {
+    color: var(--color-warning-text, var(--color-text-maxcontrast));
+}
+
 /* The real input is driven by the buttons above it; hidden rather than removed so it
    stays focusable and keeps native file-picker behaviour. */
 .wm-file-input {

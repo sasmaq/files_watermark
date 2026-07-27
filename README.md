@@ -21,9 +21,26 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 | Nextcloud | 31.x |
 | PHP | 8.2 or 8.3 |
 | PHP extension | `imagick` (preferred) or `gd` |
+| `pdftoppm` (poppler-utils) | optional — only for flattened PDFs |
 | Composer | 2.x |
 | Node.js | >= 20 |
 | npm | >= 10 |
+
+### Optional: flattened (rasterised) PDFs
+
+Flattening rebuilds each watermarked page as an image, so the watermark cannot be
+stripped as a separate layer. It needs the `pdftoppm` binary; TCPDF, which does the
+rebuild, ships via Composer and needs nothing extra.
+
+```bash
+dnf install poppler-utils      # RHEL 9 — in AppStream, no EPEL needed
+apt-get install poppler-utils  # Debian / Ubuntu, including the dev containers
+```
+
+Without the binary the setting is hidden from the admin form and rejected by the API,
+so the feature is simply absent rather than half-working. Note that flattening removes
+the text layer — no selection, copy, search or screen-reader access — so weigh it
+against your accessibility obligations before switching it on.
 
 ## Project Structure
 

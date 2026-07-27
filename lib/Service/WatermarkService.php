@@ -33,6 +33,7 @@ class WatermarkService {
 		private WatermarkConfigMapper $configMapper,
 		private WatermarkLogMapper $logMapper,
 		private PdfWatermarker $pdfWatermarker,
+		private PdfFlattener $pdfFlattener,
 		private ImageWatermarker $imageWatermarker,
 		private IRootFolder $rootFolder,
 		private IUserSession $userSession,
@@ -93,6 +94,7 @@ class WatermarkService {
 		try {
 			if (in_array($mime, self::SUPPORTED_PDF, true)) {
 				$this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
+				$this->flattenInPlace($tmpPath, $config);
 			} else {
 				$this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
 			}
@@ -111,6 +113,66 @@ class WatermarkService {
 		unlink($srcTmp);
 
 		return [$tmpPath, $config];
+	}
+
+	/**
+	 * Rasterise the freshly watermarked PDF at `$tmpPath`, replacing it in place.
+	 *
+	 * Applied *after* the overlay, which is the whole point — the watermark has to
+	 * be in the pixels being captured.
+	 *
+	 * Two ways this does nothing: the config has flattening off, or this host has
+	 * no renderer. The second case is not a silent downgrade — {@see
+	 * shouldFlatten} refuses to treat a stored `flattenPdf` as active when the
+	 * binary is missing, and logs why. Everything else throws: a failed flatten
+	 * must not fall back to the unflattened file, because that file is the
+	 * removable-overlay version the setting exists to avoid handing out. The
+	 * caller's catch discards the temps and the trigger's own policy takes over
+	 * (skip + audit for the in-place triggers, deny for `on_share`).
+	 */
+	private function flattenInPlace(string $tmpPath, WatermarkConfig $config): void {
+		if (!$this->shouldFlatten($config)) {
+			return;
+		}
+
+		$flattened = $tmpPath . '_flat';
+		try {
+			$this->pdfFlattener->flatten($tmpPath, $flattened, $config->getFlattenDpi());
+			if (!rename($flattened, $tmpPath)) {
+				throw new \RuntimeException('Cannot flatten PDF: the rebuilt file could not replace the original.');
+			}
+		} catch (\Throwable $e) {
+			$this->discardTemp($flattened);
+			throw $e;
+		}
+	}
+
+	/**
+	 * Whether flattening is both asked for and possible on this host.
+	 *
+	 * A config can carry `flattenPdf` onto a host with no rasteriser — a restore,
+	 * a host migration, or someone removing the package. The admin UI hides the
+	 * control in that state, so it cannot be switched off from the browser; the
+	 * server therefore treats the setting as off rather than failing every
+	 * watermark, and says so in the log, since that is the only place an admin can
+	 * find out. The stored column keeps its value, so the setting comes back
+	 * intact if the package does.
+	 */
+	private function shouldFlatten(WatermarkConfig $config): bool {
+		if (!$config->getFlattenPdf()) {
+			return false;
+		}
+
+		if (!$this->pdfFlattener->isAvailable()) {
+			$this->logger->warning(
+				'files_watermark: config {config} asks for flattened PDFs but ' . PdfFlattener::RENDERER
+				. ' is not installed; delivering the overlay-only watermark instead. Install poppler-utils.',
+				['app' => 'files_watermark', 'config' => $config->getId()],
+			);
+			return false;
+		}
+
+		return true;
 	}
 
 	/**

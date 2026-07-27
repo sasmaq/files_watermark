@@ -48,11 +48,15 @@ services:
     depends_on:
       rustfs:
         condition: service_healthy
-    # Same custom_apps ownership fix as docker-compose.yml (see notes there).
+    # Same custom_apps ownership fix and poppler-utils install as
+    # docker-compose.yml (see the notes there).
     entrypoint:
       - /bin/sh
       - -c
-      - chown www-data:www-data /var/www/html/custom_apps; exec /entrypoint.sh apache2-foreground
+      - >
+        chown www-data:www-data /var/www/html/custom_apps;
+        command -v pdftoppm >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils; };
+        exec /entrypoint.sh apache2-foreground
     environment:
       SQLITE_DATABASE: nextcloud
       NEXTCLOUD_ADMIN_USER: admin

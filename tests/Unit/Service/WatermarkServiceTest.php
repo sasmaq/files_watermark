@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkLog;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\OriginalStore;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -28,6 +29,7 @@ class WatermarkServiceTest extends TestCase {
 	private WatermarkConfigMapper&MockObject $configMapper;
 	private WatermarkLogMapper&MockObject $logMapper;
 	private PdfWatermarker&MockObject $pdfWatermarker;
+	private PdfFlattener&MockObject $pdfFlattener;
 	private ImageWatermarker&MockObject $imageWatermarker;
 	private IRootFolder&MockObject $rootFolder;
 	private IUserSession&MockObject $userSession;
@@ -43,6 +45,7 @@ class WatermarkServiceTest extends TestCase {
 		$this->configMapper = $this->createMock(WatermarkConfigMapper::class);
 		$this->logMapper = $this->createMock(WatermarkLogMapper::class);
 		$this->pdfWatermarker = $this->createMock(PdfWatermarker::class);
+		$this->pdfFlattener = $this->createMock(PdfFlattener::class);
 		$this->imageWatermarker = $this->createMock(ImageWatermarker::class);
 		$this->rootFolder = $this->createMock(IRootFolder::class);
 		$this->userSession = $this->createMock(IUserSession::class);
@@ -55,6 +58,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->configMapper,
 			$this->logMapper,
 			$this->pdfWatermarker,
+			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->rootFolder,
 			$this->userSession,
@@ -348,6 +352,150 @@ class WatermarkServiceTest extends TestCase {
 
 		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
 		$this->assertStringContainsString('doc.pdf', $tmpPath);
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	/** A PDF config, optionally asking for flattening. */
+	private function pdfConfig(bool $flatten, int $dpi = 150): WatermarkConfig {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{username}');
+		$config->setTrigger('on_demand');
+		$config->setFlattenPdf($flatten);
+		$config->setFlattenDpi($dpi);
+		return $config;
+	}
+
+	/** @return File&MockObject */
+	private function pdfFile(): File {
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$user->method('getDisplayName')->willReturn('Alice');
+		$this->userSession->method('getUser')->willReturn($user);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getName')->willReturn('doc.pdf');
+		$file->method('getId')->willReturn(7);
+		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
+		$file->method('getContent')->willReturn('%PDF-fake');
+
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+		return $file;
+	}
+
+	public function testFlatteningRunsAfterTheOverlayWhenEnabled(): void {
+		// Order matters: rasterising before the overlay would capture a clean page
+		// and leave the watermark as a removable layer on top of it.
+		$calls = [];
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(function (string $src, string $dest) use (&$calls): void {
+				$calls[] = 'overlay';
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->expects($this->once())
+			->method('flatten')
+			->with($this->anything(), $this->anything(), 200)
+			->willReturnCallback(function (string $src, string $dest) use (&$calls): void {
+				$calls[] = 'flatten';
+				file_put_contents($dest, '%PDF-flattened');
+			});
+
+		$tmpPath = $this->service->watermarkFile($this->pdfFile(), 'on_demand', $this->pdfConfig(true, 200));
+
+		$this->assertSame(['overlay', 'flatten'], $calls);
+		// The flattened rebuild is what the caller gets, not the overlay-only file.
+		$this->assertSame('%PDF-flattened', (string)file_get_contents($tmpPath));
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	public function testFlatteningIsSkippedWhenTheConfigDoesNotAskForIt(): void {
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->pdfFlattener->expects($this->never())->method('flatten');
+
+		$tmpPath = $this->service->watermarkFile($this->pdfFile(), 'on_demand', $this->pdfConfig(false));
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	public function testStrandedFlattenSettingIsForcedOffAndLogged(): void {
+		// The config asks for flattening but this host lost the renderer. The UI
+		// hides the control in that state, so the server must not simply fail every
+		// watermark — it delivers the overlay and says why in the log.
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->pdfFlattener->method('isAvailable')->willReturn(false);
+		$this->pdfFlattener->expects($this->never())->method('flatten');
+
+		$this->logger->expects($this->once())
+			->method('warning')
+			->with($this->stringContains('pdftoppm'), $this->anything());
+
+		$tmpPath = $this->service->watermarkFile($this->pdfFile(), 'on_demand', $this->pdfConfig(true));
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	public function testFailedFlatteningFailsClosedAndLeavesNoTempFiles(): void {
+		// The whole point of the setting is that the overlay-only PDF is removable.
+		// Handing it back on failure would silently defeat it, so the render throws
+		// and the trigger's own policy (skip + audit, or deny for on_share) applies.
+		$overlaid = null;
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(function (string $src, string $dest) use (&$overlaid): void {
+				$overlaid = $dest;
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->method('flatten')
+			->willThrowException(new \RuntimeException('Cannot flatten PDF: rendering page 1 failed'));
+
+		try {
+			$this->service->watermarkFile($this->pdfFile(), 'on_demand', $this->pdfConfig(true));
+			$this->fail('Expected the failed flatten to propagate');
+		} catch (\RuntimeException $e) {
+			$this->assertStringContainsString('Cannot flatten PDF', $e->getMessage());
+		}
+
+		$this->assertNotNull($overlaid);
+		$this->assertFileDoesNotExist($overlaid, 'the unflattened watermark must not survive');
+		$this->assertFileDoesNotExist($overlaid . '_flat');
+		$this->assertFileDoesNotExist($overlaid . '_src');
+	}
+
+	public function testImagesAreNeverFlattened(): void {
+		// Flattening is a PDF-only notion; an image is already pixels.
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$this->userSession->method('getUser')->willReturn($user);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('image/png');
+		$file->method('getName')->willReturn('shot.png');
+		$file->method('getId')->willReturn(11);
+		$file->method('getPath')->willReturn('/alice/files/shot.png');
+		$file->method('getContent')->willReturn('fake');
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+		$this->imageWatermarker->expects($this->once())->method('apply');
+		$this->pdfFlattener->expects($this->never())->method('flatten');
+
+		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $this->pdfConfig(true));
 
 		if (file_exists($tmpPath)) {
 			unlink($tmpPath);

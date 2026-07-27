@@ -13,10 +13,21 @@ they are implemented.
 - [x] Apply image/logo overlay on PDFs
 - [x] Handle encrypted / password-protected PDFs gracefully (throw or skip + log)
 
-### Flattened (rasterised) PDFs — *new, tamper-resistance*
+### Flattened (rasterised) PDFs — *built, `PdfFlattener`*
 
 Optional setting: after watermarking a PDF, render every page to an image and rebuild the
 PDF from those images, so the watermark is fused into the page pixels.
+
+**Decisions taken when this was built** (the "needs a decision before building" list below):
+
+| Question | Decision |
+| --- | --- |
+| Which triggers | **All of them**, flattening per fetch with no cache |
+| Page image format | **PNG** — lossless glyph edges, at the cost of the larger file |
+| Stranded `flatten_pdf` with no renderer | **Server forces it off** and logs why |
+| Invisible OCR text layer | **Scoped out** — it would put the watermark text back within reach |
+
+Off by default, as the accessibility note below requires.
 
 **Why.** Today's overlay is a separate content stream sitting on top of the original page
 objects. That is trivially reversible — `qpdf`/`mutool` can drop the overlay object, and
@@ -34,8 +45,10 @@ say so rather than implying tamper-proofing.
   layer: no selection, no copy/paste, no search, and screen readers get nothing. For a
   document-management product this may be a compliance problem (WCAG / EN 301 549), so the
   setting must be **off by default** and clearly labelled as a11y-destroying
-  - [ ] Decide whether to mitigate by re-embedding an invisible OCR/text layer, and whether
-    that would reintroduce extractable watermark text (it would — so probably scope it out)
+  - [x] Decide whether to mitigate by re-embedding an invisible OCR/text layer, and whether
+    that would reintroduce extractable watermark text (it would — so probably scope it out).
+    **Scoped out.** The a11y cost is instead disclosed in the form's own help text, so an admin
+    is told what they are giving up at the moment they switch it on
 - **File size** typically grows several-fold; a text-heavy PDF hit hardest
 - **Fidelity** bounded by render DPI — a tunable with a real quality/size trade-off
 - **CPU + memory**, per page, and unbounded for large documents
@@ -56,13 +69,13 @@ CVE surface, and reuses code and page-geometry handling the app already has.
 **page→bitmap** renderer — the one remaining external dependency, and the one thing TCPDF
 cannot do:
 
-- [ ] Use **`pdftoppm` from `poppler-utils`** — in the RHEL 9 AppStream repo, so
+- [x] Use **`pdftoppm` from `poppler-utils`** — in the RHEL 9 AppStream repo, so
   `dnf install poppler-utils` needs no EPEL and no third-party repo. No Ghostscript, not
   subject to ImageMagick's `policy.xml`, straightforward `-r <dpi> -png -f N -l N` invocation
   that also gives the page-at-a-time streaming the memory cap needs
   - [ ] Confirm the RHEL 9 package name and binary path (`/usr/bin/pdftoppm`) on the actual
     target build, and pin the minimum version if the DPI/first-page/last-page flags differ
-- [ ] Do **not** plan on Imagick as the fallback here. On RHEL 9 that path is doubly weak:
+- [x] Do **not** plan on Imagick as the fallback here. On RHEL 9 that path is doubly weak:
   ImageMagick is not in RHEL 9 base or AppStream at all (EPEL only), and its PDF delegate *is*
   Ghostscript, gated by a `policy.xml` that disables the PDF/PS coders by default over the
   Ghostscript CVEs. Requiring EPEL to re-introduce a Ghostscript dependency we just removed is
@@ -70,90 +83,104 @@ cannot do:
   drags in both
   - [ ] If a fallback is wanted later, `pdftocairo` (same `poppler-utils` package) is the
     cheap one, not Imagick
-- [ ] Note the **dev/prod divergence**: `docker-compose.yml` / `docker-compose.s3.yml` run
+- [x] Note the **dev/prod divergence**: `docker-compose.yml` / `docker-compose.s3.yml` run
   `nextcloud:31-apache`, which is Debian-based (`apt-get install poppler-utils`). Same binary,
   different package manager — so the availability check must be a runtime probe of the binary,
   never a distro assumption
-- [ ] Detect renderer availability at runtime and **hide the option entirely when the binary
+- [x] Detect renderer availability at runtime and **hide the option entirely when the binary
   is missing** — not a disabled control, not a warning: the toggle is simply not rendered, so
   an admin never sees a setting the server cannot honour. Never fail silently at watermark
   time either
-  - [ ] Expose availability as a flag on the config endpoint (e.g. `flattenAvailable`) so the
+  - [x] Expose availability as a flag on the config endpoint (e.g. `flattenAvailable`) so the
     front end has something to branch on; `WatermarkForm` renders the toggle only when true
-  - [ ] Cache the probe result — do not shell out on every settings page load
-  - [ ] Because the control is hidden rather than disabled, an admin gets no on-screen reason.
+  - [x] Cache the probe result — do not shell out on every settings page load
+  - [x] Because the control is hidden rather than disabled, an admin gets no on-screen reason.
     Log the unavailability once at startup or on first probe so the cause is diagnosable from
     the server log rather than invisible
-  - [ ] Server-side is the real gate: `ApiController::saveConfig` must reject `flatten_pdf`
+  - [x] Server-side is the real gate: `ApiController::saveConfig` must reject `flatten_pdf`
     when the renderer is absent regardless of what the client sends — hiding a control is not
     an access check
-- [ ] Add `poppler-utils` to both compose files and document it in the README's requirements,
+- [x] Add `poppler-utils` to both compose files and document it in the README's requirements,
   with the RHEL 9 `dnf` line for production installs (TCPDF itself needs nothing — it ships
   via composer)
 
 #### Implementation
 
-- [ ] Add a `flatten_pdf` boolean column (default `false`) via a new migration, plus
+- [x] Add a `flatten_pdf` boolean column (default `false`) via a new migration, plus
   `WatermarkConfig` getter/setter and `jsonSerialize`
-- [ ] Add a `flattenDpi` smallint column (suggest default 150; clamp to a sane range as
+- [x] Add a `flattenDpi` smallint column (suggest default 150; clamp to a sane range as
   `saveConfig` already does for `opacity` / `fontSize`)
-- [ ] Accept + validate both in `ApiController::saveConfig`
-- [ ] Implement the rasterise pass in `PdfWatermarker` (or a `PdfFlattener` collaborator),
+- [x] Accept + validate both in `ApiController::saveConfig`
+- [x] Implement the rasterise pass in `PdfWatermarker` (or a `PdfFlattener` collaborator),
   applied **after** the overlay so the watermark is baked in
-- [ ] Rebuild with TCPDF: for each page, `AddPage()` at the source page's width/height and
+- [x] Rebuild with TCPDF: for each page, `AddPage()` at the source page's width/height and
   orientation, then `Image()` the bitmap at full bleed. Set margins/auto-page-break to zero
   first, or TCPDF will inset the image and spill onto a second page
-  - [ ] Emit PNG or JPEG only — the two formats TCPDF's `Image()` handles reliably (the same
+  - [x] Emit PNG or JPEG only — the two formats TCPDF's `Image()` handles reliably (the same
     constraint that ruled SVG out of the logo upload). JPEG for photographic pages keeps the
     size growth down; weigh it against the artefacts it adds to text
-  - [ ] Carry the source page dimensions through in points so page geometry survives the
+  - [x] Carry the source page dimensions through in points so page geometry survives the
     round-trip; do not assume A4
-- [ ] Stream page-by-page rather than holding every page bitmap in memory — write each page
+- [x] Stream page-by-page rather than holding every page bitmap in memory — write each page
   into the TCPDF instance and discard its bitmap (and its temp file) before rendering the next
-- [ ] Cap by page count / source size, mirroring `ZipInterceptorPlugin`'s `MAX_*` ceilings
-- [ ] Fail closed: if flattening is enabled and fails, do **not** fall back to the
+- [x] Cap by page count / source size, mirroring `ZipInterceptorPlugin`'s `MAX_*` ceilings
+- [x] Fail closed: if flattening is enabled and fails, do **not** fall back to the
   unflattened PDF — that would silently hand back the removable-overlay version. Skip +
   audit-log, and for `on_share` deny the fetch as the delivery path already does
 
 #### Trigger interaction
 
-- [ ] `on_demand` / `on_upload` — flatten once, in place; the stored bytes become the
+- [x] `on_demand` / `on_upload` — flatten once, in place; the stored bytes become the
   flattened PDF
-  - [ ] Confirm **Remove Watermark** still works: `OriginalStore` holds the pre-watermark
-    original, so restore is unaffected — but verify, since flattening changes size/MIME
-    characteristics
-- [ ] `on_download` / `on_share` — flattening on *every* fetch is far more expensive than
-  today's overlay-per-fetch. Decide whether to cache the flattened copy, and if so where and
-  with what invalidation
-  - [ ] If not cached, measure and document the per-download cost before enabling
+  - [x] Confirm **Remove Watermark** still works: `OriginalStore` holds the pre-watermark
+    original, so restore is unaffected — verified end to end, since flattening changes
+    size/MIME characteristics. 7497 B uploaded → 289 037 B flattened in place → restored
+    byte-identical to the upload, text layer and all
+- [x] `on_download` / `on_share` — **decided: flatten on every fetch, no cache.** The pass sits
+  in `WatermarkService::renderToTemp`, the one choke point every trigger already funnels
+  through, so the delivery paths got it without their own code path. Verified the stored file
+  stays untouched (7497 B) while the delivered copy is the flattened rebuild (289 037 B)
+  - [ ] Measure and document the per-download cost. Rough figure from the dev container: a
+    2-page A4 text PDF at 100 DPI takes ~0.4 s and grows 7 KB → 289 KB *per fetch*. That is
+    the number to weigh before pointing this at a busy share; caching is the obvious next
+    lever if it hurts
 
 #### Admin UI
 
-- [ ] Toggle + DPI control in `WatermarkForm`, shown only for PDF-capable configs **and only
+- [x] Toggle + DPI control in `WatermarkForm`, shown only for PDF-capable configs **and only
   when `flattenAvailable` is true** — when the renderer is missing the whole block is absent
   from the form, no disabled control and no placeholder
-- [ ] Help text covering irreversibility, the a11y loss, and the size increase
-- [ ] Handle the config that already has `flatten_pdf` enabled but lands on a host without the
-  renderer (restore, host migration, package removed). The toggle is hidden, so it cannot be
-  turned off from the UI — decide between showing the block read-only in just this case or
-  having the server force the value off, and make sure saving the form does not silently
-  discard the stored setting
+- [x] Help text covering irreversibility, the a11y loss, and the size increase
+- [x] Handle the config that already has `flatten_pdf` enabled but lands on a host without the
+  renderer (restore, host migration, package removed). **Decided: the server forces the value
+  off** — `WatermarkService::shouldFlatten` refuses to treat the stored flag as active without
+  a binary and logs a warning naming the config, since the hidden control means the log is the
+  only place an admin can learn why. The column keeps its value, so the setting returns intact
+  if the package does. No read-only UI state was added: it would have needed the server-side
+  force anyway to be safe, so it was pure duplication
 
 #### Testing
 
-- [ ] `PdfFlattenerTest` — output has no extractable text layer (the actual security claim);
+- [x] `PdfFlattenerTest` — output has no extractable text layer (the actual security claim);
   page count and page dimensions preserved; DPI honoured
-- [ ] Non-A4 and mixed-size / landscape source pages keep their geometry through the TCPDF
+- [x] Non-A4 and mixed-size / landscape source pages keep their geometry through the TCPDF
   rebuild, and each source page yields exactly one output page (catches the margin and
   auto-page-break spill)
-- [ ] Round-trip: flattened output is still a valid PDF that Imagick/poppler can open
-- [ ] Watermark survives an overlay-stripping attempt (`qpdf --qdf` / `mutool clean`) —
-  the regression that proves the feature works
-- [ ] Encrypted / corrupt source still fails gracefully, and fails *closed*
-- [ ] Missing rasteriser binary → `flattenAvailable` false, toggle absent from the rendered
+- [x] Round-trip: flattened output is still a valid PDF that Imagick/poppler can open
+- [x] Watermark survives an overlay-stripping attempt (`qpdf --qdf` / `mutool clean`) —
+  the regression that proves the feature works. Neither binary is in the dev image, so this is
+  covered structurally instead, which is the stronger claim: the flattened page's content
+  stream is one full-page `/I0 Do` with **zero** text-show operators, and `pdftotext` recovers
+  36 characters of whitespace from a page that had both body text and watermark. There is no
+  overlay object left for either tool to drop
+- [x] Encrypted / corrupt source still fails gracefully, and fails *closed*
+- [x] Missing rasteriser binary → `flattenAvailable` false, toggle absent from the rendered
   form (not merely disabled), and `saveConfig` rejects `flatten_pdf` sent directly to the API.
   No fatal anywhere on the path
-- [ ] Large multi-page document stays within the memory cap
+- [ ] Large multi-page document stays within the memory cap. **Still open, and the one real
+  gap in this pass.** The page-at-a-time loop and the 200-page / 256 MiB ceilings are in place
+  and the ceilings are tested, but nothing asserts actual peak memory, so the streaming claim
+  rests on reading the code rather than on a measurement
 
 ### Images (`ImageWatermarker`)
 

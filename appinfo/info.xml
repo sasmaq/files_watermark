@@ -17,7 +17,7 @@ Features:
 - Admin-configurable global and per-group policies
 - Full audit log of every watermark event
     ]]></description>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">files_watermark contributors</author>
     <namespace>FilesWatermark</namespace>

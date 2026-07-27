@@ -121,6 +121,83 @@ describe('WatermarkForm', () => {
 		expect(wrapper.text()).toContain('Where to apply')
 	})
 
+	describe('PDF flattening', () => {
+		it('omits the block entirely when the server has no rasteriser', () => {
+			// Absent, not disabled: an admin should never see a setting this server
+			// cannot honour, and a disabled control invites a support ticket.
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: false })
+			expect(wrapper.text()).not.toContain('Tamper resistance')
+			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(false)
+			expect(wrapper.findComponent({ name: 'NcCheckboxRadioSwitch' }).exists()).toBe(false)
+		})
+
+		it('offers the toggle when the server can flatten', () => {
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
+			expect(wrapper.text()).toContain('Tamper resistance')
+			const toggle = wrapper.findComponent({ name: 'NcCheckboxRadioSwitch' })
+			expect(toggle.exists()).toBe(true)
+			expect(toggle.props('type')).toBe('switch')
+		})
+
+		it('warns about the accessibility and size costs', () => {
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
+			const text = wrapper.text()
+			expect(text).toContain('screen-reader')
+			expect(text).toContain('impractical, not impossible')
+		})
+
+		it('toggling the switch updates the form', async () => {
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
+			expect(wrapper.vm.form.flattenPdf).toBe(false)
+
+			await wrapper.findComponent({ name: 'NcCheckboxRadioSwitch' })
+				.vm.$emit('update:modelValue', true)
+
+			expect(wrapper.vm.form.flattenPdf).toBe(true)
+		})
+
+		it('reveals the DPI control only once flattening is on', async () => {
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
+			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(false)
+
+			wrapper.vm.form.flattenPdf = true
+			await wrapper.vm.$nextTick()
+
+			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(true)
+		})
+
+		it('hides the block for a config that can never touch a PDF', () => {
+			const wrapper = mountForm({
+				isAdmin: true,
+				flattenAvailable: true,
+				modelValue: { mimeTypes: 'image/png, image/jpeg' },
+			})
+			expect(wrapper.text()).not.toContain('Tamper resistance')
+		})
+
+		it('shows the block when the type filter includes PDFs', () => {
+			const wrapper = mountForm({
+				isAdmin: true,
+				flattenAvailable: true,
+				modelValue: { mimeTypes: 'application/pdf, image/png' },
+			})
+			expect(wrapper.text()).toContain('Tamper resistance')
+		})
+
+		it('sends the flattening settings on save', async () => {
+			const wrapper = mountForm({
+				isAdmin: true,
+				flattenAvailable: true,
+				modelValue: { type: 'text', flattenPdf: true, flattenDpi: 200 },
+			})
+			await wrapper.find('.wm-save').trigger('click')
+
+			const [payload] = wrapper.emitted('save')[0]
+			expect(payload.flattenPdf).toBe(true)
+			expect(payload.flattenDpi).toBe(200)
+		})
+	})
+
 	it('emits save event with form data when save button clicked', async () => {
 		const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '{username}' } })
 		await wrapper.find('.wm-save').trigger('click')

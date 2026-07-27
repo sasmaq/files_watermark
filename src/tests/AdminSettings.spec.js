@@ -21,13 +21,24 @@ function mockGet(config) {
 	})
 }
 
+/**
+ * The config endpoint's payload: the saved configs plus this server's flattening
+ * capability, which is what decides whether the form offers the setting at all.
+ * @param {Array} configs - Saved watermark configs
+ * @param {boolean} flattenAvailable - Whether the host has a PDF rasteriser
+ * @return {object} An axios-shaped response
+ */
+function configResponse(configs, flattenAvailable = false) {
+	return { data: { configs, flattenAvailable, flattenDpiRange: { min: 72, max: 600 } } }
+}
+
 describe('AdminSettings', () => {
 	beforeEach(() => {
 		jest.clearAllMocks()
 	})
 
 	it('loads the global config on mount and hands it to the form', async () => {
-		mockGet(Promise.resolve({ data: [GLOBAL_CONFIG] }))
+		mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
 		const wrapper = mount(AdminSettings)
 		await flushPromises()
 
@@ -38,7 +49,7 @@ describe('AdminSettings', () => {
 	})
 
 	it('saves the config (with the existing id) and shows a success note', async () => {
-		mockGet(Promise.resolve({ data: [GLOBAL_CONFIG] }))
+		mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
 		axios.post.mockResolvedValue({ data: { ...GLOBAL_CONFIG, opacity: 50 } })
 		const wrapper = mount(AdminSettings)
 		await flushPromises()
@@ -54,7 +65,7 @@ describe('AdminSettings', () => {
 	})
 
 	it('surfaces a save error returned by the API', async () => {
-		mockGet(Promise.resolve({ data: [GLOBAL_CONFIG] }))
+		mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
 		axios.post.mockRejectedValue({ response: { data: { error: 'Invalid color' } } })
 		const wrapper = mount(AdminSettings)
 		await flushPromises()

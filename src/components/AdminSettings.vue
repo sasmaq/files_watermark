@@ -20,6 +20,8 @@
 				:saving="saving"
 				:saved="saved"
 				:save-error="saveError"
+				:flatten-available="flattenAvailable"
+				:flatten-dpi-range="flattenDpiRange"
 				@save="save" />
 
 			<section class="watermark-log">
@@ -46,6 +48,8 @@ import WatermarkForm from './WatermarkForm.vue'
 import AuditLog from './AuditLog.vue'
 
 const config = ref({})
+const flattenAvailable = ref(false)
+const flattenDpiRange = ref({ min: 72, max: 600 })
 const loading = ref(true)
 const loadError = ref(null)
 const saving = ref(false)
@@ -55,8 +59,15 @@ const saveError = ref(null)
 onMounted(async () => {
 	try {
 		const res = await axios.get(generateUrl('/apps/files_watermark/api/v1/config'))
-		if (Array.isArray(res.data) && res.data.length > 0) {
-			config.value = res.data[0]
+		const configs = res.data?.configs ?? []
+		if (configs.length > 0) {
+			config.value = configs[0]
+		}
+		// Drives whether the flattening block is rendered at all: the server only
+		// reports true when it actually has a rasteriser.
+		flattenAvailable.value = res.data?.flattenAvailable === true
+		if (res.data?.flattenDpiRange) {
+			flattenDpiRange.value = res.data.flattenDpiRange
 		}
 	} catch (e) {
 		// A 404 just means no config exists yet — show the form with defaults

@@ -31,10 +31,21 @@ services:
     # directory"). Chown the dir (non-recursive, so the host-owned app files
     # inside are left alone — they only need to be readable) before handing
     # off to the stock entrypoint.
+    #
+    # poppler-utils supplies `pdftoppm`, which PdfFlattener needs to rasterise a
+    # page. Installed here rather than baked into an image so the compose file
+    # stays on the stock `nextcloud:31-apache`. This image is Debian while
+    # production is RHEL 9 (`dnf install poppler-utils`) — same binary, different
+    # package manager, which is exactly why the app probes for the binary at
+    # runtime instead of assuming a distro. Guarded so a restart is not a
+    # re-download.
     entrypoint:
       - /bin/sh
       - -c
-      - chown www-data:www-data /var/www/html/custom_apps; exec /entrypoint.sh apache2-foreground
+      - >
+        chown www-data:www-data /var/www/html/custom_apps;
+        command -v pdftoppm >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils; };
+        exec /entrypoint.sh apache2-foreground
     environment:
       # Auto-provision on first run so no web installer step is needed.
       SQLITE_DATABASE: nextcloud
