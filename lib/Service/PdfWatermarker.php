@@ -62,30 +62,96 @@ class PdfWatermarker {
 		// rotate by +rotation — passing -rotation here tilted the text the other way.
 		$angle = $config->getRotation();
 
-		// Space each tile by the *actual* rendered text size, not an arbitrary
-		// multiple of the font size — otherwise real watermark text (which is far
-		// wider than a few characters) overflows its cell and neighbouring tiles
-		// collide into an illegible diagonal smear. GetStringWidth measures the
-		// string in the current font; the gaps give the repetitions breathing room.
+		// GetStringWidth measures the string in the current font, so the tile is
+		// sized to the text actually being drawn rather than a guess.
 		$textWidth = max(1.0, $pdf->GetStringWidth($text));
 		$lineHeight = $fontSize * 1.2;
-		$stepX = $textWidth + $fontSize * 4;
-		$stepY = $lineHeight + $fontSize * 4;
 
-		// Draw a grid of individually-rotated tiles, extended a full step beyond
-		// every edge so the rotation still fills the page corners.
-		for ($y = -$stepY; $y < $height + $stepY; $y += $stepY) {
-			for ($x = -$stepX; $x < $width + $stepX; $x += $stepX) {
-				$pdf->StartTransform();
-				// Pivot on the text's own centre so the grid spacing is preserved.
-				$pdf->Rotate($angle, $x + $textWidth / 2, $y + $lineHeight / 2);
-				$pdf->SetXY($x, $y);
-				$pdf->Cell($textWidth, $lineHeight, $text, 0, 0, 'C');
-				$pdf->StopTransform();
-			}
+		foreach (self::tilePositions($width, $height, $textWidth, $lineHeight, $angle, $fontSize) as [$cx, $cy]) {
+			$pdf->StartTransform();
+			// Position with Translate, never SetXY. TCPDF reads a negative
+			// SetX/SetY as an offset from the *opposite* page edge — SetXY(-361,
+			// -93.6) on A4 lands at (234, 748) — so every tile meant to hang off the
+			// top or left edge was teleported into the middle of the page and piled
+			// onto the tiles already there. That, not the spacing, is what made real
+			// watermarks an illegible smear with bare bands along the top and left
+			// margins. Translate is a plain matrix op with no such special case, so
+			// SetXY only ever sees (0, 0) and an offset stays an offset.
+			$pdf->Translate($cx - $textWidth / 2, $cy - $lineHeight / 2);
+			$pdf->Rotate($angle, $textWidth / 2, $lineHeight / 2);
+			$pdf->SetXY(0, 0);
+			$pdf->Cell($textWidth, $lineHeight, $text, 0, 0, 'C');
+			$pdf->StopTransform();
 		}
 
 		$pdf->SetAlpha(1);
+	}
+
+	/**
+	 * Centres of the watermark tiles needed to cover one page, in page
+	 * coordinates (origin top-left, y downwards). Centres outside the page are
+	 * expected and required — they are what covers the edges and corners.
+	 *
+	 * The lattice is built in the text's *own* rotated frame rather than as a grid
+	 * of rows and columns: spacing runs `textWidth + gap` along the direction the
+	 * text reads and `lineHeight + gap` across it. That keeps neighbouring tiles
+	 * clear of each other at any angle and puts the gap where it is meaningful —
+	 * between adjacent lines of text. Stepping a row/column grid by the text's
+	 * unrotated width and height, as this did before, instead spaced tiles by a
+	 * bounding box that inflates with rotation, so the density of the pattern
+	 * depended on the angle the user happened to pick.
+	 *
+	 * @return list<array{float, float}> `[x, y]` centre of each tile
+	 */
+	public static function tilePositions(
+		float $pageWidth,
+		float $pageHeight,
+		float $textWidth,
+		float $lineHeight,
+		int $rotation,
+		int $fontSize,
+	): array {
+		// Breathing room between repetitions, scaled to the type size so the
+		// density looks the same at every font size.
+		$gap = $fontSize * 2;
+		$stepAlong = $textWidth + $gap;
+		$stepAcross = $lineHeight + $gap;
+
+		// TCPDF rotates counter-clockwise, so on a y-downwards page the text of a
+		// positive-angle watermark reads up and to the right. `$across` is that
+		// direction turned 90°; the two are orthonormal, which is what makes the
+		// projections below a change of basis.
+		$rad = deg2rad((float)$rotation);
+		$along = [cos($rad), -sin($rad)];
+		$across = [sin($rad), cos($rad)];
+
+		// How far the page extends along each axis of that frame, measured by
+		// projecting its corners, so the lattice is only as large as it needs to be.
+		$alongOffsets = [];
+		$acrossOffsets = [];
+		foreach ([[0.0, 0.0], [$pageWidth, 0.0], [0.0, $pageHeight], [$pageWidth, $pageHeight]] as [$x, $y]) {
+			$alongOffsets[] = $x * $along[0] + $y * $along[1];
+			$acrossOffsets[] = $x * $across[0] + $y * $across[1];
+		}
+
+		$positions = [];
+		$firstAlong = (int)floor(min($alongOffsets) / $stepAlong);
+		$lastAlong = (int)ceil(max($alongOffsets) / $stepAlong);
+		$firstAcross = (int)floor(min($acrossOffsets) / $stepAcross);
+		$lastAcross = (int)ceil(max($acrossOffsets) / $stepAcross);
+
+		for ($i = $firstAlong; $i <= $lastAlong; $i++) {
+			for ($j = $firstAcross; $j <= $lastAcross; $j++) {
+				$u = $i * $stepAlong;
+				$v = $j * $stepAcross;
+				$positions[] = [
+					$u * $along[0] + $v * $across[0],
+					$u * $along[1] + $v * $across[1],
+				];
+			}
+		}
+
+		return $positions;
 	}
 
 	private function applyImageOverlay(Fpdi $pdf, WatermarkConfig $config, float $width, float $height): void {

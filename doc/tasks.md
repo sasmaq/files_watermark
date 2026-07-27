@@ -661,16 +661,36 @@ caught only by driving a real instance by hand —
 - the archive gate keyed off the *container*, leaking clean originals for single-file shares
 - `NodeWrittenEvent` firing under a lock, so on-upload never applied at all
 - on-upload applying, but only as promptly as cron
+- PDF tiles landing in a smear with bare top and left margins, because TCPDF folds a negative
+  `SetX`/`SetY` round to the opposite page edge — the five `PdfWatermarkerTest` cases all
+  passed throughout, since every one of them asserted only that a valid *n*-page PDF came out.
+  Found by rendering a page to an image and looking at it, which is now the minimum bar for
+  believing anything about output geometry
 
 - [x] Put Sabre and `OCA\DAV` on the test path
-  - **Sabre is not stubbed.** `sabre/dav` is a real `require-dev` dependency (4.7.1), so
+  - **Sabre is not stubbed.** `sabre/dav` is a real `require-dev` dependency, pinned to the
+    exact version Nextcloud 31.0.14 ships in `3rdparty/` (**4.7.0** — see the shadowing note
+    below for why the pin, not a `^4.6` range), so
     `Server`, `ServerPlugin`, `Tree`, `PropFind`, the `Sabre\HTTP` request/response pair and
     the exception hierarchy are the genuine classes under test. This closes the false-green
     risk the plan flagged, for everything except core itself — and it earned its keep
     immediately: real Sabre rejected three wrong assumptions while the tests were written
     (`Request::setQueryParameters()` does not exist; query params come off the URL).
-  - `vendor/` is gitignored and rebuilt at package time, so a `require-dev` Sabre can never
-    ship to production or shadow core's copy.
+  - **This did shadow core's copy, and the note here used to claim it couldn't.** `vendor/`
+    being gitignored and rebuilt at package time says nothing about *dev*, where the whole
+    tree — dev dependencies included — is live-mounted into the container. Composer's
+    `vendor/autoload.php` registers with prepend = true for every installed package, so our
+    Sabre 4.7.1 sat ahead of core's 4.7.0 and `Sabre\DAV\ICopyTarget` resolved out of the
+    app. 4.7.1 added `int $depth` to `copyInto()`, which made core's own
+    `OCA\DAV\Connector\Sabre\Directory` violate the interface it implements and log an error
+    on *every* DAV request. `Psr\Log\`, `PhpParser\` and phpunit's global assertion functions
+    were leaking in the same way. Two independent fixes, both kept:
+    - `Application::registerVendorAutoloader()` builds a loader from Composer's generated
+      maps, keeps only the runtime packages (`setasign/fpdi`, `tecnickcom/tcpdf`), and
+      *appends* it so core's autoloader always wins. It reuses the `ClassLoader` class core
+      already declared — `require_once` keys on file path, not class name, so including our
+      copy fatals with "name is already in use".
+    - the version pin above, so the Sabre under test is the Sabre in production.
   - [x] `OCA\DAV\Connector\Sabre\{Node, File, Directory}` and `OC\Streamer` stubbed in
     `tests/stubs/CoreStubs.php` (required from `bootstrap.php`, kept out of composer
     autoload). These live in the server tree and are not installable from packagist, so

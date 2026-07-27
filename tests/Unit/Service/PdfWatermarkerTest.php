@@ -88,10 +88,9 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	public function testLongWatermarkTextRendersWithoutError(): void {
-		// Regression: tile spacing used to be a fixed multiple of the font size,
-		// so text wider than a few characters overflowed its cell and adjacent
-		// tiles collided into an illegible smear. Spacing now derives from the
-		// measured text width, so even a long resolved string renders cleanly.
+		// Note: this asserts only that a long string renders at all. The geometry
+		// it was originally written to protect is pinned by the tile tests below —
+		// producing a valid PDF was never evidence that the tiles were legible.
 		$source = $this->createSourcePdf(1);
 		$dest = $this->tmpDir . '/long.pdf';
 
@@ -108,6 +107,159 @@ class PdfWatermarkerTest extends TestCase {
 
 		$reader = new Fpdi();
 		$this->assertSame(1, $reader->setSourceFile($dest));
+	}
+
+	/**
+	 * Pins the spacing invariant: no tile may encroach on its neighbours in the
+	 * text's own frame, whatever angle the user picks.
+	 *
+	 * This is a guard, not the regression test for the smear — the old row/column
+	 * spacing satisfied it too. What actually collided is covered by
+	 * {@see testOffPageTilesKeepTheirNegativeOffsets}.
+	 *
+	 * @dataProvider rotationProvider
+	 */
+	public function testTilesNeverOverlapAtAnyRotation(int $rotation): void {
+		$fontSize = 18;
+		$textWidth = 289.1;
+		$lineHeight = $fontSize * 1.2;
+
+		$tiles = PdfWatermarker::tilePositions(595.0, 842.0, $textWidth, $lineHeight, $rotation, $fontSize);
+		$this->assertNotEmpty($tiles);
+
+		[$along, $across] = $this->rotatedFrame($rotation);
+		$overlaps = [];
+
+		foreach ($tiles as $i => $a) {
+			foreach (array_slice($tiles, $i + 1) as $b) {
+				$dx = $a[0] - $b[0];
+				$dy = $a[1] - $b[1];
+				// Two tiles are disjoint when they are clear of each other along at
+				// least one axis of the text's own frame.
+				$gapAlong = abs($dx * $along[0] + $dy * $along[1]);
+				$gapAcross = abs($dx * $across[0] + $dy * $across[1]);
+				if ($gapAlong < $textWidth - 0.001 && $gapAcross < $lineHeight - 0.001) {
+					$overlaps[] = sprintf(
+						'(%.1f, %.1f) and (%.1f, %.1f) are %.1fpt apart along the text and %.1fpt across',
+						$a[0],
+						$a[1],
+						$b[0],
+						$b[1],
+						$gapAlong,
+						$gapAcross,
+					);
+				}
+			}
+		}
+
+		$this->assertSame([], $overlaps, "Overlapping watermark tiles at {$rotation}°");
+	}
+
+	/**
+	 * The lattice must reach past every edge, or the watermark stops short of the
+	 * margins. Note this pins the positions the renderer is *asked* to draw; that
+	 * they survive into the page is what
+	 * {@see testOffPageTilesKeepTheirNegativeOffsets} checks.
+	 *
+	 * @dataProvider rotationProvider
+	 */
+	public function testLatticeSpansTheWholePage(int $rotation): void {
+		$fontSize = 18;
+		$width = 595.0;
+		$height = 842.0;
+
+		$tiles = PdfWatermarker::tilePositions($width, $height, 289.1, $fontSize * 1.2, $rotation, $fontSize);
+		[$along, $across] = $this->rotatedFrame($rotation);
+
+		$project = static fn (array $p, array $axis): float => $p[0] * $axis[0] + $p[1] * $axis[1];
+		$corners = [[0.0, 0.0], [$width, 0.0], [0.0, $height], [$width, $height]];
+
+		foreach ([[$along, 'along the text'], [$across, 'across the text']] as [$axis, $label]) {
+			$page = array_map(static fn (array $c): float => $project($c, $axis), $corners);
+			$drawn = array_map(static fn (array $t): float => $project($t, $axis), $tiles);
+
+			$this->assertLessThanOrEqual(
+				min($page),
+				min($drawn),
+				"Watermark starts inside the page {$label} at {$rotation}°",
+			);
+			$this->assertGreaterThanOrEqual(
+				max($page),
+				max($drawn),
+				"Watermark ends inside the page {$label} at {$rotation}°",
+			);
+		}
+	}
+
+	/**
+	 * TCPDF reads a negative SetX/SetY as an offset from the *opposite* page edge.
+	 * Tiles that should hang off the top or left were therefore teleported to the
+	 * bottom or right and piled onto the tiles already there, which is why the
+	 * smear survived a spacing fix. Placement goes through Translate instead, so
+	 * negative offsets must survive into the page's transformation matrices.
+	 */
+	public function testOffPageTilesKeepTheirNegativeOffsets(): void {
+		$source = $this->createSourcePdf(1);
+		$dest = $this->tmpDir . '/offsets.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate('Confidential');
+		$this->watermarker->apply($source, $dest, $config, []);
+
+		$content = $this->pageContent($dest);
+		$this->assertStringContainsString('Confidential', $content, 'watermark text missing from the page');
+
+		// Translate emits `1 0 0 1 tx ty cm`; a wrapped tile could never produce a
+		// negative tx, because SetX would have folded it round to the right edge.
+		preg_match_all('#1\.0+ 0\.0+ 0\.0+ 1\.0+ (-?[\d.]+) (-?[\d.]+) cm#', $content, $matches);
+		$this->assertNotEmpty($matches[1], 'no tile translations found in the page content');
+
+		$negative = array_filter($matches[1], static fn (string $tx): bool => (float)$tx < 0);
+		$this->assertNotEmpty($negative, 'no tile was placed off the left edge, so the margins cannot be covered');
+	}
+
+	/** @return array<string, array{int}> */
+	public static function rotationProvider(): array {
+		return [
+			'unrotated' => [0],
+			'shallow' => [30],
+			'diagonal' => [45],
+			'vertical' => [90],
+			'obtuse' => [135],
+			'inverted' => [180],
+			'negative' => [-45],
+		];
+	}
+
+	/**
+	 * The text's own axes in page coordinates: the direction it reads, and that
+	 * turned 90°. TCPDF rotates counter-clockwise and the page's y runs
+	 * downwards, hence the negated sine.
+	 *
+	 * @return array{array{float, float}, array{float, float}}
+	 */
+	private function rotatedFrame(int $rotation): array {
+		$rad = deg2rad((float)$rotation);
+		return [[cos($rad), -sin($rad)], [sin($rad), cos($rad)]];
+	}
+
+	/** The first content stream carrying watermark text, inflated if need be. */
+	private function pageContent(string $pdf): string {
+		$raw = (string)file_get_contents($pdf);
+		preg_match_all('#stream\r?\n(.*?)endstream#s', $raw, $matches);
+
+		foreach ($matches[1] as $stream) {
+			$inflated = @gzuncompress($stream);
+			if ($inflated === false) {
+				$inflated = @gzinflate($stream);
+			}
+			$candidate = $inflated === false ? $stream : $inflated;
+			if (str_contains($candidate, 'cm')) {
+				return $candidate;
+			}
+		}
+
+		return '';
 	}
 
 	public function testCorruptOrEncryptedPdfThrowsRuntimeException(): void {
