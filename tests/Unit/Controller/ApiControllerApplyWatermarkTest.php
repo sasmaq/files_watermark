@@ -19,6 +19,7 @@ use OCP\IGroupManager;
 use OCP\IRequest;
 use OCP\IUser;
 use OCP\IUserSession;
+use OCP\SystemTag\ISystemTagManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
@@ -51,6 +52,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(PdfFlattener::class),
+			$this->createMock(ISystemTagManager::class),
 		);
 	}
 

@@ -17,6 +17,7 @@ use OCP\IGroupManager;
 use OCP\IRequest;
 use OCP\IUser;
 use OCP\IUserSession;
+use OCP\SystemTag\ISystemTagManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
@@ -50,6 +51,7 @@ class ApiControllerFlattenTest extends TestCase {
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->pdfFlattener,
+			$this->createMock(ISystemTagManager::class),
 		);
 
 		$this->configMapper->method('insert')->willReturnCallback(

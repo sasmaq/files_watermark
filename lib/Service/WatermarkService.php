@@ -15,6 +15,7 @@ use OCP\Files\Storage\ISharedStorage;
 use OCP\IUser;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
+use OCP\SystemTag\TagNotFoundException;
 use Psr\Log\LoggerInterface;
 
 class WatermarkService {
@@ -540,11 +541,31 @@ class WatermarkService {
 		}
 
 		$parent = $file->getParent();
-		$taggedFileIds = $this->tagObjectMapper->getObjectIdsForTags(
-			[$tagId],
-			'files',
-			0,
-		);
+
+		// A tag that is not a numeric id raises InvalidArgumentException, and one that
+		// no longer exists raises TagNotFoundException. `saveConfig` rejects both now,
+		// but a config stored before it did — or edited straight in the database — must
+		// still degrade to this app's ordinary "cannot watermark" path. Left uncaught,
+		// InvalidArgumentException is not a RuntimeException, so it sailed past every
+		// caller's handling and turned each watermark request into an HTTP 500.
+		try {
+			$taggedFileIds = $this->tagObjectMapper->getObjectIdsForTags(
+				[$tagId],
+				'files',
+				0,
+			);
+		} catch (TagNotFoundException|\InvalidArgumentException $e) {
+			$this->logger->warning(
+				'files_watermark: config {config} targets system tag {tag}, which is not a usable tag id; '
+				. 'no file matches it. Re-pick the tag in the watermark settings.',
+				['app' => 'files_watermark', 'config' => $config->getId(), 'tag' => $tagId, 'exception' => $e],
+			);
+			throw new \RuntimeException(
+				"The configured system tag ('$tagId') does not exist on this server.",
+				0,
+				$e,
+			);
+		}
 
 		if (!in_array((string)$parent->getId(), $taggedFileIds, true)) {
 			throw new \RuntimeException(

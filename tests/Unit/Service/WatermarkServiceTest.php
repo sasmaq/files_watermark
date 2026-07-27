@@ -16,10 +16,12 @@ use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
+use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\IUser;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
+use OCP\SystemTag\TagNotFoundException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -387,6 +389,43 @@ class WatermarkServiceTest extends TestCase {
 		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
 
 		return $file;
+	}
+
+	/**
+	 * @dataProvider unusableTagProvider
+	 */
+	public function testUnusableStoredFolderTagDegradesInsteadOfCrashing(\Throwable $thrown): void {
+		// saveConfig rejects both of these now, but a config stored before it did — or
+		// edited straight in the database — must still land on this app's ordinary
+		// "cannot watermark" path. InvalidArgumentException in particular is not a
+		// RuntimeException, so uncaught it sailed past every caller and turned each
+		// watermark request into an HTTP 500.
+		$config = $this->pdfConfig(false);
+		$config->setFolderTag('Confidential');
+
+		$file = $this->pdfFile();
+		$file->method('getParent')->willReturn($this->createMock(Folder::class));
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willThrowException($thrown);
+
+		$this->logger->expects($this->once())
+			->method('warning')
+			->with($this->stringContains('not a usable tag id'), $this->anything());
+
+		try {
+			$this->service->watermarkFile($file, 'on_demand', $config);
+			$this->fail('Expected a RuntimeException so callers can report it');
+		} catch (\RuntimeException $e) {
+			$this->assertStringContainsString('does not exist on this server', $e->getMessage());
+			$this->assertSame($thrown, $e->getPrevious());
+		}
+	}
+
+	/** @return array<string, array{\Throwable}> */
+	public static function unusableTagProvider(): array {
+		return [
+			'a tag name rather than an id' => [new \InvalidArgumentException('Tag id must be integer')],
+			'an id that no longer exists' => [new TagNotFoundException('tag 4242 not found')],
+		];
 	}
 
 	public function testFlatteningRunsAfterTheOverlayWhenEnabled(): void {

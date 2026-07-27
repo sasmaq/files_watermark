@@ -121,6 +121,93 @@ describe('WatermarkForm', () => {
 		expect(wrapper.text()).toContain('Where to apply')
 	})
 
+	describe('where to apply', () => {
+		/**
+		 * The MIME checkboxes, in the order they render.
+		 * @param {object} wrapper - the mounted wrapper
+		 * @return {Array} the checkbox component wrappers
+		 */
+		function mimeBoxes(wrapper) {
+			return wrapper.findAll('.wm-checks .checkbox-radio-switch input')
+		}
+
+		it('offers exactly the types the server supports', () => {
+			// Free text here let an admin store a typo, which is a filter nothing can
+			// match — a policy that silently watermarks nothing.
+			const wrapper = mountForm({ isAdmin: true })
+			expect(mimeBoxes(wrapper)).toHaveLength(4)
+			const text = wrapper.text()
+			for (const label of ['PDF', 'JPEG image', 'PNG image', 'WEBP image']) {
+				expect(text).toContain(label)
+			}
+		})
+
+		it('starts with nothing selected when the filter is blank', () => {
+			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: '' } })
+			expect(mimeBoxes(wrapper).every((b) => !b.element.checked)).toBe(true)
+		})
+
+		it('reflects a stored filter, whitespace and all', () => {
+			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: 'application/pdf, image/png' } })
+			const checked = mimeBoxes(wrapper).map((b) => b.element.checked)
+			expect(checked).toEqual([true, false, true, false])
+		})
+
+		it('writes the selection back as a comma-separated list in canonical order', async () => {
+			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: '' } })
+			// Tick WEBP first, then PDF: the stored order must not follow the clicks.
+			await mimeBoxes(wrapper)[3].setValue(true)
+			await mimeBoxes(wrapper)[0].setValue(true)
+
+			expect(wrapper.vm.form.mimeTypes).toBe('application/pdf,image/webp')
+		})
+
+		it('unticking the last type restores "every supported file"', async () => {
+			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: 'image/png' } })
+			await mimeBoxes(wrapper)[2].setValue(false)
+
+			expect(wrapper.vm.form.mimeTypes).toBe('')
+		})
+
+		it('picks the folder tag from the server rather than a typed id', () => {
+			// A tag *name* typed into the old text field was accepted and then made
+			// every watermark request fail with "Tag id must be integer".
+			const wrapper = mountForm({ isAdmin: true })
+			expect(wrapper.findComponent({ name: 'NcSelectTags' }).exists()).toBe(true)
+			expect(wrapper.findComponent({ name: 'NcSelectTags' }).props('multiple')).toBe(false)
+		})
+
+		it('hands the picker the stored tag id as a number', () => {
+			const wrapper = mountForm({ isAdmin: true, modelValue: { folderTag: '42' } })
+			expect(wrapper.findComponent({ name: 'NcSelectTags' }).props('modelValue')).toBe(42)
+		})
+
+		it('stores the picked tag id, and blank when it is cleared', async () => {
+			const wrapper = mountForm({ isAdmin: true })
+			const picker = wrapper.findComponent({ name: 'NcSelectTags' })
+
+			await picker.vm.$emit('update:modelValue', 7)
+			expect(wrapper.vm.form.folderTag).toBe('7')
+
+			await picker.vm.$emit('update:modelValue', null)
+			expect(wrapper.vm.form.folderTag).toBe('')
+		})
+
+		it('accepts a tag object from the picker as well as a bare id', async () => {
+			const wrapper = mountForm({ isAdmin: true })
+			await wrapper.findComponent({ name: 'NcSelectTags' })
+				.vm.$emit('update:modelValue', { id: 13, displayName: 'Confidential' })
+
+			expect(wrapper.vm.form.folderTag).toBe('13')
+		})
+
+		it('says the tag belongs on the folder, not on the files', () => {
+			// The old help text claimed the opposite of what the server checks.
+			const wrapper = mountForm({ isAdmin: true })
+			expect(wrapper.text()).toContain('containing folder carries this tag')
+		})
+	})
+
 	describe('PDF flattening', () => {
 		it('omits the block entirely when the server has no rasteriser', () => {
 			// Absent, not disabled: an admin should never see a setting this server
@@ -128,13 +215,13 @@ describe('WatermarkForm', () => {
 			const wrapper = mountForm({ isAdmin: true, flattenAvailable: false })
 			expect(wrapper.text()).not.toContain('Tamper resistance')
 			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(false)
-			expect(wrapper.findComponent({ name: 'NcCheckboxRadioSwitch' }).exists()).toBe(false)
+			expect(wrapper.find('.wm-flatten-toggle').exists()).toBe(false)
 		})
 
 		it('offers the toggle when the server can flatten', () => {
 			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
 			expect(wrapper.text()).toContain('Tamper resistance')
-			const toggle = wrapper.findComponent({ name: 'NcCheckboxRadioSwitch' })
+			const toggle = wrapper.findComponent('.wm-flatten-toggle')
 			expect(toggle.exists()).toBe(true)
 			expect(toggle.props('type')).toBe('switch')
 		})
@@ -150,7 +237,7 @@ describe('WatermarkForm', () => {
 			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
 			expect(wrapper.vm.form.flattenPdf).toBe(false)
 
-			await wrapper.findComponent({ name: 'NcCheckboxRadioSwitch' })
+			await wrapper.findComponent('.wm-flatten-toggle')
 				.vm.$emit('update:modelValue', true)
 
 			expect(wrapper.vm.form.flattenPdf).toBe(true)

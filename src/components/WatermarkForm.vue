@@ -193,19 +193,36 @@
 						{{ t('files_watermark', 'Where to apply') }}
 					</h4>
 					<p class="wm-card__desc">
-						{{ t('files_watermark', 'Leave both blank to watermark every supported file.') }}
+						{{ t('files_watermark', 'Narrow the policy, or leave everything untouched to cover every supported file.') }}
 					</p>
 					<div class="wm-field wm-field--stacked">
-						<NcTextField v-model="form.mimeTypes"
-							:label="t('files_watermark', 'Limit to file types')"
-							:placeholder="t('files_watermark', 'application/pdf, image/jpeg')" />
-						<small class="wm-help">{{ t('files_watermark', 'Comma-separated MIME types. Blank means all supported files.') }}</small>
+						<label class="wm-field__label">{{ t('files_watermark', 'Limit to file types') }}</label>
+						<!--
+							A fixed list rather than free text: a typed MIME type that the app
+							cannot render (or a plain typo) is a filter nothing can match, which
+							silently turns the whole policy into a no-op.
+						-->
+						<div class="wm-checks">
+							<NcCheckboxRadioSwitch v-for="opt in MIME_OPTIONS"
+								:key="opt.value"
+								:model-value="selectedMimeTypes.includes(opt.value)"
+								@update:model-value="toggleMimeType(opt.value, $event)">
+								{{ opt.label }}
+							</NcCheckboxRadioSwitch>
+						</div>
+						<small class="wm-help">{{ t('files_watermark', 'Select none to watermark every supported file type.') }}</small>
 					</div>
 					<div class="wm-field wm-field--stacked">
-						<NcTextField v-model="form.folderTag"
-							:label="t('files_watermark', 'Limit to a tagged folder')"
-							:placeholder="t('files_watermark', 'Nextcloud system-tag ID')" />
-						<small class="wm-help">{{ t('files_watermark', 'Only files carrying this system tag are watermarked.') }}</small>
+						<label class="wm-field__label">{{ t('files_watermark', 'Limit to a tagged folder') }}</label>
+						<!--
+							Picked from the server's real tags, so the stored value is always an
+							id that exists. Hand-typing it here used to be possible, and a tag
+							*name* — the obvious thing to type — made every watermark fail.
+						-->
+						<NcSelectTags v-model="selectedFolderTag"
+							:multiple="false"
+							:placeholder="t('files_watermark', 'Any folder')" />
+						<small class="wm-help">{{ t('files_watermark', 'Only files whose containing folder carries this tag are watermarked. The tag goes on the folder, not on the files.') }}</small>
 					</div>
 				</section>
 
@@ -222,7 +239,9 @@
 						{{ t('files_watermark', 'Fuse the watermark into the page pixels instead of layering it on top.') }}
 					</p>
 					<div class="wm-field wm-field--stacked">
-						<NcCheckboxRadioSwitch v-model="form.flattenPdf" type="switch">
+						<NcCheckboxRadioSwitch v-model="form.flattenPdf"
+							class="wm-flatten-toggle"
+							type="switch">
 							{{ t('files_watermark', 'Flatten watermarked PDFs') }}
 						</NcCheckboxRadioSwitch>
 						<small class="wm-help">
@@ -382,6 +401,7 @@ import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
+import NcSelectTags from '@nextcloud/vue/components/NcSelectTags'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 
@@ -415,6 +435,49 @@ const DEFAULTS = {
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })
+
+// Exactly the types the renderers handle — WatermarkService::SUPPORTED_ALL.
+// saveConfig rejects anything else, so offering anything else would be a lie.
+const MIME_OPTIONS = [
+	{ value: 'application/pdf', label: t('files_watermark', 'PDF') },
+	{ value: 'image/jpeg', label: t('files_watermark', 'JPEG image') },
+	{ value: 'image/png', label: t('files_watermark', 'PNG image') },
+	{ value: 'image/webp', label: t('files_watermark', 'WEBP image') },
+]
+
+/** The stored comma-separated string, as a list the checkboxes can read. */
+const selectedMimeTypes = computed(() =>
+	(form.mimeTypes ?? '').split(',').map((m) => m.trim()).filter(Boolean),
+)
+
+/**
+ * Add or remove one type, keeping the stored value in the canonical order rather
+ * than in click order.
+ * @param {string} value - The MIME type toggled
+ * @param {boolean} checked - Whether it is now selected
+ */
+function toggleMimeType(value, checked) {
+	const next = new Set(selectedMimeTypes.value)
+	if (checked) {
+		next.add(value)
+	} else {
+		next.delete(value)
+	}
+	form.mimeTypes = MIME_OPTIONS.filter((o) => next.has(o.value)).map((o) => o.value).join(',')
+}
+
+/**
+ * NcSelectTags works in numeric tag ids; the config stores one id as a string,
+ * with blank meaning "any folder".
+ */
+const selectedFolderTag = computed({
+	get: () => (form.folderTag ? Number(form.folderTag) : null),
+	set: (tag) => {
+		// The picker hands back an id, or a tag object depending on how it resolves.
+		const id = tag === null || tag === undefined ? null : (tag.id ?? tag)
+		form.folderTag = id === null ? '' : String(id)
+	},
+})
 
 /**
  * Whether this config can ever touch a PDF. A blank type filter means every
@@ -790,6 +853,16 @@ const contentLines = [
     border-radius: var(--border-radius, 6px);
     background: var(--color-main-background);
     cursor: pointer;
+}
+/* Stands in for the <label for> the picker/checkbox group has no single input for. */
+.wm-field__label {
+    font-size: 13px;
+    font-weight: 600;
+}
+.wm-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 18px;
 }
 .wm-field--stacked {
     margin-bottom: 14px;

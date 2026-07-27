@@ -19,6 +19,8 @@ use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
 use OCP\IRequest;
 use OCP\IUserSession;
+use OCP\SystemTag\ISystemTagManager;
+use OCP\SystemTag\TagNotFoundException;
 
 class ApiController extends Controller {
 
@@ -33,6 +35,7 @@ class ApiController extends Controller {
 		private IGroupManager $groupManager,
 		private WatermarkImageStore $imageStore,
 		private PdfFlattener $pdfFlattener,
+		private ISystemTagManager $tagManager,
 	) {
 		parent::__construct($appName, $request);
 	}
@@ -124,6 +127,50 @@ class ApiController extends Controller {
 				['error' => 'Invalid watermark image. Upload an image instead of specifying a path.'],
 				Http::STATUS_BAD_REQUEST,
 			);
+		}
+
+		// Blank means "no restriction". Normalise the form's empty strings to null so
+		// one thing means one thing everywhere downstream.
+		$mimeTypes = ($mimeTypes === null || trim($mimeTypes) === '') ? null : trim($mimeTypes);
+		$folderTag = ($folderTag === null || trim($folderTag) === '') ? null : trim($folderTag);
+
+		// An unsupported MIME type here is not a narrower policy, it is a policy that
+		// can never match: the render would refuse every file the filter admits.
+		// Silently storing it turns the whole config into a no-op an admin cannot see.
+		if ($mimeTypes !== null) {
+			$requested = array_filter(array_map('trim', explode(',', $mimeTypes)));
+			$unsupported = array_diff($requested, WatermarkService::SUPPORTED_ALL);
+			if ($requested === [] || $unsupported !== []) {
+				return new DataResponse(
+					['error' => 'Unsupported file type(s): ' . implode(', ', $unsupported ?: ['(none given)'])
+						. '. Supported types: ' . implode(', ', WatermarkService::SUPPORTED_ALL) . '.'],
+					Http::STATUS_BAD_REQUEST,
+				);
+			}
+			$mimeTypes = implode(',', $requested);
+		}
+
+		// The tag has to be an id of a tag that exists. A tag *name* is the obvious
+		// thing to type and used to be accepted, after which every watermark attempt
+		// died on `InvalidArgumentException: Tag id must be integer` — an HTTP 500 per
+		// request, with nothing in the settings page to hint at the cause.
+		if ($folderTag !== null) {
+			if (!ctype_digit($folderTag)) {
+				return new DataResponse(
+					['error' => "'$folderTag' is not a system tag ID. Pick the tag from the list, "
+						. 'or leave the field blank to apply everywhere.'],
+					Http::STATUS_BAD_REQUEST,
+				);
+			}
+
+			try {
+				$this->tagManager->getTagsByIds([$folderTag]);
+			} catch (TagNotFoundException|\InvalidArgumentException) {
+				return new DataResponse(
+					['error' => "System tag ID '$folderTag' does not exist on this server."],
+					Http::STATUS_BAD_REQUEST,
+				);
+			}
 		}
 
 		if ($textTemplate !== null) {
