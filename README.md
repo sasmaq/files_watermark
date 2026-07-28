@@ -12,8 +12,8 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 - Global policy configurable by admins under **Settings → Additional → Watermark Settings**
 - Full audit log of every watermark event
 - Supports PDF, JPEG, PNG, and WEBP files
-- PDF rendering via FPDI + TCPDF, with a `qpdf` pre-pass for PDF 1.5+ documents; image
-  rendering via Imagick (preferred) or GD fallback
+- PDF rendering via tc-lib-pdf, which reads PDF 1.5+ documents natively; image rendering
+  via Imagick (preferred) or GD fallback
 
 ## Requirements
 
@@ -22,7 +22,8 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 | Nextcloud | 31.x |
 | PHP | 8.2 or 8.3 |
 | PHP extension | `imagick` (preferred) or `gd` |
-| `qpdf` | strongly recommended — without it most PDF 1.5+ files are skipped |
+| PHP extension | `bcmath` (required by the PDF renderer) |
+| `qpdf` | optional — only for PDFs encrypted with an empty password |
 | `pdftoppm` (poppler-utils) | optional — only for flattened PDFs |
 | Composer | 2.x |
 | Node.js | >= 20 |
@@ -44,52 +45,51 @@ so the feature is simply absent rather than half-working. Note that flattening r
 the text layer — no selection, copy, search or screen-reader access — so weigh it
 against your accessibility obligations before switching it on.
 
-### Recommended: `qpdf`, for PDF 1.5 and later
+### PDF 1.5 and later
 
 PDF 1.5 introduced the option of storing a document's cross-reference table as a
-compressed stream, and most modern producers now do. The free PDF parser bundled with
-FPDI cannot read those files. Neither can it read documents "encrypted" with an empty
-password purely to set permission flags, which is common on documents that otherwise
-circulate freely.
+compressed stream, and most modern producers now do — including whatever wrote two of the
+three sample PDFs Nextcloud places in every new account.
 
-`qpdf` closes both gaps. When FPDI refuses a file, the app rewrites it — classic
-cross-reference table, no object streams, no empty-password encryption — and watermarks
-the rewrite. The watermark is still a real content stream, so **the text layer
-survives**: this is not flattening, and costs none of the accessibility that flattening
-does. The user's file is never modified; the rewrite is a temp copy, deleted before the
-request ends.
+**These are watermarked normally, with no external binary and no configuration.** The
+renderer is tc-lib-pdf, whose parser reads them natively. Earlier versions of this app
+skipped such files, and then handled them only where `qpdf` was installed; neither caveat
+applies any more.
+
+The watermark is a real content stream, so **the text layer survives** — this is not
+flattening, and costs none of the accessibility that flattening does. The user's file is
+never modified.
+
+### Optional: `qpdf`, for empty-password PDFs
+
+Some PDFs are "encrypted" with an empty password purely to set permission flags, and
+circulate freely regardless. The renderer refuses every encrypted document, so where
+`qpdf` is present the app rewrites those files and watermarks the rewrite:
 
 ```bash
 dnf install qpdf      # RHEL 9
 apt-get install qpdf  # Debian / Ubuntu, including the dev containers
 ```
 
-The rewrite only happens after FPDI has actually refused a file, so documents that
-already work are never touched and pay nothing for it.
+The rewrite only happens after the renderer has actually refused a file, so documents that
+already work are never touched and pay nothing for it. The rewrite is a temp copy, deleted
+before the request ends.
 
-**Without `qpdf`** the app falls back to the old behaviour and **skips** those files: the
-file is left exactly as it was, an entry is written to the audit log, and an on-demand
-apply returns an error naming the file. Nothing is corrupted and no unwatermarked copy is
-served in place of a watermarked one — the watermark simply does not get applied. A line
-is written to `nextcloud.log` the first time a file needs the binary and cannot find it.
+**Without `qpdf`** those files are **skipped**: the file is left exactly as it was, an
+entry is written to the audit log, and an on-demand apply returns an error naming the
+file. Nothing is corrupted and no unwatermarked copy is served in place of a watermarked
+one — the watermark simply does not get applied.
 
-This is not a rare edge case, which is why the package is worth installing. Two of the
-three sample PDFs Nextcloud places in every new account need it:
+What is refused either way: documents that need a **real password** to open, and files
+damaged beyond qpdf's repair.
 
-| Skeleton file | Version | Watermarkable without `qpdf` |
-| --- | --- | --- |
-| `Nextcloud Manual.pdf` | 1.5 | no |
-| `Reasons to use Nextcloud.pdf` | 1.6 | no |
-| `Documents/Nextcloud flyer.pdf` | 1.4 | yes |
+### Fonts
 
-So on a host without the binary, the first file an admin tries after enabling the app may
-well be one that gets skipped. If watermarking appears to do nothing, check the audit log
-before assuming the configuration is wrong.
-
-What is still refused, with or without `qpdf`: documents that need a **real password** to
-open, and files damaged beyond qpdf's repair. Those are outside what any free PHP parser
-can reach; handling them needs setasign's commercial
-[FPDI PDF-Parser](https://www.setasign.com/fpdi-pdf-parser) add-on, which is not bundled.
+`resources/fonts` holds Helvetica *metrics* for both PDF stacks — no glyphs are embedded,
+since Helvetica is one of the PDF standard 14 fonts that readers supply themselves. They
+are committed because neither renderer ships them via Composer. See the README there
+before moving or deleting anything in that directory; the path is announced through the
+global `K_PATH_FONTS`, which both stacks read.
 
 ## Project Structure
 
@@ -102,6 +102,8 @@ files_watermark/
 │   ├── Db/           # Entities and QBMapper classes
 │   ├── Listener/     # ShareCreatedEvent listener
 │   ├── Service/      # WatermarkService, PdfWatermarker, PdfNormalizer, ImageWatermarker
+├── resources/
+│   └── fonts/        # Helvetica metrics for both PDF stacks (see the README there)
 │   └── Settings/     # Admin settings panel registration
 ├── migration/        # Database schema migration
 ├── src/              # Vue 3 frontend source

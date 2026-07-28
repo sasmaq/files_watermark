@@ -208,11 +208,21 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * TCPDF reads a negative SetX/SetY as an offset from the *opposite* page edge.
-	 * Tiles that should hang off the top or left were therefore teleported to the
-	 * bottom or right and piled onto the tiles already there, which is why the
-	 * smear survived a spacing fix. Placement goes through Translate instead, so
-	 * negative offsets must survive into the page's transformation matrices.
+	 * The regression test for the smear, and the reason the tile lattice must not be
+	 * touched by a renderer change.
+	 *
+	 * The original bug was TCPDF-specific — it read a negative `SetX`/`SetY` as an
+	 * offset from the *opposite* page edge, so tiles meant to hang off the top or left
+	 * were teleported to the bottom or right and piled onto the tiles already there.
+	 * tc-lib-pdf has no such special case: positions are matrix operands. That is a
+	 * claim about the new stack, so it is asserted rather than assumed — the negative
+	 * offsets still have to reach the page, or the margins go uncovered exactly as
+	 * before.
+	 *
+	 * What changed is only *where* to look. TCPDF emitted a pure translation
+	 * (`1 0 0 1 tx ty cm`) and positioned text with SetXY; tc-lib-pdf emits one
+	 * combined rotation matrix per tile (`cos sin -sin cos tx ty cm`) and offsets the
+	 * text inside it with `Td`.
 	 */
 	public function testOffPageTilesKeepTheirNegativeOffsets(): void {
 		$source = $this->createSourcePdf(1);
@@ -225,13 +235,67 @@ class PdfWatermarkerTest extends TestCase {
 		$content = $this->pageContent($dest);
 		$this->assertStringContainsString('Confidential', $content, 'watermark text missing from the page');
 
-		// Translate emits `1 0 0 1 tx ty cm`; a wrapped tile could never produce a
-		// negative tx, because SetX would have folded it round to the right edge.
-		preg_match_all('#1\.0+ 0\.0+ 0\.0+ 1\.0+ (-?[\d.]+) (-?[\d.]+) cm#', $content, $matches);
-		$this->assertNotEmpty($matches[1], 'no tile translations found in the page content');
+		// Six-operand `cm` matrices: [a b c d tx ty].
+		preg_match_all(
+			'#(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) cm#',
+			$content,
+			$matches,
+		);
+		$this->assertNotEmpty($matches[5], 'no tile transformation matrices found in the page content');
 
-		$negative = array_filter($matches[1], static fn (string $tx): bool => (float)$tx < 0);
+		$negative = array_filter($matches[5], static fn (string $tx): bool => (float)$tx < 0);
 		$this->assertNotEmpty($negative, 'no tile was placed off the left edge, so the margins cannot be covered');
+	}
+
+	/**
+	 * The rotation convention did **not** carry over from TCPDF and had to be
+	 * re-derived, so it is pinned here rather than left to the eye.
+	 *
+	 * `Transform::getRotation()` builds a raw CTM in PDF's y-upwards space and does the
+	 * flip itself, which is a different origin and handedness from TCPDF's `Rotate()`.
+	 * The contract that has to survive is the one the settings live preview shows: a
+	 * positive rotation tilts the text **uphill**, reading up and to the right. In the
+	 * emitted matrix `[a b c d tx ty]` that means the text's own x-axis, `(a, b)`, must
+	 * point right and *up* — both positive — since PDF y increases upwards.
+	 *
+	 * Get the sign wrong and every watermark tilts the opposite way to the preview the
+	 * admin configured it with, which no other assertion here would catch.
+	 */
+	public function testPositiveRotationTiltsTheTextUphill(): void {
+		$source = $this->createSourcePdf(1);
+		$dest = $this->tmpDir . '/rotation.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate('Confidential');
+		$config->setRotation(45);
+		$this->watermarker->apply($source, $dest, $config, []);
+
+		preg_match_all(
+			'#(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) cm#',
+			$this->pageContent($dest),
+			$matches,
+		);
+
+		// The imported page is placed with an identity matrix; the tiles are the
+		// rotated ones, and at 45° every component is ±cos45.
+		$rotated = [];
+		foreach ($matches[1] as $i => $a) {
+			$b = (float)$matches[2][$i];
+			if (abs((float)$a - 1.0) > 0.0001 || abs($b) > 0.0001) {
+				$rotated[] = [(float)$a, $b];
+			}
+		}
+		$this->assertNotEmpty($rotated, 'no rotated tile matrices found');
+
+		foreach ($rotated as [$a, $b]) {
+			$this->assertEqualsWithDelta(cos(deg2rad(45)), $a, 0.0001, 'unexpected rotation magnitude');
+			$this->assertGreaterThan(
+				0,
+				$b,
+				'a positive rotation must tilt the text uphill; a negative b means it '
+				. 'reads downhill, i.e. mirrored against the settings preview',
+			);
+		}
 	}
 
 	/** @return array<string, array{int}> */
@@ -290,91 +354,59 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * PDF 1.5+ documents that store their cross-reference table as a compressed
-	 * stream cannot be read by the free parser bundled with FPDI, and that is not
-	 * an exotic case: the skeleton PDF Nextcloud drops into every new account is
-	 * one, so this is the first file many admins try.
+	 * The headline result of the tc-lib-pdf migration, and the inversion of what this
+	 * file used to assert.
 	 *
-	 * On a host with no `qpdf` there is nothing to be done about it, and the
-	 * contract is that it is a *clean* refusal — the same RuntimeException the
-	 * encrypted-PDF path raises, no destination written, and the user's file
-	 * untouched. Callers up the stack (`WatermarkService`) turn that into a skip
-	 * plus an audit entry, so the failure must never be partial.
+	 * PDF 1.5+ documents that store their cross-reference table as a compressed stream
+	 * were **skipped entirely** under FPDI, whose free parser refuses them — not an
+	 * exotic case, since two of the three skeleton PDFs Nextcloud drops into every new
+	 * account are such files, so it was the first thing many admins tried. Then they
+	 * worked only where `qpdf` was installed to rewrite them first.
 	 *
-	 * The normalizer is mocked unavailable rather than left to the host, because
-	 * this is the behaviour of a machine *without* the binary and the assertions
-	 * would otherwise invert on a machine that has it.
-	 *
-	 * Distinct from {@see testCorruptOrEncryptedPdfThrowsRuntimeException}, which
-	 * feeds in bytes that are not a PDF at all. Here the document is well formed
-	 * and only the compression is unsupported — asserted through FPDI's own
-	 * COMPRESSED_XREF code, which it can only reach after parsing the trailer and
-	 * finding a valid `/Type /XRef` stream.
+	 * tc-lib-pdf reads them natively. The normalizer is mocked **unavailable** here
+	 * precisely to prove that: no external binary is involved in this path any more,
+	 * on any host. If this test ever needs `qpdf` back, the migration has regressed.
 	 */
-	public function testCompressedXrefPdfFailsCleanlyWithoutQpdf(): void {
+	public function testCompressedXrefPdfIsWatermarkedWithoutAnyExternalBinary(): void {
 		$source = $this->tmpDir . '/compressed-xref.pdf';
 		file_put_contents($source, $this->buildCompressedXrefPdf());
 		$before = (string)file_get_contents($source);
 		$dest = $this->tmpDir . '/out.pdf';
 
-		try {
-			$this->watermarkerWithoutNormalizer()->apply($source, $dest, $this->makeConfig('text'), []);
-			$this->fail('Expected a compressed-xref PDF to be refused.');
-		} catch (\RuntimeException $e) {
-			$this->assertStringContainsString('Cannot process PDF', $e->getMessage());
+		$this->watermarkerWithoutNormalizer()->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
 
-			// Proves the fixture is a genuine PDF 1.5 rather than junk: FPDI only
-			// raises this code once it has parsed its way to a valid xref stream.
-			// It also proves the *original* parse error survived as the cause rather
-			// than being replaced by a complaint about the missing binary.
-			$cause = $e->getPrevious();
-			$this->assertInstanceOf(CrossReferenceException::class, $cause);
-			$this->assertSame(
-				CrossReferenceException::COMPRESSED_XREF,
-				$cause->getCode(),
-				'expected the unsupported-compression path, not a generic parse failure',
-			);
-		}
+		$this->assertFileExists($dest);
+		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
+		$this->assertStringContainsString(
+			'Alice',
+			$this->pageContent($dest),
+			'the watermark text never reached the page',
+		);
 
-		$this->assertFileDoesNotExist($dest, 'a refused render must not leave a partial file behind');
+		// Still a content-stream overlay rather than a rasterisation, so the output is
+		// itself importable and the page count survives.
+		$this->assertSame(1, (new Fpdi())->setSourceFile($dest));
+
 		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
 	}
 
 	/**
-	 * The other half of the same story: with `qpdf` on the host, the file that the
-	 * test above pins as refused gets watermarked instead. This is the whole point
-	 * of the normalizer pre-pass, driven end to end through the real binary rather
-	 * than a mock, because what is being asserted is that qpdf's output is actually
-	 * readable by FPDI — a claim no mock can make.
-	 *
-	 * The overlay must land as a real content stream, so unlike flattening the page
-	 * count is preserved and the result is re-importable.
+	 * The fixture has to stay genuinely unreadable by the *old* stack, or the test
+	 * above proves nothing. FPDI is still in the tree until the migration completes,
+	 * so this pins the fixture against it directly — asserting FPDI's own
+	 * COMPRESSED_XREF code, which it can only reach after parsing the trailer and
+	 * finding a valid `/Type /XRef` stream. Delete this together with FPDI.
 	 */
-	public function testCompressedXrefPdfIsWatermarkedWhenQpdfIsAvailable(): void {
-		$this->requireQpdf();
-
+	public function testTheFixtureIsStillUnreadableByTheOutgoingFpdiParser(): void {
 		$source = $this->tmpDir . '/compressed-xref.pdf';
 		file_put_contents($source, $this->buildCompressedXrefPdf());
-		$before = (string)file_get_contents($source);
-		$scratchBefore = count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []);
-		$dest = $this->tmpDir . '/out.pdf';
 
-		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
-
-		$this->assertFileExists($dest);
-		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
-
-		// The single page of the fixture survives the round-trip, and the output is
-		// itself readable — the overlay is a content stream, not a rasterisation.
-		$reader = new Fpdi();
-		$this->assertSame(1, $reader->setSourceFile($dest));
-
-		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
-		$this->assertSame(
-			$scratchBefore,
-			count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []),
-			'the normalized scratch copy of the user file outlived the call',
-		);
+		try {
+			(new Fpdi())->setSourceFile($source);
+			$this->fail('the fixture no longer reproduces the compressed-xref case');
+		} catch (CrossReferenceException $e) {
+			$this->assertSame(CrossReferenceException::COMPRESSED_XREF, $e->getCode());
+		}
 	}
 
 	/**

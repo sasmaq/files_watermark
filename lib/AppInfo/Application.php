@@ -12,6 +12,7 @@ use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
+use OCA\FilesWatermark\Service\PdfFontPath;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -62,6 +63,13 @@ class Application extends App implements IBootstrap {
 		parent::__construct(self::APP_ID);
 
 		self::registerVendorAutoloader();
+
+		// Must happen here, not in the renderer: simply *loading* the TCPDF class
+		// defines K_PATH_FONTS to TCPDF's own fonts directory, and a constant cannot
+		// be redefined. Whoever gets there first wins, so this claims it during app
+		// bootstrap — before anything can touch either PDF stack. `resources/fonts`
+		// carries both formats precisely so TCPDF still finds its own metrics there.
+		PdfFontPath::register();
 	}
 
 	/**

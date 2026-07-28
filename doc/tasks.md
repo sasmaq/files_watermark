@@ -32,7 +32,7 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Decided, not started. FPDI + TCPDF out, tc-lib-pdf in | The whole of it |
+| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–3 done: `PdfWatermarker` renders on tc-lib-pdf and compressed-xref PDFs need no external binary | Flattener, normalizer, tests, FPDI removal |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
@@ -62,17 +62,17 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ### Rewrites
 
-- [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — drop
-  `setasign/fpdi` + `tecnickcom/tcpdf` for `tecnickcom/tc-lib-pdf` +
-  `tecnickcom/tc-lib-pdf-parser`, which read compressed-xref PDFs in pure PHP. Eight steps,
-  and it touches both renderers, the whole PDF test suite and the platform requirements
+- [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **steps
+  1–3 of 8 done**. `PdfWatermarker` now renders on tc-lib-pdf, and PDF 1.5+ compressed-xref
+  documents are watermarked with **no external binary at all**. Remaining: the flattener,
+  narrowing the normalizer, the test sweep, and removing FPDI + TCPDF
 
 ### Correctness and robustness
 
-- [x] [PDF 1.5+ with compressed xref](#open-1) — **fixed** by the `qpdf` normalizer pre-pass,
-  not just documented. Skipped only on hosts without the binary. The
-  [tc-lib-pdf migration](#pdf-stack-migration-to-tc-lib-pdf) would close the same gap without
-  the external binary
+- [x] [PDF 1.5+ with compressed xref](#open-1) — **fixed twice over**: first by the `qpdf`
+  normalizer pre-pass, then properly by the
+  [tc-lib-pdf migration](#pdf-stack-migration-to-tc-lib-pdf), whose parser reads these files
+  natively. No external binary is involved on this path any more, on any host
 - [ ] [Flattening memory ceiling](#open-1) is unmeasured — the streaming claim rests on reading
   the code
 - [ ] [Archive caps](#open-3) are class constants, not configuration
@@ -610,7 +610,7 @@ See step 5 under [Sequencing](#migration-plan).
 Ordered so the suite is green at every step and no commit leaves the app less capable
 than the one before it.
 
-- [ ] **1. Dependencies and platform.** Add `tecnickcom/tc-lib-pdf` and
+- [x] **1. Dependencies and platform.** Add `tecnickcom/tc-lib-pdf` and
   `tecnickcom/tc-lib-pdf-parser` alongside the existing FPDI/TCPDF rather than replacing
   them, so the two stacks can be diffed against each other during the port
   - `tc-lib-pdf` requires **`ext-bcmath`**, which this app has never needed. Add it to
@@ -625,8 +625,11 @@ than the one before it.
     store's bundled-dependency rules before packaging
   - licence is unchanged in substance: LGPL-3.0, as TCPDF already is, inside an AGPL app
 
-- [ ] **2. `PdfWatermarker` — the hard one.** The import half is close to a rename; the
-  drawing half is a rewrite against a different model
+- [x] **2. `PdfWatermarker` — done.** The import half was close to a rename; the drawing
+  half was a rewrite against a different model, and four prerequisites surfaced that this
+  plan had not anticipated — all four are recorded under
+  [What step 2 turned up](#migration-surprises), because each is a silent runtime failure
+  rather than something a type error catches
   - import maps almost one-to-one: `setSourceFile` → `setImportSourceFile` (returns a
     source *id*, not a page count), `setSourceFile`'s return → `getSourcePageCount($id)`,
     `importPage($n)` → `importPage($id, $n)`, `getTemplateSize` → `PageTemplateInterface`'s
@@ -642,8 +645,12 @@ than the one before it.
     22 assertions should keep passing untouched. If they do not, the port of the *caller*
     is wrong — treat that as the signal, not as a reason to edit the lattice
 
-- [ ] **3. Re-derive the rotation convention, and do not assume it carries over.** This is
-  the single most likely place to reintroduce the smear bug
+- [x] **3. Rotation convention re-derived and pinned by a test.** The emitted matrix is
+  `[cos sin -sin cos tx ty]`, and `testPositiveRotationTiltsTheTextUphill` asserts the
+  text's own x-axis `(a, b)` points right and **up** — the contract the settings preview
+  shows. Getting the sign wrong tilts every watermark opposite to the preview the admin
+  configured, and nothing else in the suite would have caught it. This was the single most
+  likely place to reintroduce the smear bug
   - TCPDF's `Rotate()` is counter-clockwise-positive on a y-**down**wards page, and
     `PdfWatermarker` compensates by passing `+rotation` to match the SVG preview's
     clockwise-positive `rotate(-rotation)`. That comment is load-bearing and its reasoning
@@ -700,6 +707,57 @@ than the one before it.
 - [ ] **8. Docs.** README's requirements table, the `qpdf` section (now decryption-only),
   the Features line naming FPDI + TCPDF, the project-structure comment, and the
   Environment entries here
+
+### What step 2 turned up {#migration-surprises}
+
+Four prerequisites the plan above did not anticipate. None is exotic, and every one of
+them fails at *runtime* rather than at compile or install time, so they are recorded in
+full — a future reader hitting any of these will otherwise assume the library is broken.
+
+- [x] **tc-lib-pdf ships no font data at all.** `tecnickcom/tc-lib-pdf-font` deliberately
+  contains no metrics; its `make fonts` target downloads a 117 MB mirror and converts.
+  Until that is solved *every* text call dies with `unable to read file: helveticab.json`,
+  which reads like a packaging bug and is not one
+  - resolved by committing two ~10 KB files to `resources/fonts`, generated once from the
+    canonical Adobe Core-14 AFMs with the library's own `Font\Import`. Metrics only — no
+    glyphs, and Helvetica is a standard-14 font that readers supply themselves
+  - **licence provenance is unresolved**: the mirror's `core/LICENSE` is a 0-byte file, so
+    upstream states no terms. The same metrics ship in TCPDF (LGPL-3.0, already vendored)
+    and in most PDF libraries, so this is well-trodden rather than novel — but it is an
+    open question for any formal licence audit, and `resources/fonts/README.md` records it
+
+- [x] **`K_PATH_FONTS` is a global constant, and TCPDF fights over it.** It is the only
+  lookup that survives a real deployment: the alternative walks up from the package
+  looking for a `fonts` directory and requires it to be **writable**, which a hardened
+  Nextcloud install will not be
+  - merely *loading* the TCPDF class defines the constant to TCPDF's own directory, and a
+    constant cannot be redefined. So it is first-come-first-served, and which stack wins
+    depended on the order tests happened to run in
+  - claimed in `Application::__construct()` and in `tests/bootstrap.php`, both before
+    either stack can load. `resources/fonts` therefore holds **both** formats —
+    `helvetica.json` for tc-lib-pdf beside `helvetica.php` for TCPDF, which still needs
+    its own metrics while `PdfFlattener` is on it. TCPDF also concatenates the constant
+    with the filename without inserting a separator, so the trailing one is load-bearing
+  - delete the `.php` files at step 7. `PdfFontPath::isUsingOwnFonts()` turns a hijacked
+    constant into an error that names the culprit instead of a missing-file mystery
+
+- [x] **Local file reads are allowlisted.** tc-lib-pdf refuses to read outside a set of
+  trusted paths, which is a sound default for a renderer that also fetches remote assets,
+  but everything this app feeds it is a temp copy — so the source PDF and the logo were
+  both rejected with `Unable to read image file`
+  - supplying `allowedPaths` **replaces** the defaults rather than adding to them, so the
+    font directory has to be listed too or metrics that were loading a moment earlier stop
+  - each directory is listed in both literal and `realpath` form: on macOS the temp dir is
+    `/var/folders/...`, a symlink to `/private/var/folders/...`, and listing only the
+    resolved form leaves the path the caller actually passes looking unauthorised
+
+- [x] **The two stacks interoperate, so step 4 can stay separate.** Verified explicitly,
+  because it was not obvious: FPDI reads tc-lib-pdf's output, so `PdfFlattener` — still on
+  FPDI + TCPDF — flattens the new renderer's files unchanged. A watermark-then-flatten run
+  produced a 139 KB rasterised PDF from an 19 KB overlay one
+  - also verified the reverse of the migration's whole point: `getImageDimensionsByKey()`
+    takes an `int` width, and `php-cs-fixer` had to be told to leave `resources/fonts`
+    alone or it reformats vendored third-party files
 
 ### Risks accepted {#migration-risks}
 
