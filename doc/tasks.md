@@ -13,9 +13,9 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-28 at commit `3bb4570`, both green: **216 PHPUnit** tests (532
-assertions; the 9 skips are all `PdfFlattenerTest` rasterise cases on a host without
-`pdftoppm`) and **77 Jest** tests. Local run was PHP 8.2; 8.3 is covered by CI only.
+Suites re-run 2026-07-28, both green: **217 PHPUnit** tests (537 assertions; the 9 skips are
+all `PdfFlattenerTest` rasterise cases on a host without `pdftoppm`) and **77 Jest** tests.
+Local run was PHP 8.2; 8.3 is covered by CI only.
 
 ---
 
@@ -31,7 +31,7 @@ assertions; the 9 skips are all `PdfFlattenerTest` rasterise cases on a host wit
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD and poppler all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
-| [Testing](#testing) | 216 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 217 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker, S3 and flattening | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -54,8 +54,8 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ### Correctness and robustness
 
-- [ ] [PDF 1.5+ with compressed xref](#open-1) — FPDI cannot parse it, which is every
-  Nextcloud skeleton PDF. It fails safely today; it is untested and undocumented
+- [x] [PDF 1.5+ with compressed xref](#open-1) — now pinned by a test and documented for
+  admins. Affects **two of the three** Nextcloud skeleton PDFs, not all of them
 - [ ] [Flattening memory ceiling](#open-1) is unmeasured — the streaming claim rests on reading
   the code
 - [ ] [Archive caps](#open-3) are class constants, not configuration
@@ -85,9 +85,28 @@ tamper resistance. Office formats are not started.
 
 ### Open {#open-1}
 
-- [ ] `PdfWatermarkerTest` — **PDF 1.5+ with compressed xref**, which FPDI cannot parse and
-  which every Nextcloud skeleton PDF happens to be. It already fails gracefully and leaves the
-  original intact; that behaviour is neither pinned by a test nor documented for admins
+- [x] **PDF 1.5+ with compressed xref** — pinned by
+  `testCompressedXrefPdfFailsCleanlyAndLeavesTheOriginalIntact` and documented in the README
+  - the fixture is **hand-built byte by byte**, because TCPDF cannot produce one: it writes a
+    classic xref table whatever `setPDFVersion('1.5')` and `SetCompression(true)` are set to,
+    and FPDI reads its output happily. Simplifying the helper into `createSourcePdf()` gives a
+    fixture that no longer reproduces the bug and a test that passes for the wrong reason
+  - it asserts FPDI's own `CrossReferenceException::COMPRESSED_XREF` code, not just the
+    `RuntimeException`. That is what separates this from the corrupt-PDF test: FPDI can only
+    reach that code after parsing the trailer and finding a valid `/Type /XRef` stream, so it
+    proves the fixture is a well-formed PDF 1.5 whose *compression* is unsupported, rather
+    than bytes that fail to parse at all
+  - mutation-tested: removing the try/catch in `PdfWatermarker::apply()` makes it fail.
+    `CrossReferenceException` is **not** a `RuntimeException` subclass, so the wrapping is
+    load-bearing rather than cosmetic
+  - measured against the real skeleton files in `nextcloud:31.0.14-apache`: `Nextcloud
+    Manual.pdf` (1.5) and `Reasons to use Nextcloud.pdf` (1.6) both fail, `Documents/Nextcloud
+    flyer.pdf` (1.4) works. The earlier note here said *every* skeleton PDF was affected,
+    which was wrong — two of three
+- [ ] The skip is honest but **silent to the end user**: an on-demand apply reports the error,
+  yet an `on_upload` or `on_share` file that cannot be watermarked is only visible in the audit
+  log. Consider surfacing it in the UI, since the affected files are exactly the ones an admin
+  is most likely to test with first
 - [ ] Flattening's **memory ceiling is unmeasured**. The page-at-a-time loop and the 200-page /
   256 MiB caps exist and the caps are tested, but nothing asserts peak memory, so "streams
   page by page" is a claim about the code rather than an observation
@@ -635,7 +654,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 216 PHPUnit tests (9 skip on a host without `pdftoppm`) and 77 Jest tests. The
+**Position:** 217 PHPUnit tests (9 skip on a host without `pdftoppm`) and 77 Jest tests. The
 DAV layer, which used to be the blind spot every delivery bug hid in, now has 48 of them.
 
 ### Open {#open-testing}
@@ -728,7 +747,8 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   node, flattening order and fail-closed behaviour, and an unusable stored folder tag degrading
   instead of crashing
   - the **group** resolution case is absent because group resolution does not exist
-- [x] `PdfWatermarkerTest` (20) — text / image / combined overlays, multi-page, corrupt PDF, and
+- [x] `PdfWatermarkerTest` (21) — text / image / combined overlays, multi-page, corrupt PDF, a
+  compressed-xref PDF 1.5 refused cleanly with the original left byte-identical, and
   the tile geometry: no overlap at any rotation, a lattice spanning the whole page, and
   off-page tiles keeping their negative offsets (the regression test for the smear, verified to
   fail against the old placement code)

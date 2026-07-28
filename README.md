@@ -42,6 +42,40 @@ so the feature is simply absent rather than half-working. Note that flattening r
 the text layer — no selection, copy, search or screen-reader access — so weigh it
 against your accessibility obligations before switching it on.
 
+### Known limitation: PDFs with a compressed cross-reference table
+
+PDF 1.5 introduced the option of storing a document's cross-reference table as a
+compressed stream, and most modern producers now do. The free PDF parser bundled with
+FPDI cannot read those files, so the app **skips them**: the file is left exactly as it
+was, an entry is written to the audit log, and an on-demand apply returns an error
+naming the file. Nothing is corrupted and no unwatermarked copy is served in place of a
+watermarked one — the watermark simply does not get applied.
+
+This is not a rare edge case. Two of the three sample PDFs Nextcloud places in every new
+account are affected:
+
+| Skeleton file | Version | Watermarkable |
+| --- | --- | --- |
+| `Nextcloud Manual.pdf` | 1.5 | no |
+| `Reasons to use Nextcloud.pdf` | 1.6 | no |
+| `Documents/Nextcloud flyer.pdf` | 1.4 | yes |
+
+So the first file an admin tries after enabling the app may well be one that cannot be
+watermarked. If watermarking appears to do nothing, check the audit log before assuming
+the configuration is wrong.
+
+To confirm whether a specific file is affected:
+
+```bash
+head -c 8 "somefile.pdf"   # %PDF-1.4 and earlier are always fine
+```
+
+A 1.5-or-later header does not by itself mean the file is unreadable — only those that
+actually use a compressed xref are. Re-saving the document as PDF 1.4, or running it
+through `qpdf --object-streams=disable in.pdf out.pdf`, produces a watermarkable file.
+Lifting the limitation outright needs setasign's commercial
+[FPDI PDF-Parser](https://www.setasign.com/fpdi-pdf-parser) add-on, which is not bundled.
+
 ## Project Structure
 
 ```text

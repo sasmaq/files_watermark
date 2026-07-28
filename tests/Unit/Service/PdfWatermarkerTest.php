@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use PHPUnit\Framework\TestCase;
+use setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException;
 use setasign\Fpdi\Tcpdf\Fpdi;
 use TCPDF;
 
@@ -273,6 +274,50 @@ class PdfWatermarkerTest extends TestCase {
 		$this->watermarker->apply($bad, $dest, $this->makeConfig('text'), []);
 	}
 
+	/**
+	 * PDF 1.5+ documents that store their cross-reference table as a compressed
+	 * stream cannot be read by the free parser bundled with FPDI, and that is not
+	 * an exotic case: the skeleton PDF Nextcloud drops into every new account is
+	 * one, so this is the first file many admins try.
+	 *
+	 * The contract being pinned is that it is a *clean* refusal — the same
+	 * RuntimeException the encrypted-PDF path raises, no destination written, and
+	 * the user's file untouched. Callers up the stack (`WatermarkService`) turn
+	 * that into a skip plus an audit entry, so the failure must never be partial.
+	 *
+	 * Distinct from {@see testCorruptOrEncryptedPdfThrowsRuntimeException}, which
+	 * feeds in bytes that are not a PDF at all. Here the document is well formed
+	 * and only the compression is unsupported — asserted through FPDI's own
+	 * COMPRESSED_XREF code, which it can only reach after parsing the trailer and
+	 * finding a valid `/Type /XRef` stream.
+	 */
+	public function testCompressedXrefPdfFailsCleanlyAndLeavesTheOriginalIntact(): void {
+		$source = $this->tmpDir . '/compressed-xref.pdf';
+		file_put_contents($source, $this->buildCompressedXrefPdf());
+		$before = (string)file_get_contents($source);
+		$dest = $this->tmpDir . '/out.pdf';
+
+		try {
+			$this->watermarker->apply($source, $dest, $this->makeConfig('text'), []);
+			$this->fail('Expected a compressed-xref PDF to be refused.');
+		} catch (\RuntimeException $e) {
+			$this->assertStringContainsString('Cannot process PDF', $e->getMessage());
+
+			// Proves the fixture is a genuine PDF 1.5 rather than junk: FPDI only
+			// raises this code once it has parsed its way to a valid xref stream.
+			$cause = $e->getPrevious();
+			$this->assertInstanceOf(CrossReferenceException::class, $cause);
+			$this->assertSame(
+				CrossReferenceException::COMPRESSED_XREF,
+				$cause->getCode(),
+				'expected the unsupported-compression path, not a generic parse failure',
+			);
+		}
+
+		$this->assertFileDoesNotExist($dest, 'a refused render must not leave a partial file behind');
+		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
+	}
+
 	private function makeConfig(string $type): WatermarkConfig {
 		$config = new WatermarkConfig();
 		$config->setType($type);
@@ -299,6 +344,62 @@ class PdfWatermarkerTest extends TestCase {
 		$path = $this->tmpDir . '/source.pdf';
 		$pdf->Output($path, 'F');
 		return $path;
+	}
+
+	/**
+	 * A minimal but well-formed PDF 1.5 whose cross-reference table is a
+	 * compressed stream object (`/Type /XRef`, `/Filter /FlateDecode`) instead of
+	 * a classic `xref` table.
+	 *
+	 * Built byte by byte because **TCPDF cannot produce one**: it writes a classic
+	 * xref table whatever `setPDFVersion()` and `SetCompression()` are set to, and
+	 * FPDI parses its output happily. Anyone tempted to simplify this into
+	 * `createSourcePdf()` with `setPDFVersion('1.5')` will get a fixture that no
+	 * longer reproduces the bug and a test that passes for the wrong reason.
+	 *
+	 * The offsets have to be real. FPDI seeks to `startxref`, reads the object it
+	 * finds there and checks `/Type`, so a fixture with bogus offsets fails with
+	 * INVALID_DATA and would prove nothing about compression support.
+	 */
+	private function buildCompressedXrefPdf(): string {
+		$objects = [
+			1 => '<< /Type /Catalog /Pages 2 0 R >>',
+			2 => '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+			3 => '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] '
+				. '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+		];
+		$content = "BT /F1 24 Tf 72 700 Td (Compressed xref fixture) Tj ET\n";
+		$objects[4] = '<< /Length ' . strlen($content) . " >>\nstream\n" . $content . 'endstream';
+		$objects[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+
+		// The binary comment on line 2 is what marks the file as containing binary
+		// data, as a real producer would emit.
+		$pdf = "%PDF-1.5\n%\xE2\xE3\xCF\xD3\n";
+		$offsets = [];
+		foreach ($objects as $num => $body) {
+			$offsets[$num] = strlen($pdf);
+			$pdf .= "$num 0 obj\n$body\nendobj\n";
+		}
+
+		// The xref stream is itself an indirect object, so it has to record its own
+		// offset — which is only known once everything before it has been written.
+		$xrefNum = count($objects) + 1;
+		$xrefOffset = strlen($pdf);
+
+		// /W [1 4 2]: one type byte, a 4-byte offset, a 2-byte generation number.
+		$entries = pack('CNn', 0, 0, 65535);
+		foreach ($offsets as $offset) {
+			$entries .= pack('CNn', 1, $offset, 0);
+		}
+		$entries .= pack('CNn', 1, $xrefOffset, 0);
+
+		$stream = gzcompress($entries);
+		$dict = '<< /Type /XRef /Size ' . ($xrefNum + 1) . ' /W [1 4 2] /Root 1 0 R '
+			. '/Filter /FlateDecode /Length ' . strlen($stream) . ' >>';
+		$pdf .= "$xrefNum 0 obj\n$dict\nstream\n" . $stream . "\nendstream\nendobj\n";
+		$pdf .= "startxref\n$xrefOffset\n%%EOF\n";
+
+		return $pdf;
 	}
 
 	private function createPng(int $width, int $height): string {
