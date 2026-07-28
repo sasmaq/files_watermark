@@ -32,6 +32,7 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
+| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Decided, not started. FPDI + TCPDF out, tc-lib-pdf in | The whole of it |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
@@ -39,7 +40,10 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [Docs and release](#docs-and-release) | README covers install, Docker, S3 and flattening | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
-**Cypress E2E suite**, and **release packaging**. Everything else open is a refinement.
+**Cypress E2E suite**, and **release packaging**. Everything else open is a refinement,
+except the [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf), which is a decided
+rewrite of working code and should be scheduled against those three rather than squeezed
+alongside them.
 
 ---
 
@@ -56,10 +60,19 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [ ] [Group overrides](#open-4) — `group_id` is stored and validated but **never read**, so a
   group policy silently does nothing. Either implement resolution or drop the column
 
+### Rewrites
+
+- [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — drop
+  `setasign/fpdi` + `tecnickcom/tcpdf` for `tecnickcom/tc-lib-pdf` +
+  `tecnickcom/tc-lib-pdf-parser`, which read compressed-xref PDFs in pure PHP. Eight steps,
+  and it touches both renderers, the whole PDF test suite and the platform requirements
+
 ### Correctness and robustness
 
 - [x] [PDF 1.5+ with compressed xref](#open-1) — **fixed** by the `qpdf` normalizer pre-pass,
-  not just documented. Skipped only on hosts without the binary
+  not just documented. Skipped only on hosts without the binary. The
+  [tc-lib-pdf migration](#pdf-stack-migration-to-tc-lib-pdf) would close the same gap without
+  the external binary
 - [ ] [Flattening memory ceiling](#open-1) is unmeasured — the streaming claim rests on reading
   the code
 - [ ] [Archive caps](#open-3) are class constants, not configuration
@@ -144,6 +157,11 @@ tamper resistance. Office formats are not started.
   Imagick, for the reasons under [Environment](#environment-and-dependencies)
 
 ### PDF (`PdfWatermarker`)
+
+Everything below is delivered against FPDI + TCPDF and is scheduled to be rewritten on
+tc-lib-pdf — see [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf). Read the notes
+here as the specification the rewrite has to keep satisfying, particularly the tile
+geometry.
 
 - [x] Text overlay tiled across every page of a multi-page document
 - [x] Image / logo overlay
@@ -561,6 +579,150 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ---
 
+## PDF stack migration to tc-lib-pdf
+
+**Position:** decided, nothing started. The whole PDF path moves off `setasign/fpdi` +
+`tecnickcom/tcpdf` onto `tecnickcom/tc-lib-pdf` + `tecnickcom/tc-lib-pdf-parser` — Nicola
+Asuni's rewrite of TCPDF, so this is a successor rather than a third-party swap.
+
+**Why:** tc-lib-pdf reads what FPDI refuses, in pure PHP. Measured on 8.67.2 against
+fixtures built with `qpdf`:
+
+| Fixture | FPDI | tc-lib-pdf |
+| --- | --- | --- |
+| plain PDF 1.7 | reads | imports |
+| PDF 1.6, object streams + compressed xref | `CrossReferenceException` code 267 | **imports** |
+| empty user password (permission flags only) | refuses | refuses (`ImportUnsupportedFeatureException`) |
+| real user password | refuses | refuses |
+
+A full round-trip — `setImportSourceFile` → `importPage` → `page->add()` →
+`useImportedPage` → `getOutPDFString` — placed the imported page at 210×297 and `pdftotext`
+still returned its text, so the import is a Form XObject and the text layer survives.
+
+**What this does not buy, and must not be lost in the move:** tc-lib-pdf refuses *all*
+encrypted documents, including the empty-password permission-flag case that
+`qpdf --decrypt` recovers today. The normalizer therefore **stays**, narrowed to
+decryption — dropping it would close the compressed-xref gap and reopen a smaller one.
+See step 5 under [Sequencing](#migration-plan).
+
+### Sequencing {#migration-plan}
+
+Ordered so the suite is green at every step and no commit leaves the app less capable
+than the one before it.
+
+- [ ] **1. Dependencies and platform.** Add `tecnickcom/tc-lib-pdf` and
+  `tecnickcom/tc-lib-pdf-parser` alongside the existing FPDI/TCPDF rather than replacing
+  them, so the two stacks can be diffed against each other during the port
+  - `tc-lib-pdf` requires **`ext-bcmath`**, which this app has never needed. Add it to
+    `composer.json` `require`, to `<dependencies>` in `appinfo/info.xml` (which currently
+    declares only `php` and `nextcloud`), to `ci/php.Dockerfile` via `install-php-extensions
+    bcmath`, and to the compose entrypoint. Composer resolution **fails outright** without
+    it — verified
+  - confirm `php-bcmath` is in RHEL 9 AppStream on the real target, same open question as
+    `qpdf` and `poppler-utils` under [Renderers](#open-1)
+  - it pulls **13 transitive `tc-lib-*` packages** (unicode, font, graph, image, page,
+    filter, encrypt, color, file, barcode, sign, unicode-data). Check each against the app
+    store's bundled-dependency rules before packaging
+  - licence is unchanged in substance: LGPL-3.0, as TCPDF already is, inside an AGPL app
+
+- [ ] **2. `PdfWatermarker` — the hard one.** The import half is close to a rename; the
+  drawing half is a rewrite against a different model
+  - import maps almost one-to-one: `setSourceFile` → `setImportSourceFile` (returns a
+    source *id*, not a page count), `setSourceFile`'s return → `getSourcePageCount($id)`,
+    `importPage($n)` → `importPage($id, $n)`, `getTemplateSize` → `PageTemplateInterface`'s
+    `getWidth()` / `getHeight()`, `useTemplate` → `useImportedPage($tpl, $x, $y)`
+  - **the drawing model is the real work.** TCPDF is stateful and imperative
+    (`StartTransform`, `Translate`, `Rotate`, `Cell`, `SetAlpha`, `StopTransform` mutate the
+    document). tc-lib-pdf's primitives *return content-stream strings* —
+    `getStartTransform()`, `getRotation()`, `getStopTransform()`, `getExtGState()`,
+    `getTextCell()`, `getTextLine()` — which the caller concatenates and hands to
+    `Page::addContent()`. Every tile in `applyTextOverlay()` becomes string assembly
+  - **`tilePositions()` is the one piece to leave alone.** It is pure geometry with no
+    TCPDF dependency, it is the regression test for the illegible-watermark bug, and its
+    22 assertions should keep passing untouched. If they do not, the port of the *caller*
+    is wrong — treat that as the signal, not as a reason to edit the lattice
+
+- [ ] **3. Re-derive the rotation convention, and do not assume it carries over.** This is
+  the single most likely place to reintroduce the smear bug
+  - TCPDF's `Rotate()` is counter-clockwise-positive on a y-**down**wards page, and
+    `PdfWatermarker` compensates by passing `+rotation` to match the SVG preview's
+    clockwise-positive `rotate(-rotation)`. That comment is load-bearing and its reasoning
+    does not transfer
+  - tc-lib-pdf's `Transform::getRotation(float $angle, float $posx, float $posy)` builds a
+    **raw CTM in PDF's y-upwards space** — it flips y itself (`$posy = ($this->pageh -
+    $posy) * $this->kunit`) and its matrix is `[cos, sin, -sin, cos]`. Different origin,
+    different handedness, different sign. Re-derive from the rendered output against the
+    settings live preview; do not port the `+rotation` by analogy
+  - the negative-`SetXY` trap that caused the original bug is TCPDF-specific and should
+    simply cease to exist, since positions become explicit matrix operands. Confirm that
+    rather than assume it — `testOffPageTilesKeepTheirNegativeOffsets` is the check
+
+- [ ] **4. `PdfFlattener`.** Smaller: it uses FPDI only to read page geometry and TCPDF only
+  to place one PNG per page. `pdftoppm` and the whole rasterise leg are untouched
+  - the reader becomes `getSourcePageCount()` + `importPage()`/`getWidth()`/`getHeight()`,
+    the writer `Page::add()` with an explicit size plus `getSetImage()`
+  - re-check the **unit** trap recorded at [PdfFlattener](#open-1): reader and writer must
+    agree, or every page rebuilds at 1/2.835 scale. tc-lib-pdf's unit handling is its own
+    (`$this->kunit`), so the existing `'P', 'pt'` pairing is not a guide
+  - verify PNG is still an accepted image format and that no new Ghostscript/Imagick
+    delegate sneaks in through `tc-lib-pdf-image` — avoiding that dependency is the reason
+    `pdftoppm` was chosen in the first place
+
+- [ ] **5. `PdfNormalizer` — keep, narrow, retitle.**
+  - `--object-streams=disable` stops being necessary the moment the renderer can read
+    object streams; `--decrypt` becomes the *whole* reason the class exists
+  - Invoking it on only on the encryption exception (`ImportUnsupportedFeatureException`,
+    which tc-lib-pdf raises distinctly and FPDI did not). The retry-on-failure shape in
+    `PdfWatermarker::openSource()` already works
+  - the fallback contract does not change: no binary, no rewrite, original error rethrown,
+    trigger policy takes over
+
+- [ ] **6. Tests.** The suite is the acceptance criterion for the whole migration
+  - `PdfWatermarkerTest`, `PdfFlattenerTest`, `PdfNormalizerTest` and the `Fpdi`-based
+    assertions inside them all read the *output* with `Fpdi` today. Those readers move to
+    tc-lib-pdf's parser — at which point they can no longer prove the output is readable by
+    anything else, so keep at least one `Fpdi` assertion as an interop canary until FPDI is
+    actually removed
+  - `CompressedXrefFixture` stays exactly as it is and flips meaning: the file it builds
+    should now **import cleanly** rather than throw. That inversion is the single clearest
+    signal the migration worked
+  - `testCompressedXrefPdfFailsCleanlyWithoutQpdf` becomes wrong by construction and should
+    be deleted, not adapted — without qpdf the file will now succeed
+  - `WatermarkServiceTest` mocks both renderers, so it should need no change. If it does,
+    something leaked out of the Service layer
+
+- [ ] **7. Remove FPDI and TCPDF**, only once every test above is green against the new
+  stack, and delete the interop canary in the same commit
+  - `composer.json`, the `use` statements, and the FPDI-licence item under
+    [Security](#open-security) — which this migration closes for compressed xref but
+    **not** for password-protected files, since tc-lib-pdf refuses those too
+
+- [ ] **8. Docs.** README's requirements table, the `qpdf` section (now decryption-only),
+  the Features line naming FPDI + TCPDF, the project-structure comment, and the
+  Environment entries here
+
+### Risks accepted {#migration-risks}
+
+Recorded because they were raised before the decision, not to relitigate it.
+
+- [ ] **The import subsystem is young.** `importPage` is **absent** from 8.0.6 (2021-02) and
+  8.1.4, and present by 8.20.0 (2026-05-10) — so it landed somewhere in the March–May 2026
+  window, against a package shipping 26 / 30 / 39 releases in April / May / June 2026.
+  8.67.2 was released 2026-07-22. Pin an exact version, read the upstream changelog before
+  every bump, and expect churn
+- [ ] **Import fidelity is proven on one page of one generated fixture.** Before trusting it,
+  drive the real skeleton PDFs (`Nextcloud Manual.pdf` 1.5, `Reasons to use Nextcloud.pdf`
+  1.6) and a scanned/CJK/transparency document through the new renderer and compare rendered
+  output against the FPDI result, page by page
+- [ ] **The tile geometry is the crown jewel and the thing most at risk.** It was rebuilt
+  once already after a bug that made watermarks illegible in production-shaped documents.
+  Its tests are the regression net; a port that "passes except for the geometry tests" has
+  failed
+- [ ] **`ext-bcmath` is a new hard platform requirement** on every host that runs this app,
+  including ones already running it
+
+---
+
 ## Data model
 
 **Position:** the schema carries every implemented feature. Two columns are stored but never
@@ -598,6 +760,11 @@ read, and one SDD type is still missing.
 
 ### Open {#open-env}
 
+- [ ] **`ext-bcmath`**, a hard requirement of `tc-lib-pdf` and so of the
+  [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf). Not currently required anywhere
+  in the app, not declared in `appinfo/info.xml`, and Composer refuses to resolve
+  `tc-lib-pdf` without it. Needs `php-bcmath` on RHEL 9 and `install-php-extensions bcmath`
+  in the dev and CI images
 - [ ] Headless LibreOffice / Collabora in the Docker dev environment — blocked on Office
   support being designed
 - [ ] PHP `exif` / metadata libraries, for the invisible metadata watermark
@@ -661,6 +828,10 @@ read, and one SDD type is still missing.
 - [ ] Review FPDI licence compatibility for **password-protected** PDFs. The 1.5+ half of this
   is closed — `qpdf` (Apache-2.0) does it without the commercial add-on — but documents with a
   real user password would still need setasign's FPDI PDF-Parser
+  - the [tc-lib-pdf migration](#pdf-stack-migration-to-tc-lib-pdf) **retires the question
+    rather than answering it**: FPDI leaves the tree entirely, and tc-lib-pdf is LGPL-3.0
+    like TCPDF already is. It does not make password-protected files work — it refuses them
+    too — so that capability gap outlives the licence one
 
 ### Delivered
 
