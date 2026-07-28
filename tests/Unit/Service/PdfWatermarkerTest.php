@@ -410,6 +410,43 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
+	 * The one case the normalizer still exists for, end to end.
+	 *
+	 * An empty user password with the permission flags set is not real protection — a
+	 * reader opens the file without ever prompting — but tc-lib-pdf refuses it like any
+	 * other encrypted document. `qpdf --decrypt` strips it and the watermark goes on.
+	 *
+	 * This is also what pins the *narrowing*: the rescue is now triggered only by
+	 * `ImportUnsupportedFeatureException`, so if that aim is ever wrong this stops
+	 * working while every other test stays green.
+	 */
+	public function testEmptyPasswordEncryptionIsRescuedByTheNormalizer(): void {
+		$this->requireQpdf();
+
+		$plain = $this->createSourcePdf(1);
+		$source = $this->tmpDir . '/permonly.pdf';
+		exec(sprintf(
+			'qpdf --encrypt "" ownerpw 256 -- %s %s 2>&1',
+			escapeshellarg($plain),
+			escapeshellarg($source),
+		), $output, $status);
+		$this->assertSame(0, $status, 'could not build the fixture: ' . implode(' ', $output));
+
+		$scratchBefore = count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []);
+		$dest = $this->tmpDir . '/out.pdf';
+
+		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
+
+		$this->assertFileExists($dest);
+		$this->assertStringContainsString('Alice', $this->pageContent($dest));
+		$this->assertSame(
+			$scratchBefore,
+			count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []),
+			'the decrypted scratch copy of the user file outlived the call',
+		);
+	}
+
+	/**
 	 * A password-protected document is the case qpdf cannot rescue either, and it
 	 * must not be mistaken for one it can: the refusal has to survive the pre-pass
 	 * and stay clean.

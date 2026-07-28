@@ -32,7 +32,7 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–3 done: `PdfWatermarker` renders on tc-lib-pdf and compressed-xref PDFs need no external binary | Flattener, normalizer, tests, FPDI removal |
+| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–5 done: **no production code is on FPDI or TCPDF any more** | Test sweep, removing the old packages, docs |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
@@ -63,9 +63,9 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 ### Rewrites
 
 - [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **steps
-  1–3 of 8 done**. `PdfWatermarker` now renders on tc-lib-pdf, and PDF 1.5+ compressed-xref
-  documents are watermarked with **no external binary at all**. Remaining: the flattener,
-  narrowing the normalizer, the test sweep, and removing FPDI + TCPDF
+  1–5 of 8 done**. Both renderers are on tc-lib-pdf and **no production code references FPDI
+  or TCPDF**; PDF 1.5+ compressed-xref documents are watermarked with no external binary at
+  all. Remaining: the test sweep (6), removing the old packages (7), docs (8)
 
 ### Correctness and robustness
 
@@ -664,25 +664,45 @@ than the one before it.
     simply cease to exist, since positions become explicit matrix operands. Confirm that
     rather than assume it — `testOffPageTilesKeepTheirNegativeOffsets` is the check
 
-- [ ] **4. `PdfFlattener`.** Smaller: it uses FPDI only to read page geometry and TCPDF only
-  to place one PNG per page. `pdftoppm` and the whole rasterise leg are untouched
-  - the reader becomes `getSourcePageCount()` + `importPage()`/`getWidth()`/`getHeight()`,
-    the writer `Page::add()` with an explicit size plus `getSetImage()`
-  - re-check the **unit** trap recorded at [PdfFlattener](#open-1): reader and writer must
-    agree, or every page rebuilds at 1/2.835 scale. tc-lib-pdf's unit handling is its own
-    (`$this->kunit`), so the existing `'P', 'pt'` pairing is not a guide
-  - verify PNG is still an accepted image format and that no new Ghostscript/Imagick
-    delegate sneaks in through `tc-lib-pdf-image` — avoiding that dependency is the reason
-    `pdftoppm` was chosen in the first place
+- [x] **4. `PdfFlattener` — done.** As expected the smaller half: `pdftoppm` and the whole
+  rasterise leg are untouched, and all 11 of its tests passed on the first run of the port
+  - reader is `setImportSourceFile()` + `getSourcePageCount()` +
+    `importPage()`/`getWidth()`/`getHeight()`; writer is `addPage()` with an explicit size
+    plus `image->add()` and `getSetImage()`
+  - the **unit** trap is handled by constructing both documents in `'pt'`, so geometry read
+    off a template needs no conversion before being used as a page size
+  - **reader and writer must be separate documents**, which the old FPDI/TCPDF split gave
+    for free and one tc-lib-pdf instance would not: `importPage()` registers the source page
+    as a Form XObject, so reusing the instance would carry the original content into the
+    rebuilt file — exactly what the rebuild exists to destroy
+  - PNG is still accepted and no Ghostscript or Imagick delegate appeared;
+    `tc-lib-pdf-image` decodes PNG itself, so the reason `pdftoppm` was chosen still holds
+  - **a small security improvement fell out of it.** The old TCPDF writer stamped `Powered
+    by TCPDF (www.tcpdf.org)` into the rebuilt page, which `pdftotext` recovered from a file
+    whose entire purpose is to have no text layer. A flattened page now extracts **1 byte
+    and zero printable characters**
 
-- [ ] **5. `PdfNormalizer` — keep, narrow, retitle.**
-  - `--object-streams=disable` stops being necessary the moment the renderer can read
-    object streams; `--decrypt` becomes the *whole* reason the class exists
-  - Invoking it on only on the encryption exception (`ImportUnsupportedFeatureException`,
-    which tc-lib-pdf raises distinctly and FPDI did not). The retry-on-failure shape in
-    `PdfWatermarker::openSource()` already works
-  - the fallback contract does not change: no binary, no rewrite, original error rethrown,
-    trigger policy takes over
+- [x] **5. `PdfNormalizer` narrowed to decryption — done**, alongside step 4, which had left
+  its documentation actively wrong: it still described FPDI and compressed cross-references
+  as the reason it existed
+  - `--decrypt` is now the whole point. The renderer refuses every encrypted document, and
+    files locked with an *empty* user password purely to set permission flags are common and
+    otherwise perfectly readable
+  - **the rescue is aimed at the encryption exception specifically**, not tried against every
+    parse failure: `openSource()` reaches for the normalizer only on
+    `ImportUnsupportedFeatureException`, which tc-lib-pdf raises distinctly and FPDI never
+    did. A corrupt or truncated file now fails immediately instead of paying for a rewrite
+    that could not have helped it
+  - pinned by `testEmptyPasswordEncryptionIsRescuedByTheNormalizer`, and mutation-tested:
+    aiming the guard at the wrong exception makes it fail while every other test stays green
+  - `--object-streams=disable` is **kept** even though the narrowed trigger means it rarely
+    does anything. It is harmless on a file that was going to be rejected outright; drop it
+    at step 7 if it still looks like noise
+  - the class name stays. "Normalizer" still describes it, and renaming would churn DI,
+    tests and docs for no reader benefit
+  - the fallback contract is unchanged: no binary, no rewrite, original error rethrown,
+    trigger policy takes over. The missing-binary log line now names encryption instead of
+    compressed cross-references, which is the only advice still true
 
 - [ ] **6. Tests.** The suite is the acceptance criterion for the whole migration
   - `PdfWatermarkerTest`, `PdfFlattenerTest`, `PdfNormalizerTest` and the `Fpdi`-based

@@ -4,11 +4,8 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Service;
 
+use Com\Tecnick\Pdf\Tcpdf;
 use Psr\Log\LoggerInterface;
-// The TCPDF-backed variant: plain setasign\Fpdi\Fpdi extends FPDF, which this
-// project does not depend on.
-use setasign\Fpdi\Tcpdf\Fpdi;
-use TCPDF;
 
 /**
  * Rebuilds a watermarked PDF as a sequence of page images, so the watermark is
@@ -21,7 +18,7 @@ use TCPDF;
  * not impossible: cropping, inpainting or OCR-and-retypeset all still work. It
  * raises cost; it is not a cryptographic guarantee.
  *
- * The rebuild leg is TCPDF, already a dependency. Only page→bitmap needs an
+ * The rebuild leg is tc-lib-pdf, already a dependency. Only page→bitmap needs an
  * external renderer, and that is `pdftoppm` from poppler-utils — in RHEL 9's
  * AppStream, so no EPEL and no Ghostscript. Imagick is deliberately not a
  * fallback: it is EPEL-only on RHEL 9 and its PDF delegate *is* Ghostscript,
@@ -97,11 +94,18 @@ class PdfFlattener {
 
 		// Page geometry comes from the source so the rebuild is not assumed to be
 		// A4 — mixed-size and landscape documents have to survive the round-trip.
-		// The reader must use the same unit as the output document below, or every
-		// page is rebuilt at 1/2.835 of its size (points read as millimetres).
-		$reader = new Fpdi('P', 'pt');
+		// Points, so the geometry read here needs no conversion before it is used as
+		// the output page size; mixing units rebuilds every page at 1/2.835 of its
+		// size (points read as millimetres).
+		//
+		// A *separate* document from the output one on purpose: importPage registers
+		// the source page as a Form XObject, and reusing this instance would carry
+		// every one of them into the rebuilt file — the original content the rebuild
+		// exists to destroy.
+		$reader = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath)]);
 		try {
-			$pageCount = $reader->setSourceFile($sourcePath);
+			$sourceId = $reader->setImportSourceFile($sourcePath);
+			$pageCount = $reader->getSourcePageCount($sourceId);
 		} catch (\Exception $e) {
 			throw new \RuntimeException('Cannot flatten PDF: ' . $e->getMessage(), 0, $e);
 		}
@@ -114,48 +118,48 @@ class PdfFlattener {
 
 		$sizes = [];
 		for ($page = 1; $page <= $pageCount; $page++) {
-			$sizes[$page] = $reader->getTemplateSize($reader->importPage($page));
+			$template = $reader->importPage($sourceId, $page);
+			$sizes[$page] = [
+				'width' => $reader->toUnit($template->getWidth()),
+				'height' => $reader->toUnit($template->getHeight()),
+			];
 		}
+		unset($reader);
 
-		$out = new TCPDF('P', 'pt');
-		$out->SetPrintHeader(false);
-		$out->SetPrintFooter(false);
-		// Without all three the page image is inset by the margins and spills onto
-		// a second page, turning every source page into two.
-		$out->SetMargins(0, 0, 0);
-		$out->SetAutoPageBreak(false);
+		$out = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath)]);
 
 		$rendered = null;
 		try {
-			for ($page = 1; $page <= $pageCount; $page++) {
-				$size = $sizes[$page];
+			foreach ($sizes as $page => $size) {
 				$rendered = $this->renderPage($binary, $sourcePath, $page, $dpi);
 
-				$out->AddPage($size['orientation'], [$size['width'], $size['height']]);
-				$out->Image(
-					$rendered,
+				$out->addPage([
+					'format' => '',
+					'width' => $size['width'],
+					'height' => $size['height'],
+					'orientation' => $size['width'] > $size['height'] ? 'L' : 'P',
+				]);
+
+				// Explicit width and height rather than derived ones: the bitmap is a
+				// render of this very page, so it fills it exactly, and there is no
+				// margin or auto page break to inset it the way TCPDF needed guarding
+				// against.
+				$imageId = $out->image->add($rendered);
+				$out->page->addContent($out->image->getSetImage(
+					$imageId,
 					0,
 					0,
 					$size['width'],
 					$size['height'],
-					'PNG',
-					'',
-					'',
-					false,
-					$dpi,
-					'',
-					false,
-					false,
-					0,
-				);
+					$size['height'],
+				));
 
-				// One page bitmap in memory and on disk at a time, whatever the
-				// document's length.
+				// One page bitmap on disk at a time, whatever the document's length.
 				unlink($rendered);
 				$rendered = null;
 			}
 
-			$out->Output($destPath, 'F');
+			$this->write($out, $destPath);
 		} catch (\Throwable $e) {
 			if ($rendered !== null && file_exists($rendered)) {
 				unlink($rendered);
@@ -165,9 +169,46 @@ class PdfFlattener {
 	}
 
 	/**
-	 * Rasterise one page to PNG and return its path. PNG keeps glyph edges exact;
-	 * it is also, with JPEG, one of the only two formats TCPDF's `Image()` handles
-	 * reliably — the same constraint that ruled SVG out of the logo upload.
+	 * Directories the renderer may read from. Everything in play is a temp copy, and
+	 * supplying this replaces the library's defaults rather than adding to them — see
+	 * the same method on {@see PdfWatermarker} for why both path forms are listed.
+	 *
+	 * @return list<string>
+	 */
+	private function allowedPaths(string $sourcePath): array {
+		$paths = [PdfFontPath::directory(), sys_get_temp_dir(), dirname($sourcePath)];
+
+		$resolved = [];
+		foreach ($paths as $path) {
+			$resolved[] = $path;
+			$real = realpath($path);
+			if ($real !== false) {
+				$resolved[] = $real;
+			}
+		}
+
+		return array_values(array_unique(array_filter($resolved)));
+	}
+
+	/**
+	 * tc-lib-pdf hands back a string where TCPDF wrote the file itself. A short write
+	 * has to throw: this method exists to guarantee the caller never receives the
+	 * unflattened file, and a truncated one is no better.
+	 */
+	private function write(Tcpdf $pdf, string $destPath): void {
+		$raw = $pdf->getOutPDFString();
+		if (file_put_contents($destPath, $raw) !== strlen($raw)) {
+			if (is_file($destPath)) {
+				unlink($destPath);
+			}
+			throw new \RuntimeException('Cannot flatten PDF: the rebuilt file could not be written.');
+		}
+	}
+
+	/**
+	 * Rasterise one page to PNG and return its path. PNG keeps glyph edges exact,
+	 * and is a format every renderer handles without argument — the same reasoning
+	 * that ruled SVG out of the logo upload.
 	 */
 	private function renderPage(string $binary, string $sourcePath, int $page, int $dpi): string {
 		$prefix = tempnam(sys_get_temp_dir(), 'wm_flat_');

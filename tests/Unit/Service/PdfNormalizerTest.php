@@ -16,7 +16,7 @@ use setasign\Fpdi\Tcpdf\Fpdi;
  * The rewrite cases drive the real `qpdf` and skip without it, in the same shape
  * as {@see PdfFlattenerTest} — a host with no binary is a supported configuration,
  * and mocking the binary away would assert nothing worth asserting: the claim
- * under test is that qpdf's *actual* output is readable by FPDI.
+ * under test is what qpdf *actually* produces.
  */
 class PdfNormalizerTest extends TestCase {
 	use CompressedXrefFixture;
@@ -40,12 +40,16 @@ class PdfNormalizerTest extends TestCase {
 	}
 
 	/**
-	 * The claim the whole feature rests on: a document FPDI refuses becomes one it
-	 * accepts, with its pages intact. Asserted from both ends — FPDI's own
-	 * COMPRESSED_XREF code before, a successful `setSourceFile` after — so a fixture
-	 * that stopped reproducing the bug could not make this pass for the wrong reason.
+	 * The structural rebuild still works, and its pages survive it.
+	 *
+	 * This was once the claim the whole class rested on — a compressed-xref document
+	 * FPDI refused becoming one it accepted. The renderer reads those natively now, so
+	 * the rebuild is no longer *needed* here; it is kept because it is the other thing
+	 * qpdf repairs for free, and it should not silently rot. The old FPDI-based
+	 * assertion is retained as the check that the rewrite is structurally sane, and
+	 * goes when FPDI leaves the tree.
 	 */
-	public function testCompressedXrefBecomesReadableByFpdi(): void {
+	public function testStructuralRewritePreservesThePages(): void {
 		$this->requireBinary();
 
 		$source = $this->tmpDir . '/compressed-xref.pdf';
@@ -66,9 +70,10 @@ class PdfNormalizerTest extends TestCase {
 	}
 
 	/**
-	 * Permission-only encryption — an empty user password with the flags set — is
-	 * common on documents that circulate freely, and FPDI refuses it just as hard as
-	 * a real password. `--decrypt` gets it back for free.
+	 * **The reason this class still exists.** Permission-only encryption — an empty
+	 * user password with the flags set — is common on documents that circulate freely,
+	 * and the renderer refuses it just as hard as a real password. `--decrypt` gets it
+	 * back, and this is now the only gap the normalizer closes that nothing else does.
 	 */
 	public function testEmptyPasswordEncryptionIsRemoved(): void {
 		$this->requireBinary();

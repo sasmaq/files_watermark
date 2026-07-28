@@ -7,22 +7,25 @@ namespace OCA\FilesWatermark\Service;
 use Psr\Log\LoggerInterface;
 
 /**
- * Rewrites a PDF into the structural subset the free FPDI parser can read.
+ * Rewrites a PDF the renderer has refused into one it will accept.
  *
- * The gap being closed: PDF 1.5 allows the cross-reference table to be stored as
- * a compressed stream and objects to be packed into object streams, and most
- * modern producers do exactly that — including whatever wrote two of the three
- * skeleton PDFs Nextcloud drops into every new account. FPDI's bundled parser
- * refuses those files (`CrossReferenceException::COMPRESSED_XREF`), and the paid
- * add-on that reads them is the only pure-PHP fix. `qpdf` rewrites the same
- * document with a classic xref table and no object streams, losing nothing that
- * matters to the watermark, and the existing FPDI/TCPDF pipeline then reads it.
+ * **Encryption is what this is for now.** tc-lib-pdf refuses every encrypted
+ * document, and a common case is not really protected at all: files "encrypted"
+ * with an *empty* user password purely to set permission flags, which circulate
+ * freely and which a reader opens without ever prompting. `qpdf --decrypt` strips
+ * that, and the watermark then goes on normally.
  *
- * This is a *pre-pass, not a replacement*: {@see PdfWatermarker} only reaches for
- * it after FPDI has actually refused a file, so the common case pays nothing and
+ * It used to exist for a much larger gap. Under FPDI, PDF 1.5+ documents whose
+ * cross-reference table is a compressed stream — most modern files, including two
+ * of the three skeleton PDFs Nextcloud drops into every new account — were
+ * unreadable, and this class was the only thing that made them watermarkable.
+ * tc-lib-pdf reads them natively, so that job is gone and this one remains.
+ *
+ * A *pre-pass, not a replacement*: {@see PdfWatermarker} only reaches for it after
+ * the parser has actually refused a file, so the common case pays nothing and
  * documents that already work are never rewritten. The overlay still goes on as a
  * real content stream, so the text layer survives — unlike {@see PdfFlattener},
- * which is the other way to get an unreadable file processed and costs the text.
+ * which is the other way to get a difficult file processed and costs the text.
  *
  * Degrades rather than breaks. With no `qpdf` on the host every caller behaves
  * exactly as it did before this class existed: the render throws, and the trigger's
@@ -61,10 +64,10 @@ class PdfNormalizer {
 	}
 
 	/**
-	 * Rewrite `$sourcePath` to `$destPath` in a form FPDI's free parser accepts.
+	 * Rewrite `$sourcePath` to `$destPath` in a form the renderer accepts.
 	 *
 	 * `$destPath` is written only on success; every failure path removes a partial
-	 * output, because a truncated PDF handed back to FPDI produces a far more
+	 * output, because a truncated PDF handed back to the renderer produces a far more
 	 * confusing error than the one that got us here.
 	 *
 	 * @throws \RuntimeException if the binary is missing, the file is too large, or
@@ -89,13 +92,15 @@ class PdfNormalizer {
 			);
 		}
 
-		// --object-streams=disable is the whole point: it forces a classic xref table
-		//   and unpacks object streams, which is precisely what the free parser needs.
-		// --decrypt picks up the common case for free — files "encrypted" with an empty
-		//   user password purely to set permission flags, which FPDI also refuses. A
-		//   document with a real password still fails here, and should.
-		// Stream *data* is deliberately left compressed: FPDI handles Flate content
-		//   streams fine, and uncompressing them would multiply the file size for nothing.
+		// --decrypt is the reason this class still exists: it strips the empty-password
+		//   encryption the renderer refuses outright. A document with a real password
+		//   still fails here, and should.
+		// --object-streams=disable is no longer needed for its original purpose — the
+		//   renderer reads compressed cross-references natively — but is kept as a cheap
+		//   structural rebuild, the other thing qpdf repairs for free. It costs a modest
+		//   size increase on a file that was going to be rejected outright anyway.
+		// Stream *data* is deliberately left compressed: Flate content streams are read
+		//   fine, and uncompressing them would multiply the file size for nothing.
 		$command = sprintf(
 			'%s --object-streams=disable --decrypt %s %s 2>&1',
 			escapeshellcmd($binary),
@@ -145,9 +150,9 @@ class PdfNormalizer {
 			// request, and only when a file has actually needed it.
 			$this->loggedUnavailable = true;
 			$this->logger->info(
-				'files_watermark: ' . self::BINARY . ' not found on PATH; PDFs with a compressed '
-				. 'cross-reference table (most PDF 1.5+ files) cannot be watermarked. Install '
-				. self::BINARY . ' to support them.',
+				'files_watermark: ' . self::BINARY . ' not found on PATH; encrypted PDFs — including '
+				. 'files locked only with an empty password to set permission flags — cannot be '
+				. 'watermarked. Install ' . self::BINARY . ' to support them.',
 				['app' => 'files_watermark'],
 			);
 		}

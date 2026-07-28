@@ -32,7 +32,7 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 ### Optional: flattened (rasterised) PDFs
 
 Flattening rebuilds each watermarked page as an image, so the watermark cannot be
-stripped as a separate layer. It needs the `pdftoppm` binary; TCPDF, which does the
+stripped as a separate layer. It needs the `pdftoppm` binary; tc-lib-pdf, which does the
 rebuild, ships via Composer and needs nothing extra.
 
 ```bash

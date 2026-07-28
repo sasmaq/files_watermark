@@ -18,8 +18,9 @@ namespace OCA\FilesWatermark\Service;
  *    the renderer's constructor rather than lazily at draw time.
  * 2. TCPDF reads the same constant, and looks for `helvetica.php` where tc-lib-pdf looks
  *    for `helvetica.json`. Defining it therefore *breaks* TCPDF unless both formats live
- *    in the one directory — see `resources/fonts/README.md`. That matters while
- *    `PdfFlattener` is still on TCPDF.
+ *    in the one directory — see `resources/fonts/README.md`. No production code is on
+ *    TCPDF any more, but the test fixtures still build their source PDFs with it, so the
+ *    second set stays until FPDI and TCPDF leave the tree entirely.
  * 3. TCPDF concatenates the constant with the filename and does not insert a separator,
  *    so the trailing one here is not cosmetic.
  *

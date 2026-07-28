@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Service;
 
+use Com\Tecnick\Pdf\Import\ImportUnsupportedFeatureException;
 use Com\Tecnick\Pdf\Tcpdf;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 
@@ -119,11 +120,11 @@ class PdfWatermarker {
 	/**
 	 * Register `$sourcePath` for import, falling back to a normalized rewrite of it.
 	 *
-	 * The direct read is tried first and the rewrite only happens after the parser has
-	 * genuinely refused the file, so documents that already work are never rewritten
-	 * and cost nothing. What the fallback still buys, now that compressed
-	 * cross-references are read natively, is encryption — tc-lib-pdf refuses every
-	 * encrypted document, `qpdf --decrypt` recovers the empty-password ones.
+	 * The direct read is tried first, so documents that already work are never rewritten
+	 * and cost nothing. The rewrite is then aimed at exactly one failure: encryption.
+	 * tc-lib-pdf refuses every encrypted document and says so with its own exception
+	 * type, and `qpdf --decrypt` recovers the empty-password ones — files locked purely
+	 * to set permission flags, which a reader opens without ever prompting.
 	 *
 	 * @return array{0: string, 1: int, 2: string|null} source id, page count, and the
 	 *                                                  temp rewrite to delete, if one was made
@@ -133,6 +134,14 @@ class PdfWatermarker {
 			$sourceId = $pdf->setImportSourceFile($sourcePath);
 			return [$sourceId, $pdf->getSourcePageCount($sourceId), null];
 		} catch (\Exception $cause) {
+			// Encryption only. tc-lib-pdf raises this distinctly, which FPDI never did,
+			// so the rescue can be aimed at the one case qpdf actually fixes instead of
+			// being tried against every parse failure. A corrupt or truncated file now
+			// fails immediately rather than paying for a rewrite that cannot help it.
+			if (!$cause instanceof ImportUnsupportedFeatureException) {
+				throw $this->unreadable($cause);
+			}
+
 			// No rewriter on this host: behave exactly as if it did not exist, keeping
 			// the parser's own exception as the cause so callers see why the file was
 			// refused rather than a complaint about a missing binary.
