@@ -40,12 +40,19 @@ services:
     # (`dnf install poppler-utils qpdf`) — same binaries, different package
     # manager, which is exactly why the app probes for them at runtime instead of
     # assuming a distro. Guarded so a restart is not a re-download.
+    #
+    # bcmath is a PHP extension rather than a binary, and unlike the two above it is
+    # not optional: tc-lib-pdf does not load without it, and `appinfo/info.xml`
+    # declares it, so Nextcloud refuses to enable the app at all. `php-bcmath` on
+    # RHEL 9; here it is compiled in, which is why this guard tests the module list
+    # and not a PATH lookup.
     entrypoint:
       - /bin/sh
       - -c
       - >
         chown www-data:www-data /var/www/html/custom_apps;
         command -v pdftoppm >/dev/null 2>&1 && command -v qpdf >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils qpdf; };
+        php -m | grep -qx bcmath || docker-php-ext-install bcmath;
         exec /entrypoint.sh apache2-foreground
     environment:
       # Auto-provision on first run so no web installer step is needed.

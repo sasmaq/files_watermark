@@ -25,6 +25,10 @@ Features:
     <bugs>https://github.com/example/files_watermark/issues</bugs>
     <dependencies>
         <php min-version="8.2"/>
+        <!-- tc-lib-pdf, the incoming PDF renderer, requires bcmath; Composer will not
+             even resolve without it. Declared here so Nextcloud refuses to enable the
+             app on a host that lacks it, rather than fatalling on the first PDF. -->
+        <lib>bcmath</lib>
         <nextcloud min-version="31" max-version="31"/>
     </dependencies>
     <settings>

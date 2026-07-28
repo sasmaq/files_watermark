@@ -28,10 +28,32 @@ class Application extends App implements IBootstrap {
 	 * The only vendor/ packages the app needs while running inside Nextcloud.
 	 * Everything else there is dev-only (phpunit, php-cs-fixer, sabre/dav, ...)
 	 * and must stay invisible to the runtime — see registerVendorAutoloader().
+	 *
+	 * The `tc-lib-*` block is the incoming PDF stack (see the migration plan in
+	 * `doc/tasks.md`); FPDI and TCPDF stay until it has fully replaced them. Every
+	 * transitive dependency has to be listed, not just the two packages named in
+	 * `composer.json`, because this allowlist is what the runtime loader is built
+	 * from — a missing entry is a "Class not found" fatal that only appears inside
+	 * Nextcloud, never in the test suite, which uses Composer's own autoloader.
+	 * `RuntimeVendorPackagesTest` guards exactly that drift.
 	 */
 	private const RUNTIME_VENDOR_PACKAGES = [
 		'setasign/fpdi',
 		'tecnickcom/tcpdf',
+		'tecnickcom/tc-lib-barcode',
+		'tecnickcom/tc-lib-color',
+		'tecnickcom/tc-lib-file',
+		'tecnickcom/tc-lib-pdf',
+		'tecnickcom/tc-lib-pdf-encrypt',
+		'tecnickcom/tc-lib-pdf-filter',
+		'tecnickcom/tc-lib-pdf-font',
+		'tecnickcom/tc-lib-pdf-graph',
+		'tecnickcom/tc-lib-pdf-image',
+		'tecnickcom/tc-lib-pdf-page',
+		'tecnickcom/tc-lib-pdf-parser',
+		'tecnickcom/tc-lib-pdf-sign',
+		'tecnickcom/tc-lib-unicode',
+		'tecnickcom/tc-lib-unicode-data',
 	];
 
 	private static bool $vendorAutoloaderRegistered = false;
