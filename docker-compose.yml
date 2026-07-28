@@ -33,18 +33,19 @@ services:
     # off to the stock entrypoint.
     #
     # poppler-utils supplies `pdftoppm`, which PdfFlattener needs to rasterise a
-    # page. Installed here rather than baked into an image so the compose file
-    # stays on the stock `nextcloud:31-apache`. This image is Debian while
-    # production is RHEL 9 (`dnf install poppler-utils`) — same binary, different
-    # package manager, which is exactly why the app probes for the binary at
-    # runtime instead of assuming a distro. Guarded so a restart is not a
-    # re-download.
+    # page; qpdf is what PdfNormalizer rewrites PDF 1.5+ documents with, without
+    # which most real-world PDFs are skipped rather than watermarked. Installed
+    # here rather than baked into an image so the compose file stays on the stock
+    # `nextcloud:31-apache`. This image is Debian while production is RHEL 9
+    # (`dnf install poppler-utils qpdf`) — same binaries, different package
+    # manager, which is exactly why the app probes for them at runtime instead of
+    # assuming a distro. Guarded so a restart is not a re-download.
     entrypoint:
       - /bin/sh
       - -c
       - >
         chown www-data:www-data /var/www/html/custom_apps;
-        command -v pdftoppm >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils; };
+        command -v pdftoppm >/dev/null 2>&1 && command -v qpdf >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils qpdf; };
         exec /entrypoint.sh apache2-foreground
     environment:
       # Auto-provision on first run so no web installer step is needed.

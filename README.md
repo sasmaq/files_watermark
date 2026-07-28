@@ -12,7 +12,8 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 - Global policy configurable by admins under **Settings → Additional → Watermark Settings**
 - Full audit log of every watermark event
 - Supports PDF, JPEG, PNG, and WEBP files
-- PDF rendering via FPDI + TCPDF; image rendering via Imagick (preferred) or GD fallback
+- PDF rendering via FPDI + TCPDF, with a `qpdf` pre-pass for PDF 1.5+ documents; image
+  rendering via Imagick (preferred) or GD fallback
 
 ## Requirements
 
@@ -21,6 +22,7 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 | Nextcloud | 31.x |
 | PHP | 8.2 or 8.3 |
 | PHP extension | `imagick` (preferred) or `gd` |
+| `qpdf` | strongly recommended — without it most PDF 1.5+ files are skipped |
 | `pdftoppm` (poppler-utils) | optional — only for flattened PDFs |
 | Composer | 2.x |
 | Node.js | >= 20 |
@@ -42,38 +44,51 @@ so the feature is simply absent rather than half-working. Note that flattening r
 the text layer — no selection, copy, search or screen-reader access — so weigh it
 against your accessibility obligations before switching it on.
 
-### Known limitation: PDFs with a compressed cross-reference table
+### Recommended: `qpdf`, for PDF 1.5 and later
 
 PDF 1.5 introduced the option of storing a document's cross-reference table as a
 compressed stream, and most modern producers now do. The free PDF parser bundled with
-FPDI cannot read those files, so the app **skips them**: the file is left exactly as it
-was, an entry is written to the audit log, and an on-demand apply returns an error
-naming the file. Nothing is corrupted and no unwatermarked copy is served in place of a
-watermarked one — the watermark simply does not get applied.
+FPDI cannot read those files. Neither can it read documents "encrypted" with an empty
+password purely to set permission flags, which is common on documents that otherwise
+circulate freely.
 
-This is not a rare edge case. Two of the three sample PDFs Nextcloud places in every new
-account are affected:
+`qpdf` closes both gaps. When FPDI refuses a file, the app rewrites it — classic
+cross-reference table, no object streams, no empty-password encryption — and watermarks
+the rewrite. The watermark is still a real content stream, so **the text layer
+survives**: this is not flattening, and costs none of the accessibility that flattening
+does. The user's file is never modified; the rewrite is a temp copy, deleted before the
+request ends.
 
-| Skeleton file | Version | Watermarkable |
+```bash
+dnf install qpdf      # RHEL 9
+apt-get install qpdf  # Debian / Ubuntu, including the dev containers
+```
+
+The rewrite only happens after FPDI has actually refused a file, so documents that
+already work are never touched and pay nothing for it.
+
+**Without `qpdf`** the app falls back to the old behaviour and **skips** those files: the
+file is left exactly as it was, an entry is written to the audit log, and an on-demand
+apply returns an error naming the file. Nothing is corrupted and no unwatermarked copy is
+served in place of a watermarked one — the watermark simply does not get applied. A line
+is written to `nextcloud.log` the first time a file needs the binary and cannot find it.
+
+This is not a rare edge case, which is why the package is worth installing. Two of the
+three sample PDFs Nextcloud places in every new account need it:
+
+| Skeleton file | Version | Watermarkable without `qpdf` |
 | --- | --- | --- |
 | `Nextcloud Manual.pdf` | 1.5 | no |
 | `Reasons to use Nextcloud.pdf` | 1.6 | no |
 | `Documents/Nextcloud flyer.pdf` | 1.4 | yes |
 
-So the first file an admin tries after enabling the app may well be one that cannot be
-watermarked. If watermarking appears to do nothing, check the audit log before assuming
-the configuration is wrong.
+So on a host without the binary, the first file an admin tries after enabling the app may
+well be one that gets skipped. If watermarking appears to do nothing, check the audit log
+before assuming the configuration is wrong.
 
-To confirm whether a specific file is affected:
-
-```bash
-head -c 8 "somefile.pdf"   # %PDF-1.4 and earlier are always fine
-```
-
-A 1.5-or-later header does not by itself mean the file is unreadable — only those that
-actually use a compressed xref are. Re-saving the document as PDF 1.4, or running it
-through `qpdf --object-streams=disable in.pdf out.pdf`, produces a watermarkable file.
-Lifting the limitation outright needs setasign's commercial
+What is still refused, with or without `qpdf`: documents that need a **real password** to
+open, and files damaged beyond qpdf's repair. Those are outside what any free PHP parser
+can reach; handling them needs setasign's commercial
 [FPDI PDF-Parser](https://www.setasign.com/fpdi-pdf-parser) add-on, which is not bundled.
 
 ## Project Structure
@@ -86,7 +101,7 @@ files_watermark/
 │   ├── Controller/   # REST API controller
 │   ├── Db/           # Entities and QBMapper classes
 │   ├── Listener/     # ShareCreatedEvent listener
-│   ├── Service/      # WatermarkService, PdfWatermarker, ImageWatermarker
+│   ├── Service/      # WatermarkService, PdfWatermarker, PdfNormalizer, ImageWatermarker
 │   └── Settings/     # Admin settings panel registration
 ├── migration/        # Database schema migration
 ├── src/              # Vue 3 frontend source

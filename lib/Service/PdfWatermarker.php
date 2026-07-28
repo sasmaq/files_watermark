@@ -10,40 +10,121 @@ use TCPDF;
 
 class PdfWatermarker {
 
+	public function __construct(
+		private PdfNormalizer $normalizer,
+	) {
+	}
+
 	public function apply(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
+		$normalized = null;
+		try {
+			[$pdf, $pageCount, $normalized] = $this->openSource($sourcePath);
+
+			for ($page = 1; $page <= $pageCount; $page++) {
+				$tplIdx = $pdf->importPage($page);
+				$size = $pdf->getTemplateSize($tplIdx);
+				$pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+				$pdf->useTemplate($tplIdx);
+
+				if (in_array($config->getType(), ['text', 'combined'], true)) {
+					$this->applyTextOverlay($pdf, $config, $placeholders, $size['width'], $size['height']);
+				}
+
+				if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath()) {
+					$this->applyImageOverlay($pdf, $config, $size['width'], $size['height']);
+				}
+			}
+
+			$pdf->Output($destPath, 'F');
+		} finally {
+			// The rewritten copy is scratch: FPDI has read everything it needs by the
+			// time Output() returns, and on the failure paths it is worthless. Either
+			// way it is a plaintext copy of user content and must not outlive the call.
+			if ($normalized !== null && is_file($normalized)) {
+				unlink($normalized);
+			}
+		}
+	}
+
+	/**
+	 * Open `$sourcePath` for import, falling back to a normalized rewrite of it.
+	 *
+	 * The direct read is tried first and the rewrite only happens after FPDI has
+	 * genuinely refused the file, so documents that already work are never touched
+	 * and cost nothing. What the fallback buys is the compressed-cross-reference
+	 * case (most PDF 1.5+ files) and empty-password encryption — see
+	 * {@see PdfNormalizer}.
+	 *
+	 * @return array{0: Fpdi, 1: int, 2: string|null} the reader, its page count, and
+	 *                                                the temp rewrite to delete, if one was made
+	 */
+	private function openSource(string $sourcePath): array {
+		$pdf = $this->newDocument();
+		try {
+			return [$pdf, $pdf->setSourceFile($sourcePath), null];
+		} catch (\Exception $cause) {
+			// No rewriter on this host: behave exactly as before it existed, keeping
+			// the parser's own exception as the cause so callers (and the tests that
+			// assert on COMPRESSED_XREF) still see why the file was refused.
+			if (!$this->normalizer->isAvailable()) {
+				throw $this->unreadable($cause);
+			}
+
+			$normalized = $this->normalizeSource($sourcePath, $cause);
+
+			// A fresh document, not the one that just threw: a failed setSourceFile
+			// leaves the reader holding a half-parsed source.
+			$pdf = $this->newDocument();
+			try {
+				return [$pdf, $pdf->setSourceFile($normalized), $normalized];
+			} catch (\Exception $retry) {
+				unlink($normalized);
+				// The rewrite parsed as a PDF for qpdf but still not for FPDI, so the
+				// second failure is the informative one.
+				throw $this->unreadable($retry);
+			}
+		}
+	}
+
+	/** @throws \RuntimeException if the rewrite fails, chaining the original parse error */
+	private function normalizeSource(string $sourcePath, \Exception $cause): string {
+		$normalized = tempnam(sys_get_temp_dir(), 'wm_norm_');
+		if ($normalized === false) {
+			throw $this->unreadable($cause);
+		}
+
+		try {
+			$this->normalizer->normalize($sourcePath, $normalized);
+		} catch (\RuntimeException $e) {
+			// qpdf could not read it either — a real password, or damage past repair.
+			// The original parse error stays the cause: it is the one that describes
+			// the document, while this one only says the rescue attempt failed.
+			if (is_file($normalized)) {
+				unlink($normalized);
+			}
+			throw $this->unreadable($cause);
+		}
+
+		return $normalized;
+	}
+
+	private function newDocument(): Fpdi {
 		$pdf = new Fpdi('P', 'pt');
 		$pdf->SetPrintHeader(false);
 		$pdf->SetPrintFooter(false);
 		// Watermark cells are positioned manually (including beyond the page edge
 		// for the tiled overlay); without this TCPDF would insert spurious pages.
 		$pdf->SetAutoPageBreak(false);
+		return $pdf;
+	}
 
-		try {
-			$pageCount = $pdf->setSourceFile($sourcePath);
-		} catch (\Exception $e) {
-			throw new \RuntimeException(
-				'Cannot process PDF: the file may be encrypted, password-protected, or use unsupported compression. ' . $e->getMessage(),
-				0,
-				$e,
-			);
-		}
-
-		for ($page = 1; $page <= $pageCount; $page++) {
-			$tplIdx = $pdf->importPage($page);
-			$size = $pdf->getTemplateSize($tplIdx);
-			$pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
-			$pdf->useTemplate($tplIdx);
-
-			if (in_array($config->getType(), ['text', 'combined'], true)) {
-				$this->applyTextOverlay($pdf, $config, $placeholders, $size['width'], $size['height']);
-			}
-
-			if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath()) {
-				$this->applyImageOverlay($pdf, $config, $size['width'], $size['height']);
-			}
-		}
-
-		$pdf->Output($destPath, 'F');
+	private function unreadable(\Exception $cause): \RuntimeException {
+		return new \RuntimeException(
+			'Cannot process PDF: the file may be encrypted, password-protected, or use unsupported compression. '
+			. $cause->getMessage(),
+			0,
+			$cause,
+		);
 	}
 
 	private function applyTextOverlay(Fpdi $pdf, WatermarkConfig $config, array $placeholders, float $width, float $height): void {

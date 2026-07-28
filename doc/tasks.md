@@ -13,9 +13,13 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-28, both green: **217 PHPUnit** tests (537 assertions; the 9 skips are
-all `PdfFlattenerTest` rasterise cases on a host without `pdftoppm`) and **77 Jest** tests.
-Local run was PHP 8.2; 8.3 is covered by CI only.
+Suites re-run 2026-07-28, both green: **226 PHPUnit** tests (562 assertions) and **77 Jest**
+tests. Local run was PHP 8.2; 8.3 is covered by CI only.
+
+The PHPUnit skips are all binary-dependent and depend on the host: 15 on a bare macOS box
+(9 `PdfFlattenerTest` rasterise cases with no `pdftoppm`, 6 `qpdf` cases), 10 in the CI image
+(which has `qpdf` but no `pdftoppm`). Every one of them runs somewhere — the `qpdf` cases were
+driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 
 ---
 
@@ -23,15 +27,15 @@ Local run was PHP 8.2; 8.3 is covered by CI only.
 
 | Area | Position | Open |
 | --- | --- | --- |
-| [1. Renderers](#1-renderers-goal-1) | PDF and images complete, including tamper-resistant flattening. Office not started | Office pipeline, one FPDI gap |
+| [1. Renderers](#1-renderers-goal-1) | PDF and images complete, including tamper-resistant flattening and PDF 1.5+ via a `qpdf` pre-pass. Office not started | Office pipeline, password-protected PDFs |
 | [2. Watermark content](#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
-| [Environment](#environment-and-dependencies) | PHP, Imagick/GD and poppler all wired | LibreOffice, `exif` |
+| [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
-| [Testing](#testing) | 217 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 226 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker, S3 and flattening | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -54,8 +58,8 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ### Correctness and robustness
 
-- [x] [PDF 1.5+ with compressed xref](#open-1) — now pinned by a test and documented for
-  admins. Affects **two of the three** Nextcloud skeleton PDFs, not all of them
+- [x] [PDF 1.5+ with compressed xref](#open-1) — **fixed** by the `qpdf` normalizer pre-pass,
+  not just documented. Skipped only on hosts without the binary
 - [ ] [Flattening memory ceiling](#open-1) is unmeasured — the streaming claim rests on reading
   the code
 - [ ] [Archive caps](#open-3) are class constants, not configuration
@@ -85,33 +89,57 @@ tamper resistance. Office formats are not started.
 
 ### Open {#open-1}
 
-- [x] **PDF 1.5+ with compressed xref** — pinned by
-  `testCompressedXrefPdfFailsCleanlyAndLeavesTheOriginalIntact` and documented in the README
+- [x] **PDF 1.5+ with compressed xref — fixed, not merely documented.** `PdfNormalizer`
+  rewrites the refused document with `qpdf --object-streams=disable --decrypt` and the existing
+  FPDI/TCPDF pipeline watermarks the rewrite. Two of the three Nextcloud skeleton PDFs needed
+  this; on a host with `qpdf` they now work
+  - **a pre-pass, not a replacement.** The direct FPDI read is tried first and the rewrite only
+    happens once FPDI has actually thrown, so files that already worked are never rewritten and
+    pay nothing. Replacing the renderer with `qpdf --overlay` was the alternative and was not
+    taken: it would have discarded the tile-geometry work below for a gain only unreadable
+    files see
+  - **the text layer survives**, which is the whole reason this beats routing these files
+    through the flattener. The overlay is still a real content stream
+  - **degrades rather than breaks.** No binary means `isAvailable()` is false, the original
+    parse error is rethrown untouched, and the trigger's own skip-plus-audit policy takes over
+    exactly as before — the behaviour the README documented, now the fallback rather than the
+    rule
   - the fixture is **hand-built byte by byte**, because TCPDF cannot produce one: it writes a
     classic xref table whatever `setPDFVersion('1.5')` and `SetCompression(true)` are set to,
     and FPDI reads its output happily. Simplifying the helper into `createSourcePdf()` gives a
-    fixture that no longer reproduces the bug and a test that passes for the wrong reason
-  - it asserts FPDI's own `CrossReferenceException::COMPRESSED_XREF` code, not just the
-    `RuntimeException`. That is what separates this from the corrupt-PDF test: FPDI can only
-    reach that code after parsing the trailer and finding a valid `/Type /XRef` stream, so it
-    proves the fixture is a well-formed PDF 1.5 whose *compression* is unsupported, rather
-    than bytes that fail to parse at all
+    fixture that no longer reproduces the bug and a test that passes for the wrong reason. It
+    now lives in the `CompressedXrefFixture` trait, shared by both suites that assert on it —
+    they pin opposite halves of one story, and a fixture that drifted between them would let
+    both pass while the feature was broken
+  - `testCompressedXrefPdfFailsCleanlyWithoutQpdf` asserts FPDI's own
+    `CrossReferenceException::COMPRESSED_XREF` code, not just the `RuntimeException`. That is
+    what separates it from the corrupt-PDF test: FPDI can only reach that code after parsing
+    the trailer and finding a valid `/Type /XRef` stream, so it proves the fixture is a
+    well-formed PDF 1.5 whose *compression* is unsupported, rather than bytes that fail to
+    parse at all. It also proves the original cause survives the pre-pass rather than being
+    replaced by a complaint about the missing binary
+  - it **mocks the normalizer unavailable** rather than trusting the host, or the assertion
+    would invert on a machine that has `qpdf` installed
   - mutation-tested: removing the try/catch in `PdfWatermarker::apply()` makes it fail.
     `CrossReferenceException` is **not** a `RuntimeException` subclass, so the wrapping is
     load-bearing rather than cosmetic
   - measured against the real skeleton files in `nextcloud:31.0.14-apache`: `Nextcloud
-    Manual.pdf` (1.5) and `Reasons to use Nextcloud.pdf` (1.6) both fail, `Documents/Nextcloud
-    flyer.pdf` (1.4) works. The earlier note here said *every* skeleton PDF was affected,
+    Manual.pdf` (1.5) and `Reasons to use Nextcloud.pdf` (1.6) both failed, `Documents/Nextcloud
+    flyer.pdf` (1.4) worked. The earlier note here said *every* skeleton PDF was affected,
     which was wrong — two of three
+- [ ] **Password-protected PDFs are still refused**, and that is now the whole of the gap.
+  `--decrypt` picks up empty-password permission flags for free, but a real user password is
+  outside what any free parser reaches — see the licence item under [Security](#open-security)
 - [ ] The skip is honest but **silent to the end user**: an on-demand apply reports the error,
   yet an `on_upload` or `on_share` file that cannot be watermarked is only visible in the audit
-  log. Consider surfacing it in the UI, since the affected files are exactly the ones an admin
-  is most likely to test with first
+  log. Narrower now that `qpdf` handles the common case, but still worth surfacing in the UI
 - [ ] Flattening's **memory ceiling is unmeasured**. The page-at-a-time loop and the 200-page /
   256 MiB caps exist and the caps are tested, but nothing asserts peak memory, so "streams
   page by page" is a claim about the code rather than an observation
-- [ ] Confirm the RHEL 9 `poppler-utils` package name and `/usr/bin/pdftoppm` path on the real
-  target build, and pin a minimum version if the DPI / page-range flags differ
+- [ ] Confirm the RHEL 9 `poppler-utils` and `qpdf` package names and their `/usr/bin` paths on
+  the real target build, and pin minimum versions if the DPI / page-range flags differ. `qpdf`
+  was driven against **12.2.0** (Debian); the flags used are old enough to predate RHEL 9's
+  version, but that is reasoning rather than an observation until someone checks
 - [ ] If a second rasteriser is ever wanted, `pdftocairo` (same package) is the cheap one — not
   Imagick, for the reasons under [Environment](#environment-and-dependencies)
 
@@ -578,6 +606,18 @@ read, and one SDD type is still missing.
 
 - [x] PHP: `setasign/fpdi` `^2.6`, `tecnickcom/tcpdf` `^6.7`
 - [x] `Imagick` preferred with a `GD` fallback; both paths covered by `ImageWatermarkerTest`
+- [x] **`qpdf` for `PdfNormalizer`** — not optional in practice: without it most real-world
+  PDFs are skipped rather than watermarked. `dnf install qpdf` on RHEL 9; `apt-get install
+  qpdf` on the Debian dev images, where the compose entrypoint and `ci/php.Dockerfile` both
+  install it so the compressed-xref cases actually run instead of skipping
+  - chosen over the alternatives on the grounds that the app **already shells out** to a
+    poppler binary, so this adds a package rather than an architecture. `pdftk` would have
+    dragged in a JRE for the same job; Ghostscript re-distills the whole document and can shift
+    fonts and colour; the pure-PHP options are either commercial (setasign's FPDI PDF-Parser,
+    SetaPDF-Core) or unmaintained (`pauln/tcpdi`), and an unmaintained PDF *parser* is a
+    security surface this app would then own
+  - probed on PATH via `BinaryLocator`, shared with `PdfFlattener`, for the same
+    RHEL-vs-Debian reason
 - [x] **`poppler-utils` for `pdftoppm`** — optional, and only for flattening. `dnf install
   poppler-utils` on RHEL 9 (AppStream, no EPEL); `apt-get install poppler-utils` on the Debian
   dev images. Installed by both compose files' entrypoints, guarded so a restart is not a
@@ -618,7 +658,9 @@ read, and one SDD type is still missing.
   database and still look valid, even though they now resolve to no image. A migration should
   clear them; admins must re-upload either way
 - [ ] Rate-limit or queue on-demand applies for large files — nothing throttles them today
-- [ ] Review FPDI licence compatibility for PDF 1.5+ and encrypted PDFs
+- [ ] Review FPDI licence compatibility for **password-protected** PDFs. The 1.5+ half of this
+  is closed — `qpdf` (Apache-2.0) does it without the commercial add-on — but documents with a
+  real user password would still need setasign's FPDI PDF-Parser
 
 ### Delivered
 
@@ -654,8 +696,9 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 217 PHPUnit tests (9 skip on a host without `pdftoppm`) and 77 Jest tests. The
-DAV layer, which used to be the blind spot every delivery bug hid in, now has 48 of them.
+**Position:** 226 PHPUnit tests (10–15 skip depending on which of `pdftoppm` and `qpdf` the
+host has) and 77 Jest tests. The DAV layer, which used to be the blind spot every delivery bug
+hid in, now has 48 of them.
 
 ### Open {#open-testing}
 
@@ -747,8 +790,17 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   node, flattening order and fail-closed behaviour, and an unusable stored folder tag degrading
   instead of crashing
   - the **group** resolution case is absent because group resolution does not exist
-- [x] `PdfWatermarkerTest` (21) — text / image / combined overlays, multi-page, corrupt PDF, a
-  compressed-xref PDF 1.5 refused cleanly with the original left byte-identical, and
+- [x] `PdfNormalizerTest` (7) — a compressed-xref PDF 1.5 asserted unreadable by FPDI *before*
+  and readable *after*, empty-password encryption removed, a real password and garbage bytes
+  both refused with no partial file left behind, `isAvailable()` agreeing with PATH in both
+  directions, and the missing-binary path throwing rather than silently writing nothing
+  - the rewrite cases skip without `qpdf`, in the same shape as `PdfFlattenerTest`. Mocking the
+    binary away would assert nothing worth asserting: the claim under test is that qpdf's
+    *actual* output parses in FPDI, which no mock can make
+- [x] `PdfWatermarkerTest` (23) — text / image / combined overlays, multi-page, corrupt PDF, a
+  compressed-xref PDF 1.5 both ways (watermarked with `qpdf`, refused cleanly without it, the
+  original left byte-identical either way), a password-protected file still refused with the
+  binary present, no scratch rewrite left in the temp dir, and
   the tile geometry: no overlap at any rotation, a lattice spanning the whole page, and
   off-page tiles keeping their negative offsets (the regression test for the smear, verified to
   fail against the old placement code)
