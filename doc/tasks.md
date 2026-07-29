@@ -13,13 +13,15 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-28, both green: **226 PHPUnit** tests (562 assertions) and **77 Jest**
-tests. Local run was PHP 8.2; 8.3 is covered by CI only.
+Suites re-run 2026-07-30, both green: **229 PHPUnit** tests and **77 Jest** tests. Local run
+was PHP 8.2; 8.3 is covered by CI only.
 
-The PHPUnit skips are all binary-dependent and depend on the host: 15 on a bare macOS box
-(9 `PdfFlattenerTest` rasterise cases with no `pdftoppm`, 6 `qpdf` cases), 10 in the CI image
-(which has `qpdf` but no `pdftoppm`). Every one of them runs somewhere — the `qpdf` cases were
-driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
+The PHPUnit skips are all binary-dependent, so the count varies by host: **14** on a bare
+macOS box (9 `PdfFlattenerTest` rasterise cases with no `pdftoppm`, 5 `qpdf` cases) and **1**
+in a container with both binaries — that last one being the deliberate "binary absent" case,
+which can only run where the binary really is absent. Every skip runs somewhere; the
+binary-dependent cases were driven green against qpdf 12.2.0 and poppler-utils in
+`ci/php.Dockerfile`.
 
 ---
 
@@ -32,18 +34,17 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–7 done: **FPDI and TCPDF are gone from the tree** | Docs (step 8) |
+| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone from the tree | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, font-metrics provenance |
-| [Testing](#testing) | 226 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 229 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker, S3 and flattening | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
-**Cypress E2E suite**, and **release packaging**. Everything else open is a refinement,
-except the [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf), which is a decided
-rewrite of working code and should be scheduled against those three rather than squeezed
-alongside them.
+**Cypress E2E suite**, and **release packaging**. Everything else open is a refinement — the
+[PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf), which was the one large piece of
+scheduled rework, is complete.
 
 ---
 
@@ -60,12 +61,12 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [ ] [Group overrides](#open-4) — `group_id` is stored and validated but **never read**, so a
   group policy silently does nothing. Either implement resolution or drop the column
 
-### Rewrites
+### Rewrites (done)
 
-- [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **steps
-  1–7 of 8 done**. `setasign/fpdi` and `tecnickcom/tcpdf` have been removed, and nothing
-  in the tree references either. PDF 1.5+ compressed-xref documents are watermarked with no
-  external binary at all. Remaining: the documentation pass (8)
+- [x] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **all eight
+  steps done**. `setasign/fpdi` and `tecnickcom/tcpdf` removed, nothing in the tree references
+  either, and PDF 1.5+ compressed-xref documents are watermarked with no external binary at
+  all. `qpdf` is now optional and only for empty-password encryption
 
 ### Correctness and robustness
 
@@ -102,50 +103,39 @@ tamper resistance. Office formats are not started.
 
 ### Open {#open-1}
 
-- [x] **PDF 1.5+ with compressed xref — fixed, not merely documented.** `PdfNormalizer`
-  rewrites the refused document with `qpdf --object-streams=disable --decrypt` and the existing
-  FPDI/TCPDF pipeline watermarks the rewrite. Two of the three Nextcloud skeleton PDFs needed
-  this; on a host with `qpdf` they now work
-  - **a pre-pass, not a replacement.** The direct FPDI read is tried first and the rewrite only
-    happens once FPDI has actually thrown, so files that already worked are never rewritten and
-    pay nothing. Replacing the renderer with `qpdf --overlay` was the alternative and was not
-    taken: it would have discarded the tile-geometry work below for a gain only unreadable
-    files see
-  - **the text layer survives**, which is the whole reason this beats routing these files
-    through the flattener. The overlay is still a real content stream
-  - **degrades rather than breaks.** No binary means `isAvailable()` is false, the original
-    parse error is rethrown untouched, and the trigger's own skip-plus-audit policy takes over
-    exactly as before — the behaviour the README documented, now the fallback rather than the
-    rule
-  - the fixture is **hand-built byte by byte**, because TCPDF cannot produce one: it writes a
-    classic xref table whatever `setPDFVersion('1.5')` and `SetCompression(true)` are set to,
-    and FPDI reads its output happily. Simplifying the helper into `createSourcePdf()` gives a
-    fixture that no longer reproduces the bug and a test that passes for the wrong reason. It
-    now lives in the `CompressedXrefFixture` trait, shared by both suites that assert on it —
-    they pin opposite halves of one story, and a fixture that drifted between them would let
-    both pass while the feature was broken
-  - `testCompressedXrefPdfFailsCleanlyWithoutQpdf` asserts FPDI's own
-    `CrossReferenceException::COMPRESSED_XREF` code, not just the `RuntimeException`. That is
-    what separates it from the corrupt-PDF test: FPDI can only reach that code after parsing
-    the trailer and finding a valid `/Type /XRef` stream, so it proves the fixture is a
-    well-formed PDF 1.5 whose *compression* is unsupported, rather than bytes that fail to
-    parse at all. It also proves the original cause survives the pre-pass rather than being
-    replaced by a complaint about the missing binary
-  - it **mocks the normalizer unavailable** rather than trusting the host, or the assertion
-    would invert on a machine that has `qpdf` installed
-  - mutation-tested: removing the try/catch in `PdfWatermarker::apply()` makes it fail.
-    `CrossReferenceException` is **not** a `RuntimeException` subclass, so the wrapping is
-    load-bearing rather than cosmetic
-  - measured against the real skeleton files in `nextcloud:31.0.14-apache`: `Nextcloud
-    Manual.pdf` (1.5) and `Reasons to use Nextcloud.pdf` (1.6) both failed, `Documents/Nextcloud
-    flyer.pdf` (1.4) worked. The earlier note here said *every* skeleton PDF was affected,
-    which was wrong — two of three
+- [x] **PDF 1.5+ with compressed xref — solved outright.** The renderer reads these files
+  natively, so they are watermarked with **no external binary and no configuration**. Two of
+  the three Nextcloud skeleton PDFs are such files, which is why this mattered so much:
+  measured against `nextcloud:31.0.14-apache`, `Nextcloud Manual.pdf` (1.5) and `Reasons to
+  use Nextcloud.pdf` (1.6) were both unwatermarkable, `Documents/Nextcloud flyer.pdf` (1.4)
+  worked. An earlier note claimed *every* skeleton PDF was affected; it was two of three
+  - it was fixed **twice**. First by a `qpdf` pre-pass that rewrote the refused document
+    (`--object-streams=disable`) for FPDI to read — which worked, but only on hosts with the
+    binary. Then properly, by the [tc-lib-pdf
+    migration](#pdf-stack-migration-to-tc-lib-pdf), whose parser has no such limitation. The
+    pre-pass survives as {@see PdfNormalizer}, narrowed to decryption
+  - **the text layer survives**, which is the whole reason this beats routing such files
+    through the flattener. The overlay is a real content stream
+  - the fixture is **hand-built byte by byte**, because neither TCPDF nor tc-lib-pdf will
+    produce one — both write a classic xref table whatever the version and compression
+    settings say. Simplifying it into `createSourcePdf()` yields a fixture that no longer
+    reproduces the case and a test that passes for the wrong reason. It lives in the
+    `CompressedXrefFixture` trait
+  - what guards the fixture changed with FPDI's removal, and the guard had to be *replaced*
+    rather than dropped: it used to be pinned by FPDI's own
+    `CrossReferenceException::COMPRESSED_XREF` code, and is now pinned structurally against
+    the bytes by `testTheFixtureStillUsesACompressedCrossReferenceStream`. Without it the
+    fixture is free to decay into an ordinary PDF 1.4 file that passes everything and proves
+    nothing
+
 - [ ] **Password-protected PDFs are still refused**, and that is now the whole of the gap.
-  `--decrypt` picks up empty-password permission flags for free, but a real user password is
-  outside what any free parser reaches — see the licence item under [Security](#open-security)
+  tc-lib-pdf declines every encrypted document; `qpdf --decrypt` rescues the empty-password
+  ones, which are the common case and not really protected at all. A real user password is
+  outside what any free PHP parser reaches. No longer a licensing question — see
+  [Security](#open-security)
 - [ ] The skip is honest but **silent to the end user**: an on-demand apply reports the error,
   yet an `on_upload` or `on_share` file that cannot be watermarked is only visible in the audit
-  log. Narrower now that `qpdf` handles the common case, but still worth surfacing in the UI
+  log. Much narrower now that only encrypted files can be skipped, but still worth surfacing
 - [ ] Flattening's **memory ceiling is unmeasured**. The page-at-a-time loop and the 200-page /
   256 MiB caps exist and the caps are tested, but nothing asserts peak memory, so "streams
   page by page" is a claim about the code rather than an observation
@@ -158,10 +148,10 @@ tamper resistance. Office formats are not started.
 
 ### PDF (`PdfWatermarker`)
 
-Everything below is delivered against FPDI + TCPDF and is scheduled to be rewritten on
-tc-lib-pdf — see [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf). Read the notes
-here as the specification the rewrite has to keep satisfying, particularly the tile
-geometry.
+Everything below was originally delivered against FPDI + TCPDF and has since been rewritten
+on tc-lib-pdf — see [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf). The notes here
+are the specification the rewrite had to keep satisfying, and still does; the tile geometry in
+particular came through unchanged.
 
 - [x] Text overlay tiled across every page of a multi-page document
 - [x] Image / logo overlay
@@ -204,8 +194,9 @@ Decisions taken when it was built:
   selection, copy, search, or screen-reader access. That is a possible WCAG / EN 301 549
   problem for a document-management product, so the setting is off by default and the form
   states the cost at the moment an admin switches it on
-- [x] Rebuild leg is **TCPDF, not Ghostscript** — already a dependency, keeps the write path
-  in-process, and reuses the page-geometry handling the app already had
+- [x] Rebuild leg is the **PDF library, not Ghostscript** — already a dependency, keeps the
+  write path in-process, and reuses the page-geometry handling the app already had. Was TCPDF,
+  now tc-lib-pdf; the argument is unchanged either way
 - [x] Page → bitmap via **`pdftoppm` from poppler-utils**: in RHEL 9 AppStream, so no EPEL and
   no Ghostscript, and its `-r <dpi> -f N -l N -singlefile` invocation gives the
   page-at-a-time streaming the memory cap needs
@@ -220,8 +211,10 @@ Decisions taken when it was built:
   survive the round-trip and nothing assumes A4
   - the reader must use the **same unit as the output document**, or every page is rebuilt at
     1/2.835 of its size. Caught by a test, not by inspection
-- [x] Margins, header, footer and auto-page-break all zeroed before the image is placed, or
-  TCPDF insets it and spills each source page onto two
+- [x] Under TCPDF, margins, header, footer and auto-page-break all had to be zeroed before
+  the image was placed, or it was inset and each source page spilled onto two. tc-lib-pdf has
+  no such implicit page furniture, so the placement is simply explicit — but the failure is
+  worth remembering if the writer ever changes again
 - [x] Streams page by page: one bitmap in memory and on disk at a time, deleted before the
   next is rendered
 - [x] Capped at 200 pages / 256 MiB, mirroring `ZipInterceptorPlugin`'s ceilings
@@ -455,7 +448,7 @@ badge are all built. One SDD feature — group overrides — is stored but not h
   - client-side type + 2 MB checks are a convenience; `WatermarkImageStore` re-validates
     server-side from the file's **actual bytes**, which is the check that counts
   - **PNG/JPEG only — SVG dropped deliberately.** It never worked in two of the three render
-    paths (the GD fallback decodes only PNG/JPEG; TCPDF's `Image()` cannot place an SVG), and
+    paths (the GD fallback decodes only PNG/JPEG; the PDF renderer cannot place an SVG), and
     storing attacker-authored markup that ImageMagick may parse with external-entity or
     remote-fetch delegates is not worth the one path where it did
 - [x] Flattening block — a real `NcCheckboxRadioSwitch` toggle plus a DPI slider, rendered
@@ -581,9 +574,14 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ## PDF stack migration to tc-lib-pdf
 
-**Position:** decided, nothing started. The whole PDF path moves off `setasign/fpdi` +
-`tecnickcom/tcpdf` onto `tecnickcom/tc-lib-pdf` + `tecnickcom/tc-lib-pdf-parser` — Nicola
-Asuni's rewrite of TCPDF, so this is a successor rather than a third-party swap.
+**Position:** steps 1–8 done; the migration is **complete**. The PDF path moved off
+`setasign/fpdi` + `tecnickcom/tcpdf` onto `tecnickcom/tc-lib-pdf` +
+`tecnickcom/tc-lib-pdf-parser` — Nicola Asuni's rewrite of TCPDF, so this was a successor
+rather than a third-party swap. Both old packages have been removed and nothing in the tree
+references them.
+
+The sequencing and reasoning below are kept as the record of how it was done and what it
+cost; the per-step notes are where the traps are written down.
 
 **Why:** tc-lib-pdf reads what FPDI refuses, in pure PHP. Measured on 8.67.2 against
 fixtures built with `qpdf`:
@@ -704,7 +702,7 @@ than the one before it.
     trigger policy takes over. The missing-binary log line now names encryption instead of
     compressed cross-references, which is the only advice still true
 
-- [x] **6. Tests — done.** 230 PHPUnit tests green, with **1 skip** on a host carrying both
+- [x] **6. Tests — done.** The suite is green, with **1 skip** on a host carrying both
   `qpdf` and `pdftoppm` (that skip is the deliberate "binary absent" case, which can only
   run on a host without them). No production code and no test fixture is on FPDI or TCPDF
   any more; three deliberate, documented canaries are all that remain
@@ -718,13 +716,11 @@ than the one before it.
   - `CompressedXrefFixture` is unchanged and its meaning flipped exactly as predicted: the
     file it builds is imported cleanly instead of throwing. That inversion is the clearest
     single signal the migration worked
-  - **three canaries kept**, each documented as delete-with-FPDI:
-    `testCompressedXrefPdfIsWatermarkedWithoutAnyExternalBinary` reads its own output with
-    FPDI once, because every other assertion now goes through tc-lib-pdf and would keep
-    passing on a file only tc-lib-pdf can read; and two fixture checks
-    (`testTheFixtureIsStillUnreadableByTheOutgoingFpdiParser`, plus the one inside
-    `PdfNormalizerTest::testStructuralRewritePreservesThePages`) that keep the fixture
-    honest about reproducing the original bug
+  - **three canaries were kept for step 7 to remove**, each marked as such at the time: one
+    reading our own output with FPDI, because every other assertion goes through tc-lib-pdf
+    and would keep passing on a file only tc-lib-pdf can read; and two fixture checks keeping
+    the fixture honest about reproducing the original bug. Step 7 deleted two of them and
+    **replaced** the third with a structural assertion rather than dropping it
   - `testCompressedXrefPdfFailsCleanlyWithoutQpdf` was deleted rather than adapted, as
     planned — without qpdf that file now succeeds
   - **`WatermarkServiceTest` needed no change at all**, which was the stated test of whether
@@ -762,9 +758,22 @@ than the one before it.
     Password-protected documents are still refused, but that is now a capability gap with
     no licence question attached
 
-- [ ] **8. Docs.** README's requirements table, the `qpdf` section (now decryption-only),
-  the Features line naming FPDI + TCPDF, the project-structure comment, and the
-  Environment entries here
+- [x] **8. Docs — done.** Most of it landed alongside the steps that caused it, so this was a
+  consistency sweep rather than a rewrite
+  - README: requirements table (`bcmath` added, `qpdf` demoted to optional), the PDF 1.5+
+    section rewritten from "known limitation" to "works, no configuration", a new
+    decryption-only `qpdf` section, the Features line, a Fonts section, and the
+    project-structure tree — which this sweep also found broken, with `resources/` wedged
+    inside the `lib/` subtree and orphaning `Settings/`
+  - `doc/sdd.md` §9 dependency table: FPDI and TCPDF rows replaced by the two `tc-lib`
+    packages and `ext-bcmath`
+  - this file: test counts and skip counts corrected throughout (they had drifted three times
+    as tests were added and removed), the Environment section rewritten around the new stack,
+    the compressed-xref entry rewritten from "fixed by a qpdf pre-pass" to "solved outright",
+    and the historical notes kept but re-tensed so they read as history rather than as the
+    current design
+  - `resources/fonts/README.md` records provenance, the licence gap, and why the TCPDF-format
+    files that used to sit beside the JSON ones are gone
 
 ### What step 2 turned up {#migration-surprises}
 
@@ -794,8 +803,10 @@ full — a future reader hitting any of these will otherwise assume the library 
   - claimed in `Application::__construct()` and in `tests/bootstrap.php`, both before
     either stack can load. `resources/fonts` therefore holds **both** formats —
     `helvetica.json` for tc-lib-pdf beside `helvetica.php` for TCPDF, which still needs
-    its own metrics while `PdfFlattener` is on it. TCPDF also concatenates the constant
-    with the filename without inserting a separator, so the trailing one is load-bearing
+    its own metrics while `PdfFlattener` was still on it. TCPDF also concatenated the
+    constant with the filename without inserting a separator, so a trailing one was required.
+    Both are gone with TCPDF: the directory is two JSON files, and the trailing separator was
+    removed after verifying tc-lib-pdf joins paths itself
   - delete the `.php` files at step 7. `PdfFontPath::isUsingOwnFonts()` turns a hijacked
     constant into an error that names the culprit instead of a missing-file mystery
 
@@ -829,13 +840,15 @@ Recorded because they were raised before the decision, not to relitigate it.
 - [ ] **Import fidelity is proven on one page of one generated fixture.** Before trusting it,
   drive the real skeleton PDFs (`Nextcloud Manual.pdf` 1.5, `Reasons to use Nextcloud.pdf`
   1.6) and a scanned/CJK/transparency document through the new renderer and compare rendered
-  output against the FPDI result, page by page
+  output against the pre-migration result, page by page — which now means checking against a
+  known-good file kept for the purpose, since FPDI is no longer in the tree to compare with
 - [ ] **The tile geometry is the crown jewel and the thing most at risk.** It was rebuilt
   once already after a bug that made watermarks illegible in production-shaped documents.
   Its tests are the regression net; a port that "passes except for the geometry tests" has
   failed
-- [ ] **`ext-bcmath` is a new hard platform requirement** on every host that runs this app,
-  including ones already running it
+- [x] **`ext-bcmath` is a new hard platform requirement** on every host that runs this app,
+  including ones already running it. Accepted and wired; `appinfo/info.xml` declares it so an
+  upgrade onto a host without it refuses to enable rather than failing at render time
 
 ---
 
@@ -876,18 +889,31 @@ read, and one SDD type is still missing.
 
 ### Open {#open-env}
 
-- [ ] **`ext-bcmath`**, a hard requirement of `tc-lib-pdf` and so of the
-  [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf). Not currently required anywhere
-  in the app, not declared in `appinfo/info.xml`, and Composer refuses to resolve
-  `tc-lib-pdf` without it. Needs `php-bcmath` on RHEL 9 and `install-php-extensions bcmath`
-  in the dev and CI images
+- [ ] Confirm **`php-bcmath`** is in RHEL 9 AppStream on the real target build, alongside the
+  same open question for `qpdf` and `poppler-utils`. The extension is wired everywhere it needs
+  to be; only the RHEL package availability is unverified from here
 - [ ] Headless LibreOffice / Collabora in the Docker dev environment — blocked on Office
   support being designed
 - [ ] PHP `exif` / metadata libraries, for the invisible metadata watermark
 
 ### Delivered
 
-- [x] PHP: `setasign/fpdi` `^2.6`, `tecnickcom/tcpdf` `^6.7`
+- [x] PHP: `tecnickcom/tc-lib-pdf` and `tecnickcom/tc-lib-pdf-parser`, both **pinned to an
+  exact version** (`8.67.2` / `3.14.0`) rather than a caret range — the package ships several
+  releases a week, so bumps should be deliberate and changelog-checked. They replaced
+  `setasign/fpdi` and `tecnickcom/tcpdf`, which have been removed
+  - they pull **13 transitive `tc-lib-*` packages**, every one of which must also appear in
+    `Application::RUNTIME_VENDOR_PACKAGES` or its classes will not load inside Nextcloud;
+    `RuntimeVendorPackagesTest` enforces that against `composer.lock` in both directions
+- [x] **`ext-bcmath`** — a hard requirement of `tc-lib-pdf`, declared in `composer.json` and in
+  `<dependencies>` in `appinfo/info.xml`, so Nextcloud refuses to enable the app on a host
+  without it rather than fatalling on the first PDF. Composer will not even resolve without it.
+  `install-php-extensions bcmath` in `ci/php.Dockerfile`, `docker-php-ext-install bcmath` in
+  both compose entrypoints
+- [x] **Font metrics committed to `resources/fonts`**, because the renderer ships none: the
+  Composer package deliberately contains no font data and its `make fonts` target downloads a
+  117 MB mirror. Two ~10 KB JSON files, metrics only, found through the global `K_PATH_FONTS`.
+  See `resources/fonts/README.md`, including the unresolved licence provenance
 - [x] `Imagick` preferred with a `GD` fallback; both paths covered by `ImageWatermarkerTest`
 - [x] **`qpdf` for `PdfNormalizer`** — not optional in practice: without it most real-world
   PDFs are skipped rather than watermarked. `dnf install qpdf` on RHEL 9; `apt-get install
@@ -986,7 +1012,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 226 PHPUnit tests (10–15 skip depending on which of `pdftoppm` and `qpdf` the
+**Position:** 229 PHPUnit tests (1–14 skip depending on which of `pdftoppm` and `qpdf` the
 host has) and 77 Jest tests. The DAV layer, which used to be the blind spot every delivery bug
 hid in, now has 48 of them.
 
@@ -1038,7 +1064,7 @@ only by driving a real instance by hand:
     **every DAV request**. `Psr\Log\`, `PhpParser\` and phpunit's global assertion functions
     were leaking the same way. Two independent fixes, both kept:
     - `Application::registerVendorAutoloader()` builds a loader from Composer's generated maps,
-      keeps only the runtime packages (`setasign/fpdi`, `tecnickcom/tcpdf`) and *appends* it so
+      keeps only the runtime packages (the `tc-lib-*` stack) and *appends* it so
       core's autoloader always wins. It reuses the `ClassLoader` core already declared —
       `require_once` keys on file path, not class name, so including the app's copy fatals with
       "name is already in use"
@@ -1080,20 +1106,23 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   node, flattening order and fail-closed behaviour, and an unusable stored folder tag degrading
   instead of crashing
   - the **group** resolution case is absent because group resolution does not exist
-- [x] `PdfNormalizerTest` (7) — a compressed-xref PDF 1.5 asserted unreadable by FPDI *before*
-  and readable *after*, empty-password encryption removed, a real password and garbage bytes
-  both refused with no partial file left behind, `isAvailable()` agreeing with PATH in both
-  directions, and the missing-binary path throwing rather than silently writing nothing
+- [x] `PdfNormalizerTest` (6) — empty-password encryption removed and the result readable, a
+  real password and garbage bytes both refused with no partial file left behind, a missing
+  source failing before it shells out, `isAvailable()` agreeing with PATH in both directions,
+  and the missing-binary path throwing rather than silently writing nothing
   - the rewrite cases skip without `qpdf`, in the same shape as `PdfFlattenerTest`. Mocking the
-    binary away would assert nothing worth asserting: the claim under test is that qpdf's
-    *actual* output parses in FPDI, which no mock can make
-- [x] `PdfWatermarkerTest` (23) — text / image / combined overlays, multi-page, corrupt PDF, a
-  compressed-xref PDF 1.5 both ways (watermarked with `qpdf`, refused cleanly without it, the
-  original left byte-identical either way), a password-protected file still refused with the
-  binary present, no scratch rewrite left in the temp dir, and
-  the tile geometry: no overlap at any rotation, a lattice spanning the whole page, and
-  off-page tiles keeping their negative offsets (the regression test for the smear, verified to
-  fail against the old placement code)
+    binary away would assert nothing worth asserting: the claim under test is what qpdf
+    *actually* produces and that the renderer can then read it, which no mock can make
+  - one test went with FPDI's removal: the structural-rewrite case existed to prove a
+    compressed-xref file became readable, which the renderer now does natively
+- [x] `PdfWatermarkerTest` (25) — text / image / combined overlays, multi-page, corrupt PDF, a
+  compressed-xref PDF 1.5 watermarked with **no external binary** (the normalizer mocked
+  unavailable, which is what proves it), the fixture still structurally reproducing that case,
+  an empty-password file rescued through `qpdf` and a real-password one still refused, no
+  scratch rewrite left in the temp dir, the rotation convention tilting the text uphill to match
+  the settings preview, and the tile geometry: no overlap at any rotation, a lattice spanning
+  the whole page, and off-page tiles keeping their negative offsets (the regression test for the
+  smear, verified to fail against the old placement code)
 - [x] `PdfFlattenerTest` (11) — no extractable text layer (the actual security claim), one
   output page per source page, geometry preserved for non-A4 and landscape, DPI honoured and
   clamped, corrupt and missing sources failing closed, the page ceiling, and no leftover page
