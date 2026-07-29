@@ -11,14 +11,14 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException;
 use setasign\Fpdi\Tcpdf\Fpdi;
-use TCPDF;
 
 /**
- * Functional tests for {@see PdfWatermarker}. They drive the real FPDI/TCPDF
+ * Functional tests for {@see PdfWatermarker}. They drive the real tc-lib-pdf
  * stack against generated fixtures, so no Nextcloud server is required.
  */
 class PdfWatermarkerTest extends TestCase {
 	use CompressedXrefFixture;
+	use PdfFixtures;
 
 	private PdfWatermarker $watermarker;
 	private string $tmpDir;
@@ -66,8 +66,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
 
 		// Page count must be preserved across the whole multi-page document.
-		$reader = new Fpdi();
-		$this->assertSame(3, $reader->setSourceFile($dest));
+		$this->assertSame(3, $this->readPageCount($dest));
 	}
 
 	public function testImageOverlayAppliedAndPreservesAspectRatio(): void {
@@ -83,8 +82,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->assertFileExists($dest);
 		$this->assertGreaterThan(0, filesize($dest));
 
-		$reader = new Fpdi();
-		$this->assertSame(1, $reader->setSourceFile($dest));
+		$this->assertSame(1, $this->readPageCount($dest));
 	}
 
 	public function testCombinedOverlayApplied(): void {
@@ -99,8 +97,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->watermarker->apply($source, $dest, $config, ['username' => 'Bob']);
 
 		$this->assertFileExists($dest);
-		$reader = new Fpdi();
-		$this->assertSame(2, $reader->setSourceFile($dest));
+		$this->assertSame(2, $this->readPageCount($dest));
 	}
 
 	public function testLongWatermarkTextRendersWithoutError(): void {
@@ -121,8 +118,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->assertFileExists($dest);
 		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
 
-		$reader = new Fpdi();
-		$this->assertSame(1, $reader->setSourceFile($dest));
+		$this->assertSame(1, $this->readPageCount($dest));
 	}
 
 	/**
@@ -313,8 +309,9 @@ class PdfWatermarkerTest extends TestCase {
 
 	/**
 	 * The text's own axes in page coordinates: the direction it reads, and that
-	 * turned 90°. TCPDF rotates counter-clockwise and the page's y runs
-	 * downwards, hence the negated sine.
+	 * turned 90°. A positive rotation reads counter-clockwise while the page's y
+	 * runs downwards, hence the negated sine — the same convention
+	 * `tilePositions()` builds its lattice in, and unchanged by the move off TCPDF.
 	 *
 	 * @return array{array{float, float}, array{float, float}}
 	 */
@@ -385,6 +382,14 @@ class PdfWatermarkerTest extends TestCase {
 
 		// Still a content-stream overlay rather than a rasterisation, so the output is
 		// itself importable and the page count survives.
+		$this->assertSame(1, $this->readPageCount($dest));
+
+		// **Interop canary**, and the only place the outgoing parser reads our output.
+		// Every other assertion here now goes through tc-lib-pdf, which would happily
+		// keep passing on a file only tc-lib-pdf can read. This is what would catch the
+		// renderer drifting into output that other tools reject — the flattener depended
+		// on exactly this until it was ported, and downstream consumers still do.
+		// Delete it with FPDI at step 7.
 		$this->assertSame(1, (new Fpdi())->setSourceFile($dest));
 
 		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
@@ -502,18 +507,15 @@ class PdfWatermarkerTest extends TestCase {
 		return $config;
 	}
 
-	/** Generates an FPDI-readable (PDF 1.4, uncompressed) multi-page fixture. */
+	/** Generates a plain multi-page A4 fixture. */
 	private function createSourcePdf(int $pages): string {
-		$pdf = new TCPDF();
-		$pdf->setPDFVersion('1.4');
-		$pdf->SetCompression(false);
+		$spec = [];
 		for ($i = 1; $i <= $pages; $i++) {
-			$pdf->AddPage();
-			$pdf->SetFont('helvetica', '', 12);
-			$pdf->Cell(0, 10, "Page $i");
+			$spec[] = ['text' => "Page $i"];
 		}
+
 		$path = $this->tmpDir . '/source.pdf';
-		$pdf->Output($path, 'F');
+		$this->writePdf($path, $spec);
 		return $path;
 	}
 

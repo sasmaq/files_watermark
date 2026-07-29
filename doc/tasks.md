@@ -32,7 +32,7 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–5 done: **no production code is on FPDI or TCPDF any more** | Test sweep, removing the old packages, docs |
+| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–6 done: nothing but three documented canaries still touches FPDI or TCPDF | Removing the old packages, docs |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
@@ -63,9 +63,10 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 ### Rewrites
 
 - [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **steps
-  1–5 of 8 done**. Both renderers are on tc-lib-pdf and **no production code references FPDI
-  or TCPDF**; PDF 1.5+ compressed-xref documents are watermarked with no external binary at
-  all. Remaining: the test sweep (6), removing the old packages (7), docs (8)
+  1–6 of 8 done**. Both renderers and every test fixture are on tc-lib-pdf; PDF 1.5+
+  compressed-xref documents are watermarked with no external binary at all. Only three
+  documented interop canaries still reference FPDI. Remaining: removing the old packages
+  (7), docs (8)
 
 ### Correctness and robustness
 
@@ -704,19 +705,31 @@ than the one before it.
     trigger policy takes over. The missing-binary log line now names encryption instead of
     compressed cross-references, which is the only advice still true
 
-- [ ] **6. Tests.** The suite is the acceptance criterion for the whole migration
-  - `PdfWatermarkerTest`, `PdfFlattenerTest`, `PdfNormalizerTest` and the `Fpdi`-based
-    assertions inside them all read the *output* with `Fpdi` today. Those readers move to
-    tc-lib-pdf's parser — at which point they can no longer prove the output is readable by
-    anything else, so keep at least one `Fpdi` assertion as an interop canary until FPDI is
-    actually removed
-  - `CompressedXrefFixture` stays exactly as it is and flips meaning: the file it builds
-    should now **import cleanly** rather than throw. That inversion is the single clearest
-    signal the migration worked
-  - `testCompressedXrefPdfFailsCleanlyWithoutQpdf` becomes wrong by construction and should
-    be deleted, not adapted — without qpdf the file will now succeed
-  - `WatermarkServiceTest` mocks both renderers, so it should need no change. If it does,
-    something leaked out of the Service layer
+- [x] **6. Tests — done.** 230 PHPUnit tests green, with **1 skip** on a host carrying both
+  `qpdf` and `pdftoppm` (that skip is the deliberate "binary absent" case, which can only
+  run on a host without them). No production code and no test fixture is on FPDI or TCPDF
+  any more; three deliberate, documented canaries are all that remain
+  - the source fixtures moved too, not just the readers. They were built with `new TCPDF()`
+    in three separate places, which step 7 would have broken — so the geometry-aware ones
+    are now a shared `PdfFixtures` trait: `writePdf()`, `readPageCount()`,
+    `readPageSizes()`. That also centralises the two things every copy would have to get
+    right, points-everywhere and the `allowedPaths` allowlist
+  - the mixed-geometry flattener fixture states its sizes in **points** rather than TCPDF's
+    `'A5'`/`'A4'` format names, so the fixture now says out loud what the assertion is about
+  - `CompressedXrefFixture` is unchanged and its meaning flipped exactly as predicted: the
+    file it builds is imported cleanly instead of throwing. That inversion is the clearest
+    single signal the migration worked
+  - **three canaries kept**, each documented as delete-with-FPDI:
+    `testCompressedXrefPdfIsWatermarkedWithoutAnyExternalBinary` reads its own output with
+    FPDI once, because every other assertion now goes through tc-lib-pdf and would keep
+    passing on a file only tc-lib-pdf can read; and two fixture checks
+    (`testTheFixtureIsStillUnreadableByTheOutgoingFpdiParser`, plus the one inside
+    `PdfNormalizerTest::testStructuralRewritePreservesThePages`) that keep the fixture
+    honest about reproducing the original bug
+  - `testCompressedXrefPdfFailsCleanlyWithoutQpdf` was deleted rather than adapted, as
+    planned — without qpdf that file now succeeds
+  - **`WatermarkServiceTest` needed no change at all**, which was the stated test of whether
+    anything had leaked out of the Service layer. Nothing had
 
 - [ ] **7. Remove FPDI and TCPDF**, only once every test above is green against the new
   stack, and delete the interop canary in the same commit

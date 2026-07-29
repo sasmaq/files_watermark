@@ -7,8 +7,6 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 use OCA\FilesWatermark\Service\PdfFlattener;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
-use setasign\Fpdi\Tcpdf\Fpdi;
-use TCPDF;
 
 /**
  * Tests for {@see PdfFlattener}.
@@ -19,6 +17,7 @@ use TCPDF;
  * ceilings, fail-closed behaviour) runs everywhere.
  */
 class PdfFlattenerTest extends TestCase {
+	use PdfFixtures;
 
 	private PdfFlattener $flattener;
 	private string $tmpDir;
@@ -82,28 +81,25 @@ class PdfFlattenerTest extends TestCase {
 
 		$this->flattener->flatten($source, $dest, 72);
 
-		$reader = new Fpdi();
-		$this->assertSame(3, $reader->setSourceFile($dest));
+		$this->assertSame(3, $this->readPageCount($dest));
 	}
 
 	public function testPageGeometrySurvivesForNonA4AndLandscapePages(): void {
 		$this->requireRenderer();
 		$source = $this->tmpDir . '/mixed.pdf';
-		$pdf = new TCPDF('P', 'pt', 'A4');
-		$pdf->setPDFVersion('1.4');
-		$pdf->SetCompression(false);
-		$pdf->SetPrintHeader(false);
-		$pdf->SetPrintFooter(false);
-		$pdf->AddPage('P', 'A5');
-		$pdf->AddPage('L', 'A4');
-		$pdf->Output($source, 'F');
+		// A5 portrait then A4 landscape, in points. Explicit sizes rather than format
+		// names so the fixture states the geometry the assertion is about.
+		$this->writePdf($source, [
+			['width' => self::A5_WIDTH, 'height' => self::A5_HEIGHT],
+			['width' => self::A4_HEIGHT, 'height' => self::A4_WIDTH],
+		]);
 
-		$expected = $this->pageSizes($source);
+		$expected = $this->readPageSizes($source);
 		$dest = $this->tmpDir . '/mixed-flat.pdf';
 
 		$this->flattener->flatten($source, $dest, 72);
 
-		$actual = $this->pageSizes($dest);
+		$actual = $this->readPageSizes($dest);
 		$this->assertCount(2, $actual);
 		foreach ($expected as $page => $size) {
 			$this->assertEqualsWithDelta($size['width'], $actual[$page]['width'], 1.0, "page $page width");
@@ -133,8 +129,7 @@ class PdfFlattenerTest extends TestCase {
 		$this->flattener->flatten($source, $dest, 72);
 
 		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
-		$reader = new Fpdi();
-		$this->assertSame(1, $reader->setSourceFile($dest));
+		$this->assertSame(1, $this->readPageCount($dest));
 	}
 
 	public function testCorruptSourceFailsClosed(): void {
@@ -201,36 +196,14 @@ class PdfFlattenerTest extends TestCase {
 
 	/** @param list<string> $pages one line of body text per page */
 	private function createSourcePdf(array $pages): string {
-		$pdf = new TCPDF('P', 'pt', 'A4');
-		$pdf->setPDFVersion('1.4');
-		$pdf->SetCompression(false);
-		$pdf->SetPrintHeader(false);
-		$pdf->SetPrintFooter(false);
-		foreach ($pages as $text) {
-			$pdf->AddPage();
-			$pdf->SetFont('helvetica', '', 14);
-			$pdf->Text(60, 120, $text);
-		}
 		$path = $this->tmpDir . '/source.pdf';
-		$pdf->Output($path, 'F');
+		$this->writePdf($path, array_map(static fn (string $text): array => ['text' => $text], $pages));
 		return $path;
-	}
-
-	/** @return array<int, array{width: float, height: float}> */
-	private function pageSizes(string $pdf): array {
-		$reader = new Fpdi();
-		$count = $reader->setSourceFile($pdf);
-		$sizes = [];
-		for ($page = 1; $page <= $count; $page++) {
-			$size = $reader->getTemplateSize($reader->importPage($page));
-			$sizes[$page] = ['width' => (float)$size['width'], 'height' => (float)$size['height']];
-		}
-		return $sizes;
 	}
 
 	/**
 	 * Text recoverable from the PDF's content streams. Crude next to a real
-	 * extractor, but it is looking for the *absence* of glyphs, and TCPDF writes
+	 * extractor, but it is looking for the *absence* of glyphs, and the renderer writes
 	 * page text as plain `(...) Tj` / `[(...)] TJ` operators.
 	 */
 	private function extractText(string $pdf): string {

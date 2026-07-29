@@ -20,6 +20,7 @@ use setasign\Fpdi\Tcpdf\Fpdi;
  */
 class PdfNormalizerTest extends TestCase {
 	use CompressedXrefFixture;
+	use PdfFixtures;
 
 	private PdfNormalizer $normalizer;
 	private string $tmpDir;
@@ -66,7 +67,7 @@ class PdfNormalizerTest extends TestCase {
 		$this->normalizer->normalize($source, $dest);
 
 		$this->assertFileExists($dest);
-		$this->assertSame(1, (new Fpdi())->setSourceFile($dest));
+		$this->assertSame(1, $this->readPageCount($dest));
 	}
 
 	/**
@@ -88,7 +89,7 @@ class PdfNormalizerTest extends TestCase {
 		$dest = $this->tmpDir . '/normalized.pdf';
 		$this->normalizer->normalize($source, $dest);
 
-		$this->assertSame(1, (new Fpdi())->setSourceFile($dest));
+		$this->assertSame(1, $this->readPageCount($dest));
 	}
 
 	/**
@@ -194,15 +195,10 @@ class PdfNormalizerTest extends TestCase {
 		$this->assertContains($status, [0, 3], 'could not build the fixture: ' . implode(' ', $output));
 	}
 
-	/** A plain, FPDI-readable single-page PDF to build fixtures from. */
+	/** A plain single-page PDF to build encrypted fixtures from. */
 	private function createSourcePdf(): string {
-		$pdf = new \TCPDF();
-		$pdf->AddPage();
-		$pdf->SetFont('helvetica', '', 12);
-		$pdf->Cell(0, 10, 'Page 1', 0, 1);
-
 		$path = $this->tmpDir . '/source.pdf';
-		$pdf->Output($path, 'F');
+		$this->writePdf($path, [['text' => 'Page 1']]);
 		return $path;
 	}
 
