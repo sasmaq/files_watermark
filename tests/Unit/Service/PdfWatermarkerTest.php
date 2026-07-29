@@ -9,8 +9,6 @@ use OCA\FilesWatermark\Service\PdfNormalizer;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
-use setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException;
-use setasign\Fpdi\Tcpdf\Fpdi;
 
 /**
  * Functional tests for {@see PdfWatermarker}. They drive the real tc-lib-pdf
@@ -384,34 +382,38 @@ class PdfWatermarkerTest extends TestCase {
 		// itself importable and the page count survives.
 		$this->assertSame(1, $this->readPageCount($dest));
 
-		// **Interop canary**, and the only place the outgoing parser reads our output.
-		// Every other assertion here now goes through tc-lib-pdf, which would happily
-		// keep passing on a file only tc-lib-pdf can read. This is what would catch the
-		// renderer drifting into output that other tools reject — the flattener depended
-		// on exactly this until it was ported, and downstream consumers still do.
-		// Delete it with FPDI at step 7.
-		$this->assertSame(1, (new Fpdi())->setSourceFile($dest));
-
 		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
 	}
 
 	/**
-	 * The fixture has to stay genuinely unreadable by the *old* stack, or the test
-	 * above proves nothing. FPDI is still in the tree until the migration completes,
-	 * so this pins the fixture against it directly — asserting FPDI's own
-	 * COMPRESSED_XREF code, which it can only reach after parsing the trailer and
-	 * finding a valid `/Type /XRef` stream. Delete this together with FPDI.
+	 * The fixture has to keep reproducing the case it is named after, or the test above
+	 * proves nothing at all — a fixture that quietly became an ordinary PDF 1.4 file
+	 * would sail through and assert only that the renderer can read easy documents.
+	 *
+	 * This used to be pinned by feeding the fixture to FPDI and catching its
+	 * `COMPRESSED_XREF` code. FPDI is gone, so the guarantee is restated structurally
+	 * against the bytes: a cross-reference **stream** object, and no classic `xref`
+	 * table anywhere. That is exactly the shape the free FPDI parser refused and the
+	 * whole migration was about.
 	 */
-	public function testTheFixtureIsStillUnreadableByTheOutgoingFpdiParser(): void {
-		$source = $this->tmpDir . '/compressed-xref.pdf';
-		file_put_contents($source, $this->buildCompressedXrefPdf());
+	public function testTheFixtureStillUsesACompressedCrossReferenceStream(): void {
+		$fixture = $this->buildCompressedXrefPdf();
 
-		try {
-			(new Fpdi())->setSourceFile($source);
-			$this->fail('the fixture no longer reproduces the compressed-xref case');
-		} catch (CrossReferenceException $e) {
-			$this->assertSame(CrossReferenceException::COMPRESSED_XREF, $e->getCode());
-		}
+		$this->assertStringStartsWith('%PDF-1.5', $fixture, 'the fixture must declare PDF 1.5');
+		$this->assertStringContainsString(
+			'/Type /XRef',
+			$fixture,
+			'the fixture no longer contains a cross-reference stream, so it no longer '
+			. 'reproduces the case this suite exists to cover',
+		);
+		// A classic table is the token `xref` alone on its own line. Matching the bare
+		// word instead would hit the fixture's own page text ("Compressed xref
+		// fixture") and pass for entirely the wrong reason.
+		$this->assertStringNotContainsString(
+			"\nxref\n",
+			$fixture,
+			'a classic xref table means the fixture is readable by any parser',
+		);
 	}
 
 	/**

@@ -31,7 +31,7 @@ class WatermarkImageStore {
 	 * Accepted upload types, mapped to the extension the stored file gets.
 	 *
 	 * PNG and JPEG only, deliberately: they are the two types every render path handles
-	 * (the GD fallback in ImageWatermarker decodes exactly these, and TCPDF's `Image()`
+	 * (the GD fallback in ImageWatermarker decodes exactly these, and the PDF renderer
 	 * cannot place an SVG at all), and accepting SVG would mean storing attacker-authored
 	 * markup that ImageMagick may parse with external-entity/remote-fetch delegates.
 	 */

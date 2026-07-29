@@ -30,15 +30,15 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  */
 class PdfWatermarker {
 
-	/** Both the tc-lib-pdf and TCPDF metrics in `resources/fonts` are Helvetica. */
+	/** Matches the metrics committed in `resources/fonts`. */
 	private const FONT_FAMILY = 'helvetica';
 	private const FONT_STYLE = 'B';
 
 	public function __construct(
 		private PdfNormalizer $normalizer,
 	) {
-		// Before any font call, and before TCPDF is constructed anywhere else in the
-		// request — see PdfFontPath for why this is a global constant.
+		// Before any font call. Also claimed at app bootstrap; see PdfFontPath for why
+		// this is a global constant rather than an injected path.
 		PdfFontPath::register();
 	}
 

@@ -12,30 +12,28 @@ namespace OCA\FilesWatermark\Service;
  * lookup walks up from the package looking for a directory named `fonts` and requires
  * that directory to be *writable*, which a hardened Nextcloud install will not be.
  *
- * Three things about that constant are load-bearing, all learned the hard way:
- *
- * 1. It must be defined **before** the first font call, which is why this is invoked from
- *    the renderer's constructor rather than lazily at draw time.
- * 2. TCPDF reads the same constant, and looks for `helvetica.php` where tc-lib-pdf looks
- *    for `helvetica.json`. Defining it therefore *breaks* TCPDF unless both formats live
- *    in the one directory — see `resources/fonts/README.md`. No production code is on
- *    TCPDF any more, but the test fixtures still build their source PDFs with it, so the
- *    second set stays until FPDI and TCPDF leave the tree entirely.
- * 3. TCPDF concatenates the constant with the filename and does not insert a separator,
- *    so the trailing one here is not cosmetic.
+ * It must be defined **before** the first font call, which is why it is claimed in
+ * `Application::__construct()` at app bootstrap and again from the renderer's constructor
+ * rather than lazily at draw time.
  *
  * Guarded with `defined()` because a constant cannot be redefined and another app on the
  * same server may have got there first — in which case that app's directory wins and
  * fonts silently come from elsewhere. {@see isUsingOwnFonts()} is how the renderer
  * notices instead of failing obscurely later.
+ *
+ * Historical note, because it explains a since-removed oddity: TCPDF read this same
+ * constant and looked for `helvetica.php` where tc-lib-pdf looks for `helvetica.json`, so
+ * while both stacks coexisted the directory had to carry both formats, and the path had to
+ * end in a separator because TCPDF concatenated it with the filename directly. Neither
+ * applies now — tc-lib-pdf joins with `DIRECTORY_SEPARATOR` itself.
  */
 final class PdfFontPath {
 
 	public const CONSTANT = 'K_PATH_FONTS';
 
-	/** @return string absolute path, with the trailing separator TCPDF requires */
+	/** @return string absolute path to the font-metrics directory, no trailing separator */
 	public static function directory(): string {
-		return realpath(__DIR__ . '/../../resources/fonts') . DIRECTORY_SEPARATOR;
+		return (string)realpath(__DIR__ . '/../../resources/fonts');
 	}
 
 	/**

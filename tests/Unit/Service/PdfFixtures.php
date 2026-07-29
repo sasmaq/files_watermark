@@ -12,11 +12,11 @@ use OCA\FilesWatermark\Service\PdfFontPath;
  * want to read a rendered one back.
  *
  * Shared because all three PDF suites were doing this with FPDI + TCPDF, which the
- * migration is removing — and because two details are easy to get wrong in every
- * copy. Sizes are in **points** throughout, matching the renderers, and every
- * document declares the temp directory in `allowedPaths`: tc-lib-pdf refuses local
- * reads outside an allowlist, and supplying one replaces the defaults rather than
- * extending them, so the font directory has to be named too.
+ * migration removed — and because two details are easy to get wrong in every copy.
+ * Sizes are in **points** throughout, matching the renderer, and every document
+ * declares the temp directory in `allowedPaths`: tc-lib-pdf refuses local reads
+ * outside an allowlist, and supplying one replaces the defaults rather than extending
+ * them, so the font directory has to be named too.
  */
 trait PdfFixtures {
 

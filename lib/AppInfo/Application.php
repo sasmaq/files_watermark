@@ -30,17 +30,14 @@ class Application extends App implements IBootstrap {
 	 * Everything else there is dev-only (phpunit, php-cs-fixer, sabre/dav, ...)
 	 * and must stay invisible to the runtime — see registerVendorAutoloader().
 	 *
-	 * The `tc-lib-*` block is the incoming PDF stack (see the migration plan in
-	 * `doc/tasks.md`); FPDI and TCPDF stay until it has fully replaced them. Every
-	 * transitive dependency has to be listed, not just the two packages named in
-	 * `composer.json`, because this allowlist is what the runtime loader is built
+	 * Every transitive dependency has to be listed, not just the two packages named
+	 * in `composer.json`, because this allowlist is what the runtime loader is built
 	 * from — a missing entry is a "Class not found" fatal that only appears inside
 	 * Nextcloud, never in the test suite, which uses Composer's own autoloader.
-	 * `RuntimeVendorPackagesTest` guards exactly that drift.
+	 * `RuntimeVendorPackagesTest` guards that drift in both directions, and it is
+	 * what caught these entries outliving FPDI and TCPDF.
 	 */
 	private const RUNTIME_VENDOR_PACKAGES = [
-		'setasign/fpdi',
-		'tecnickcom/tcpdf',
 		'tecnickcom/tc-lib-barcode',
 		'tecnickcom/tc-lib-color',
 		'tecnickcom/tc-lib-file',
@@ -64,19 +61,17 @@ class Application extends App implements IBootstrap {
 
 		self::registerVendorAutoloader();
 
-		// Must happen here, not in the renderer: simply *loading* the TCPDF class
-		// defines K_PATH_FONTS to TCPDF's own fonts directory, and a constant cannot
-		// be redefined. Whoever gets there first wins, so this claims it during app
-		// bootstrap — before anything can touch either PDF stack. `resources/fonts`
-		// carries both formats precisely so TCPDF still finds its own metrics there.
+		// Claimed during app bootstrap, before anything can touch the renderer.
+		// K_PATH_FONTS is a global constant and cannot be redefined, so whoever
+		// defines it first wins — see PdfFontPath.
 		PdfFontPath::register();
 	}
 
 	/**
-	 * Make the bundled third-party libraries (setasign/fpdi, tecnickcom/tcpdf)
-	 * loadable at runtime. Nextcloud autoloads OCA\FilesWatermark\ classes from
-	 * lib/, but not the vendor/ dependencies — without this, using the PDF
-	 * watermarker throws "Class TCPDF not found" (a fatal Error → HTTP 500).
+	 * Make the bundled third-party libraries (the tc-lib-pdf stack) loadable at
+	 * runtime. Nextcloud autoloads OCA\FilesWatermark\ classes from lib/, but not
+	 * the vendor/ dependencies — without this, using the PDF watermarker throws
+	 * "Class Com\Tecnick\Pdf\Tcpdf not found" (a fatal Error → HTTP 500).
 	 *
 	 * Deliberately *not* `require vendor/autoload.php`: Composer registers that
 	 * loader with prepend = true and for *every* installed package, dev ones
@@ -127,7 +122,8 @@ class Application extends App implements IBootstrap {
 
 		$loader = new ClassLoader();
 
-		// FPDI is PSR-4 (setasign\Fpdi\); TCPDF predates PSR-4 and is a classmap.
+		// The tc-lib-* packages are all PSR-4. The classmap pass below is kept because
+		// Composer still emits one and a future dependency may rely on it.
 		foreach (require $psr4File as $prefix => $paths) {
 			$paths = array_values(array_filter($paths, $isRuntimePath));
 			if ($paths !== []) {
@@ -136,9 +132,9 @@ class Application extends App implements IBootstrap {
 		}
 		$loader->addClassMap(array_filter(require $classMapFile, $isRuntimePath));
 
-		// Composer's autoload_files.php is skipped on purpose: neither runtime
-		// package has a `files` entry, while the dev ones do (phpunit's global
-		// assertion functions, sabre's helpers) and those must not be pulled in.
+		// Composer's autoload_files.php is skipped on purpose: no runtime package has a
+		// `files` entry, while the dev ones do (phpunit's global assertion functions,
+		// sabre's helpers) and those must not be pulled in.
 
 		// register() appends. Never prepend — that is what caused the shadowing.
 		$loader->register();

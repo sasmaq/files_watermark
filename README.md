@@ -85,11 +85,11 @@ damaged beyond qpdf's repair.
 
 ### Fonts
 
-`resources/fonts` holds Helvetica *metrics* for both PDF stacks — no glyphs are embedded,
-since Helvetica is one of the PDF standard 14 fonts that readers supply themselves. They
-are committed because neither renderer ships them via Composer. See the README there
-before moving or deleting anything in that directory; the path is announced through the
-global `K_PATH_FONTS`, which both stacks read.
+`resources/fonts` holds Helvetica *metrics* — no glyphs are embedded, since Helvetica is
+one of the PDF standard 14 fonts that readers supply themselves. They are committed
+because the renderer does not ship them via Composer, and without them any text call
+fails. See the README there before moving or deleting anything in that directory; the
+path reaches the renderer through the global `K_PATH_FONTS`.
 
 ## Project Structure
 
@@ -102,9 +102,9 @@ files_watermark/
 │   ├── Db/           # Entities and QBMapper classes
 │   ├── Listener/     # ShareCreatedEvent listener
 │   ├── Service/      # WatermarkService, PdfWatermarker, PdfNormalizer, ImageWatermarker
-├── resources/
-│   └── fonts/        # Helvetica metrics for both PDF stacks (see the README there)
 │   └── Settings/     # Admin settings panel registration
+├── resources/
+│   └── fonts/        # Helvetica metrics for the PDF renderer (see the README there)
 ├── migration/        # Database schema migration
 ├── src/              # Vue 3 frontend source
 │   ├── components/   # AdminSettings.vue, WatermarkModal.vue

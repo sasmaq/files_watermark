@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 /**
- * Builds the PDF 1.5 fixture that FPDI's free parser cannot read.
+ * Builds a PDF 1.5 fixture whose cross-reference table is a compressed stream.
  *
  * Shared by {@see PdfWatermarkerTest} and {@see PdfNormalizerTest} because the two
  * assert opposite halves of one story — refused without `qpdf`, watermarked with

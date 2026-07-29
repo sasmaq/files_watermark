@@ -92,17 +92,19 @@ class PdfNormalizer {
 			);
 		}
 
-		// --decrypt is the reason this class still exists: it strips the empty-password
-		//   encryption the renderer refuses outright. A document with a real password
-		//   still fails here, and should.
-		// --object-streams=disable is no longer needed for its original purpose — the
-		//   renderer reads compressed cross-references natively — but is kept as a cheap
-		//   structural rebuild, the other thing qpdf repairs for free. It costs a modest
-		//   size increase on a file that was going to be rejected outright anyway.
-		// Stream *data* is deliberately left compressed: Flate content streams are read
-		//   fine, and uncompressing them would multiply the file size for nothing.
+		// --decrypt, and nothing else. It is the reason this class exists: it strips the
+		// empty-password encryption the renderer refuses outright. A document with a real
+		// password still fails here, and should.
+		//
+		// `--object-streams=disable` used to be the whole point, forcing a classic
+		// cross-reference table for FPDI's free parser. It was kept briefly as a cheap
+		// structural repair and is now gone: the renderer reads object streams natively,
+		// and once the rescue was narrowed to encryption the flag could not affect any
+		// file that reaches here. Stream data is likewise left compressed — Flate content
+		// streams are read fine, and uncompressing them would multiply the size for
+		// nothing.
 		$command = sprintf(
-			'%s --object-streams=disable --decrypt %s %s 2>&1',
+			'%s --decrypt %s %s 2>&1',
 			escapeshellcmd($binary),
 			escapeshellarg($sourcePath),
 			escapeshellarg($destPath),

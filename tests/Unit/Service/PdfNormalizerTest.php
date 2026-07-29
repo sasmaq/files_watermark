@@ -7,8 +7,6 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 use OCA\FilesWatermark\Service\PdfNormalizer;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
-use setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException;
-use setasign\Fpdi\Tcpdf\Fpdi;
 
 /**
  * Tests for {@see PdfNormalizer}.
@@ -16,10 +14,9 @@ use setasign\Fpdi\Tcpdf\Fpdi;
  * The rewrite cases drive the real `qpdf` and skip without it, in the same shape
  * as {@see PdfFlattenerTest} — a host with no binary is a supported configuration,
  * and mocking the binary away would assert nothing worth asserting: the claim
- * under test is what qpdf *actually* produces.
+ * under test is what qpdf *actually* produces, and that the renderer can then read it.
  */
 class PdfNormalizerTest extends TestCase {
-	use CompressedXrefFixture;
 	use PdfFixtures;
 
 	private PdfNormalizer $normalizer;
@@ -38,36 +35,6 @@ class PdfNormalizerTest extends TestCase {
 		}
 		@rmdir($this->tmpDir);
 		parent::tearDown();
-	}
-
-	/**
-	 * The structural rebuild still works, and its pages survive it.
-	 *
-	 * This was once the claim the whole class rested on — a compressed-xref document
-	 * FPDI refused becoming one it accepted. The renderer reads those natively now, so
-	 * the rebuild is no longer *needed* here; it is kept because it is the other thing
-	 * qpdf repairs for free, and it should not silently rot. The old FPDI-based
-	 * assertion is retained as the check that the rewrite is structurally sane, and
-	 * goes when FPDI leaves the tree.
-	 */
-	public function testStructuralRewritePreservesThePages(): void {
-		$this->requireBinary();
-
-		$source = $this->tmpDir . '/compressed-xref.pdf';
-		file_put_contents($source, $this->buildCompressedXrefPdf());
-
-		try {
-			(new Fpdi())->setSourceFile($source);
-			$this->fail('the fixture is supposed to be unreadable before normalizing');
-		} catch (CrossReferenceException $e) {
-			$this->assertSame(CrossReferenceException::COMPRESSED_XREF, $e->getCode());
-		}
-
-		$dest = $this->tmpDir . '/normalized.pdf';
-		$this->normalizer->normalize($source, $dest);
-
-		$this->assertFileExists($dest);
-		$this->assertSame(1, $this->readPageCount($dest));
 	}
 
 	/**
@@ -166,7 +133,7 @@ class PdfNormalizerTest extends TestCase {
 	/**
 	 * Without the binary the failure has to be an exception, never a silent
 	 * no-op: the caller reads a successful return as "the destination is now a
-	 * readable PDF", and would hand FPDI a path that does not exist.
+	 * readable PDF", and would hand the renderer a path that does not exist.
 	 */
 	public function testNormalizeThrowsWhenTheBinaryIsMissing(): void {
 		if ($this->normalizer->isAvailable()) {

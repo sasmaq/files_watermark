@@ -18,11 +18,11 @@ namespace {
 	// Composer's autoload.php always returns the cached ClassLoader instance.
 	$loader = require __DIR__ . '/../vendor/autoload.php';
 
-	// Claim K_PATH_FONTS before any test can load TCPDF, which defines it to its
-	// own fonts directory on class load. A constant cannot be redefined, so this is
-	// first-come-first-served and the order tests happen to run in must not decide
-	// where tc-lib-pdf looks for helvetica.json. Mirrors what Application's
-	// constructor does at runtime; resources/fonts holds both stacks' metrics.
+	// tc-lib-pdf finds its font metrics through the K_PATH_FONTS constant, and
+	// resources/fonts is where this app keeps them — Composer ships none. Claimed here
+	// so it is set before any test touches the renderer, mirroring what Application's
+	// constructor does at runtime. A constant cannot be redefined, so this must not be
+	// left to whichever test happens to run first.
 	\OCA\FilesWatermark\Service\PdfFontPath::register();
 
 	// Register the nextcloud/ocp stub interfaces for the test run only. These

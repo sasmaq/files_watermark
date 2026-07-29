@@ -6,10 +6,8 @@
     "require": {
         "php": "^8.2",
         "ext-bcmath": "*",
-        "setasign/fpdi": "^2.6",
         "tecnickcom/tc-lib-pdf": "8.67.2",
-        "tecnickcom/tc-lib-pdf-parser": "3.14.0",
-        "tecnickcom/tcpdf": "^6.7"
+        "tecnickcom/tc-lib-pdf-parser": "3.14.0"
     },
     "require-dev": {
         "nextcloud/coding-standard": "^1.3",

@@ -32,10 +32,10 @@ driven green against qpdf 12.2.0 in `ci/php.Dockerfile`.
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–6 done: nothing but three documented canaries still touches FPDI or TCPDF | Removing the old packages, docs |
+| [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | Steps 1–7 done: **FPDI and TCPDF are gone from the tree** | Docs (step 8) |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
-| [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, FPDI licence |
+| [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, font-metrics provenance |
 | [Testing](#testing) | 226 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker, S3 and flattening | API reference, changelog, packaging |
 
@@ -63,10 +63,9 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 ### Rewrites
 
 - [ ] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **steps
-  1–6 of 8 done**. Both renderers and every test fixture are on tc-lib-pdf; PDF 1.5+
-  compressed-xref documents are watermarked with no external binary at all. Only three
-  documented interop canaries still reference FPDI. Remaining: removing the old packages
-  (7), docs (8)
+  1–7 of 8 done**. `setasign/fpdi` and `tecnickcom/tcpdf` have been removed, and nothing
+  in the tree references either. PDF 1.5+ compressed-xref documents are watermarked with no
+  external binary at all. Remaining: the documentation pass (8)
 
 ### Correctness and robustness
 
@@ -731,11 +730,37 @@ than the one before it.
   - **`WatermarkServiceTest` needed no change at all**, which was the stated test of whether
     anything had leaked out of the Service layer. Nothing had
 
-- [ ] **7. Remove FPDI and TCPDF**, only once every test above is green against the new
-  stack, and delete the interop canary in the same commit
-  - `composer.json`, the `use` statements, and the FPDI-licence item under
-    [Security](#open-security) — which this migration closes for compressed xref but
-    **not** for password-protected files, since tc-lib-pdf refuses those too
+- [x] **7. FPDI and TCPDF removed — done.** `composer remove setasign/fpdi
+  tecnickcom/tcpdf`; **nothing in the tree references either package** any more, in
+  production or test code. What remains are comments that explain *why* something is
+  shaped the way it is, which are worth keeping
+  - `RuntimeVendorPackagesTest` earned its keep here: it failed the moment the packages
+    left the lock file, naming both stale allowlist entries. That is exactly the drift it
+    was written for, and it caught it without anyone remembering to look
+  - **the interop canary had to be replaced, not just deleted.** It guaranteed the
+    compressed-xref fixture still reproduced the original bug, and deleting it would have
+    left a fixture free to decay into an ordinary PDF 1.4 file that passes every test
+    while proving nothing. `testTheFixtureStillUsesACompressedCrossReferenceStream` now
+    asserts the same property against the bytes — PDF 1.5 header, a `/Type /XRef` object,
+    and no classic `xref` table
+    - the first version of that assertion was wrong in an instructive way: matching the
+      bare word `xref` hit the fixture's own page text ("Compressed xref fixture") and so
+      failed for a reason that had nothing to do with the structure. It now matches
+      `"\nxref\n"`, the token alone on its own line, which is how a classic table appears
+    - mutation-tested: changing the fixture's header to `%PDF-1.4` makes it fail
+  - `resources/fonts/helvetica*.php` deleted with TCPDF. The directory is now two `.json`
+    files and its README
+  - **`--object-streams=disable` dropped from the qpdf command**, the decision this step
+    was told to make. Once the rescue was narrowed to encryption the flag could not affect
+    any file that reaches it, so `qpdf --decrypt` is now the whole invocation and expresses
+    exactly one intent
+  - the trailing separator on `PdfFontPath::directory()` is gone too — it existed only
+    because TCPDF concatenated the constant with the filename directly. tc-lib-pdf joins
+    with `DIRECTORY_SEPARATOR` itself, verified both ways before removing it
+  - the FPDI-licence item under [Security](#open-security) is **retired rather than
+    answered**: FPDI has left the tree, so its licence no longer applies to anything here.
+    Password-protected documents are still refused, but that is now a capability gap with
+    no licence question attached
 
 - [ ] **8. Docs.** README's requirements table, the `qpdf` section (now decryption-only),
   the Features line naming FPDI + TCPDF, the project-structure comment, and the
@@ -916,13 +941,16 @@ read, and one SDD type is still missing.
   database and still look valid, even though they now resolve to no image. A migration should
   clear them; admins must re-upload either way
 - [ ] Rate-limit or queue on-demand applies for large files — nothing throttles them today
-- [ ] Review FPDI licence compatibility for **password-protected** PDFs. The 1.5+ half of this
-  is closed — `qpdf` (Apache-2.0) does it without the commercial add-on — but documents with a
-  real user password would still need setasign's FPDI PDF-Parser
-  - the [tc-lib-pdf migration](#pdf-stack-migration-to-tc-lib-pdf) **retires the question
-    rather than answering it**: FPDI leaves the tree entirely, and tc-lib-pdf is LGPL-3.0
-    like TCPDF already is. It does not make password-protected files work — it refuses them
-    too — so that capability gap outlives the licence one
+- [x] **FPDI licence question retired, not answered.** FPDI has left the tree entirely
+  (step 7 of the [migration](#pdf-stack-migration-to-tc-lib-pdf)), so its licence no longer
+  applies to anything here; tc-lib-pdf is LGPL-3.0, as TCPDF already was
+  - **the capability gap outlived the licence one**: password-protected PDFs are still
+    refused, because tc-lib-pdf refuses every encrypted document and `qpdf --decrypt` only
+    rescues the empty-password ones. That is now a plain feature limit with no licensing
+    dimension, documented in the README
+  - a new provenance question replaced it, and it is smaller but real: the committed font
+    metrics under `resources/fonts` come from a mirror whose `core/LICENSE` is a 0-byte
+    file. See [What step 2 turned up](#migration-surprises)
 
 ### Delivered
 

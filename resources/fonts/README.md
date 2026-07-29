@@ -4,35 +4,38 @@ Font *metrics* — widths, bounding box, ascent/descent. No glyph outlines, and 
 here is embedded in the PDFs the app produces: Helvetica is one of the PDF standard 14
 fonts, which every conforming reader supplies itself.
 
-They are committed rather than installed because **neither renderer ships them**:
+They are committed rather than installed because **the renderer does not ship them**.
+The Composer package `tecnickcom/tc-lib-pdf-font` deliberately contains no font data;
+its `make fonts` target downloads a 117 MB mirror and converts. These two files were
+generated once from the canonical Adobe Core-14 AFMs (`Helvetica.afm`,
+`Helvetica-Bold.afm`, via `tecnickcom/tc-font-mirror` 2.2.0) using the library's own
+`Com\Tecnick\Pdf\Font\Import`.
 
-- `*.json` — tc-lib-pdf format, used by `PdfWatermarker`. The Composer package
-  `tecnickcom/tc-lib-pdf-font` deliberately ships no font data; its `make fonts` target
-  downloads a 117 MB mirror and converts. These two files were generated once from the
-  canonical Adobe Core-14 AFMs (`Helvetica.afm`, `Helvetica-Bold.afm`, via
-  `tecnickcom/tc-font-mirror` 2.2.0) using the library's own `Com\Tecnick\Pdf\Font\Import`.
-  Without them *any* text call throws `unable to read file: helveticab.json`.
-- `*.php` — TCPDF format, copied from `vendor/tecnickcom/tcpdf/fonts/`. Needed only
-  because pointing `K_PATH_FONTS` here stops TCPDF finding its own; see below. **Delete
-  these when TCPDF leaves the tree** (step 7 of the migration in `doc/tasks.md`).
+Without them *any* text call throws `unable to read file: helveticab.json`, which reads
+like a packaging bug and is not one.
 
-## Why the directory holds two formats
+## How the renderer finds them
 
-`K_PATH_FONTS` is the only reliable way to tell tc-lib-pdf where fonts live. The
-alternative — a `fonts` directory discovered by walking up from the package — requires
-that directory to be **writable**, which a hardened Nextcloud install will not be.
+Through the global constant `K_PATH_FONTS`, claimed by `PdfFontPath` during app
+bootstrap. That is the only mechanism which survives a real deployment: the library's
+other lookup walks up from its own package directory looking for a `fonts` directory and
+requires it to be **writable**, which a hardened Nextcloud install will not be.
 
-That constant is also read by TCPDF, which looks for `helvetica.php` where tc-lib-pdf
-looks for `helvetica.json`. While both stacks coexist the two sets therefore share one
-directory. TCPDF additionally requires the path to end in a separator.
+`PdfWatermarker` and `PdfFlattener` also name this directory in their `allowedPaths`,
+since tc-lib-pdf refuses local reads outside an allowlist and supplying one *replaces*
+the defaults instead of extending them.
+
+Until the migration off FPDI + TCPDF completed, this directory also held `helvetica*.php`
+— the same metrics in TCPDF's format — because TCPDF read the same constant and would
+otherwise have stopped finding its own. Those are gone, along with TCPDF.
 
 ## Provenance and licence
 
-The `.json` files derive from Adobe's Core-14 AFM metrics, redistributed by
-`tecnickcom/tc-font-mirror`, whose `core/LICENSE` file is **empty** — upstream states no
-terms. The same metrics ship in TCPDF (LGPL-3.0, already vendored here) and in most PDF
-libraries, so redistributing them is well-trodden, but the provenance is recorded here
-rather than assumed. Worth a look if this app is ever formally licence-audited.
+The files derive from Adobe's Core-14 AFM metrics, redistributed by
+`tecnickcom/tc-font-mirror`, whose `core/LICENSE` is a **0-byte file** — upstream states
+no terms. The same metrics ship in TCPDF (LGPL-3.0) and in most PDF libraries, so
+redistributing them is well-trodden rather than novel, but the provenance is recorded
+here rather than assumed. Worth a look if this app is ever formally licence-audited.
 
 To regenerate:
 
