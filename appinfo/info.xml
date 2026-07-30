@@ -17,7 +17,7 @@ Features:
 - Admin-configurable global and per-group policies
 - Full audit log of every watermark event
     ]]></description>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">files_watermark contributors</author>
     <namespace>FilesWatermark</namespace>
@@ -25,7 +25,7 @@ Features:
     <bugs>https://github.com/example/files_watermark/issues</bugs>
     <dependencies>
         <php min-version="8.2"/>
-        <!-- tc-lib-pdf, the incoming PDF renderer, requires bcmath; Composer will not
+        <!-- tc-lib-pdf, the PDF renderer, requires bcmath; Composer will not
              even resolve without it. Declared here so Nextcloud refuses to enable the
              app on a host that lacks it, rather than fatalling on the first PDF. -->
         <lib>bcmath</lib>

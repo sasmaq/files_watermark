@@ -22,14 +22,12 @@ function mockGet(config) {
 }
 
 /**
- * The config endpoint's payload: the saved configs plus this server's flattening
- * capability, which is what decides whether the form offers the setting at all.
+ * The config endpoint's payload.
  * @param {Array} configs - Saved watermark configs
- * @param {boolean} flattenAvailable - Whether the host has a PDF rasteriser
  * @return {object} An axios-shaped response
  */
-function configResponse(configs, flattenAvailable = false) {
-	return { data: { configs, flattenAvailable, flattenDpiRange: { min: 72, max: 600 } } }
+function configResponse(configs) {
+	return { data: { configs } }
 }
 
 describe('AdminSettings', () => {

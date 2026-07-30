@@ -33,10 +33,6 @@ use OCP\AppFramework\Db\Entity;
  * @method void setMimeTypes(?string $mimeTypes)
  * @method string|null getFolderTag()
  * @method void setFolderTag(?string $folderTag)
- * @method bool getFlattenPdf()
- * @method void setFlattenPdf(bool $flattenPdf)
- * @method int getFlattenDpi()
- * @method void setFlattenDpi(int $flattenDpi)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -59,14 +55,6 @@ class WatermarkConfig extends Entity {
 	protected ?string $mimeTypes = null;
 	/** Nextcloud system-tag ID for per-folder targeting; null means global */
 	protected ?string $folderTag = null;
-	/**
-	 * Rasterise every page after watermarking, fusing the overlay into the pixels.
-	 * Off unless asked for: it destroys the text layer, and with it selection,
-	 * search and screen-reader access.
-	 */
-	protected bool $flattenPdf = false;
-	/** Render resolution for {@see $flattenPdf}, in dots per inch. */
-	protected int $flattenDpi = 150;
 	protected string $createdAt = '';
 	protected string $updatedAt = '';
 
@@ -74,8 +62,6 @@ class WatermarkConfig extends Entity {
 		$this->addType('opacity', 'integer');
 		$this->addType('fontSize', 'integer');
 		$this->addType('rotation', 'integer');
-		$this->addType('flattenPdf', 'boolean');
-		$this->addType('flattenDpi', 'integer');
 	}
 
 	/** Returns the allowed MIME types as an array, or all supported types if not set. */
@@ -102,8 +88,6 @@ class WatermarkConfig extends Entity {
 			'trigger' => $this->trigger,
 			'mimeTypes' => $this->mimeTypes,
 			'folderTag' => $this->folderTag,
-			'flattenPdf' => $this->flattenPdf,
-			'flattenDpi' => $this->flattenDpi,
 			'createdAt' => $this->createdAt,
 			'updatedAt' => $this->updatedAt,
 		];

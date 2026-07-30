@@ -48,14 +48,13 @@ services:
     depends_on:
       rustfs:
         condition: service_healthy
-    # Same custom_apps ownership fix, binary installs and bcmath extension as
-    # docker-compose.yml (see the notes there).
+    # Same custom_apps ownership fix and bcmath extension as docker-compose.yml
+    # (see the notes there).
     entrypoint:
       - /bin/sh
       - -c
       - >
         chown www-data:www-data /var/www/html/custom_apps;
-        command -v pdftoppm >/dev/null 2>&1 && command -v qpdf >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils qpdf; };
         php -m | grep -qx bcmath || docker-php-ext-install bcmath;
         exec /entrypoint.sh apache2-foreground
     environment:

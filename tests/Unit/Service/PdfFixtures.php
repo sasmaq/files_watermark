@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
+use Com\Tecnick\Pdf\Encrypt\Encrypt;
 use Com\Tecnick\Pdf\Tcpdf;
 use OCA\FilesWatermark\Service\PdfFontPath;
 
@@ -95,13 +96,45 @@ trait PdfFixtures {
 		return $sizes;
 	}
 
+	/**
+	 * Write an encrypted PDF, using the renderer's own encryption rather than an
+	 * external tool — this suite spawns no processes either.
+	 *
+	 * An empty `$userPassword` is the permission-flags-only case: not real protection,
+	 * since a reader opens it without prompting, but still an encrypted document as far
+	 * as any parser is concerned.
+	 */
+	private function writeEncryptedPdf(string $path, string $userPassword): void {
+		$encrypt = new Encrypt(
+			enabled: true,
+			file_id: md5($path),
+			mode: 2,
+			permissions: ['modify', 'copy'],
+			user_pass: $userPassword,
+			owner_pass: 'owner-pass',
+		);
+
+		$pdf = new Tcpdf(
+			'pt',
+			fileOptions: ['allowedPaths' => $this->allowedFontAndTempPaths()],
+			objEncrypt: $encrypt,
+		);
+		$pdf->addPage();
+		file_put_contents($path, $pdf->getOutPDFString());
+	}
+
 	private function newPdfDocument(): Tcpdf {
+		return new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedFontAndTempPaths()]);
+	}
+
+	/** @return list<string> */
+	private function allowedFontAndTempPaths(): array {
 		$paths = [PdfFontPath::directory(), sys_get_temp_dir()];
 		$real = realpath(sys_get_temp_dir());
 		if ($real !== false) {
 			$paths[] = $real;
 		}
 
-		return new Tcpdf('pt', fileOptions: ['allowedPaths' => $paths]);
+		return $paths;
 	}
 }

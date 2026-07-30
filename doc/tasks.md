@@ -13,15 +13,12 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-30, both green: **229 PHPUnit** tests and **77 Jest** tests. Local run
-was PHP 8.2; 8.3 is covered by CI only.
+Suites re-run 2026-07-30, both green: **198 PHPUnit** tests and **69 Jest** tests, with
+**zero skips on every host**. Local run was PHP 8.2; 8.3 is covered by CI only.
 
-The PHPUnit skips are all binary-dependent, so the count varies by host: **14** on a bare
-macOS box (9 `PdfFlattenerTest` rasterise cases with no `pdftoppm`, 5 `qpdf` cases) and **1**
-in a container with both binaries — that last one being the deliberate "binary absent" case,
-which can only run where the binary really is absent. Every skip runs somewhere; the
-binary-dependent cases were driven green against qpdf 12.2.0 and poppler-utils in
-`ci/php.Dockerfile`.
+That last point is new and worth stating plainly: the suite no longer varies by machine.
+Every test that used to skip did so for want of an external binary, and the app no longer
+has any — see [No external binaries](#no-external-binaries).
 
 ---
 
@@ -29,17 +26,18 @@ binary-dependent cases were driven green against qpdf 12.2.0 and poppler-utils i
 
 | Area | Position | Open |
 | --- | --- | --- |
-| [1. Renderers](#1-renderers-goal-1) | PDF and images complete, including tamper-resistant flattening and PDF 1.5+ via a `qpdf` pre-pass. Office not started | Office pipeline, password-protected PDFs |
+| [1. Renderers](#1-renderers-goal-1) | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started; flattening removed | Office pipeline, encrypted PDFs |
 | [2. Watermark content](#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
+| [No external binaries](#no-external-binaries) | **Done.** No `exec()` anywhere; flattening removed with `pdftoppm`, decryption with `qpdf` | Release note for the dropped columns |
 | [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone from the tree | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
-| [Environment](#environment-and-dependencies) | PHP, Imagick/GD, poppler and qpdf all wired | LibreOffice, `exif` |
+| [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, font-metrics provenance |
-| [Testing](#testing) | 229 PHPUnit + 77 Jest; the DAV layer is no longer a blind spot | Cypress E2E, the full trigger matrix, static analysis |
-| [Docs and release](#docs-and-release) | README covers install, Docker, S3 and flattening | API reference, changelog, packaging |
+| [Testing](#testing) | 198 PHPUnit + 69 Jest, zero skips anywhere | Cypress E2E, the full trigger matrix, static analysis |
+| [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
 **Cypress E2E suite**, and **release packaging**. Everything else open is a refinement — the
@@ -63,19 +61,21 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ### Rewrites (done)
 
+- [x] [Remove every external binary dependency](#no-external-binaries) — no `exec()` in
+  production code or tests. Cost: **PDF flattening deleted** (tamper resistance) and
+  **empty-password encrypted PDFs are now skipped**. Bought: zero skips on every host, one
+  platform requirement, and no host-dependent behaviour
+
 - [x] [Migrate the PDF stack to tc-lib-pdf](#pdf-stack-migration-to-tc-lib-pdf) — **all eight
   steps done**. `setasign/fpdi` and `tecnickcom/tcpdf` removed, nothing in the tree references
   either, and PDF 1.5+ compressed-xref documents are watermarked with no external binary at
-  all. `qpdf` is now optional and only for empty-password encryption
+  all. The `qpdf` fallback it introduced was itself removed later, with the rest of the
+  external binaries
 
 ### Correctness and robustness
 
-- [x] [PDF 1.5+ with compressed xref](#open-1) — **fixed twice over**: first by the `qpdf`
-  normalizer pre-pass, then properly by the
-  [tc-lib-pdf migration](#pdf-stack-migration-to-tc-lib-pdf), whose parser reads these files
-  natively. No external binary is involved on this path any more, on any host
-- [ ] [Flattening memory ceiling](#open-1) is unmeasured — the streaming claim rests on reading
-  the code
+- [x] [PDF 1.5+ with compressed xref](#open-1) — read natively by the renderer. No
+  configuration, no external binary, no host-dependent behaviour
 - [ ] [Archive caps](#open-3) are class constants, not configuration
 - [ ] [Legacy `image_path` rows](#open-security) still sit in the database looking valid
 - [ ] [Rate limiting](#open-security) for on-demand applies on large files
@@ -98,8 +98,9 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ## 1. Renderers (Goal 1)
 
-**Position:** PDFs and images are complete, including optional rasterised flattening for
-tamper resistance. Office formats are not started.
+**Position:** PDFs and images are complete, in pure PHP. Office formats are not started.
+Rasterised flattening existed for tamper resistance and was **removed** — see
+[No external binaries](#no-external-binaries).
 
 ### Open {#open-1}
 
@@ -113,7 +114,7 @@ tamper resistance. Office formats are not started.
     (`--object-streams=disable`) for FPDI to read — which worked, but only on hosts with the
     binary. Then properly, by the [tc-lib-pdf
     migration](#pdf-stack-migration-to-tc-lib-pdf), whose parser has no such limitation. The
-    pre-pass survives as {@see PdfNormalizer}, narrowed to decryption
+    pre-pass was later deleted too, with the rest of the external binaries
   - **the text layer survives**, which is the whole reason this beats routing such files
     through the flattener. The overlay is a real content stream
   - the fixture is **hand-built byte by byte**, because neither TCPDF nor tc-lib-pdf will
@@ -128,23 +129,14 @@ tamper resistance. Office formats are not started.
     fixture is free to decay into an ordinary PDF 1.4 file that passes everything and proves
     nothing
 
-- [ ] **Password-protected PDFs are still refused**, and that is now the whole of the gap.
-  tc-lib-pdf declines every encrypted document; `qpdf --decrypt` rescues the empty-password
-  ones, which are the common case and not really protected at all. A real user password is
-  outside what any free PHP parser reaches. No longer a licensing question — see
-  [Security](#open-security)
+- [ ] **Encrypted PDFs are refused**, and that is now the whole of the gap — including the
+  empty-password, permission-flags-only case that is not real protection. `qpdf --decrypt`
+  used to rescue those; it went with the [external
+  binaries](#no-external-binaries). Decrypting in pure PHP is possible in principle
+  (`tc-lib-pdf-encrypt` is already a dependency) but is not wired to the import path
 - [ ] The skip is honest but **silent to the end user**: an on-demand apply reports the error,
   yet an `on_upload` or `on_share` file that cannot be watermarked is only visible in the audit
   log. Much narrower now that only encrypted files can be skipped, but still worth surfacing
-- [ ] Flattening's **memory ceiling is unmeasured**. The page-at-a-time loop and the 200-page /
-  256 MiB caps exist and the caps are tested, but nothing asserts peak memory, so "streams
-  page by page" is a claim about the code rather than an observation
-- [ ] Confirm the RHEL 9 `poppler-utils` and `qpdf` package names and their `/usr/bin` paths on
-  the real target build, and pin minimum versions if the DPI / page-range flags differ. `qpdf`
-  was driven against **12.2.0** (Debian); the flags used are old enough to predate RHEL 9's
-  version, but that is reasoning rather than an observation until someone checks
-- [ ] If a second rasteriser is ever wanted, `pdftocairo` (same package) is the cheap one — not
-  Imagick, for the reasons under [Environment](#environment-and-dependencies)
 
 ### PDF (`PdfWatermarker`)
 
@@ -170,62 +162,38 @@ particular came through unchanged.
     that a valid *n*-page PDF came out. Rendering a page to an image and **looking at it** is
     now the minimum bar for believing anything about output geometry
 
-### Flattened (rasterised) PDFs — `PdfFlattener`
+### Flattened (rasterised) PDFs — removed
 
-Optional, off by default: after watermarking, every page is rendered to an image and the PDF
-is rebuilt from those images, so the watermark is fused into the pixels.
+Built, shipped, and then **deleted**. It rebuilt every watermarked page as a bitmap so the
+overlay was fused into the pixels, which made the watermark impractical to strip — an
+ordinary overlay is a separate content stream that `qpdf` or `mutool` can drop.
 
-**Why.** The ordinary overlay is a separate content stream sitting on top of the original page
-objects — `qpdf` or `mutool` can drop it, and some editors let a user select and delete it.
-Rasterising removes the seam. It makes removal *impractical, not impossible*: cropping,
-inpainting and OCR-and-retypeset all still work. It raises cost; it is not a cryptographic
-guarantee, and the form's help text says so rather than implying tamper-proofing.
+**Why it went.** The rasterise step needed an external renderer (`pdftoppm` from
+poppler-utils), and the app is now required to spawn no processes at all. There is no
+pure-PHP substitute worth having: rasterising a PDF means implementing or bundling a PDF
+*interpreter*, which is a far larger surface than the watermarking this app exists to do.
+Rather than keep one feature that dragged a binary dependency, a per-host availability
+probe, an admin toggle that vanished when the binary did, and a schema column, the feature
+was removed whole. See [No external binaries](#no-external-binaries).
 
-Decisions taken when it was built:
+**What was lost, stated honestly:** tamper resistance. The watermark is again a separate
+layer that a determined user can strip with ordinary tools. Nothing else replaces it — the
+app deters and traces, it does not enforce. Anyone who needs the overlay to be
+unremovable needs a different mechanism (DRM, or server-side rendering that never hands
+out the file), not this app.
 
-| Question | Decision |
-| --- | --- |
-| Which triggers | **All of them**, flattening per fetch, no cache |
-| Page image format | **PNG** — lossless glyph edges, at the cost of a larger file |
-| Stranded setting with no renderer | **Server forces it off** and logs why |
-| Invisible OCR text layer to soften the a11y loss | **Scoped out** — it would put the watermark text back within reach |
+**What was gained:** no external binaries, no host-dependent behaviour, no accessibility
+trade-off. Flattening destroyed the text layer, taking selection, copy, search and
+screen-reader access with it, which is a possible WCAG / EN 301 549 problem for a
+document-management product; that is why it was off by default and why the form warned
+about it at the point of switching it on. Every watermarked PDF now keeps its text layer.
 
-- [x] **Accessibility cost is disclosed, not hidden.** Rasterising deletes the text layer: no
-  selection, copy, search, or screen-reader access. That is a possible WCAG / EN 301 549
-  problem for a document-management product, so the setting is off by default and the form
-  states the cost at the moment an admin switches it on
-- [x] Rebuild leg is the **PDF library, not Ghostscript** — already a dependency, keeps the
-  write path in-process, and reuses the page-geometry handling the app already had. Was TCPDF,
-  now tc-lib-pdf; the argument is unchanged either way
-- [x] Page → bitmap via **`pdftoppm` from poppler-utils**: in RHEL 9 AppStream, so no EPEL and
-  no Ghostscript, and its `-r <dpi> -f N -l N -singlefile` invocation gives the
-  page-at-a-time streaming the memory cap needs
-- [x] Availability is a **runtime probe of the binary on PATH**, never a distro assumption —
-  production is RHEL 9 while the dev containers are Debian. The probe only stats PATH, so it
-  never shells out, and it is memoised per request
-- [x] Missing binary ⇒ the setting is **absent from the form entirely** — not disabled, not a
-  placeholder — and `saveConfig` rejects it however it arrives, because hiding a control is
-  not an access check. The unavailability is logged, since a hidden control gives the admin
-  no on-screen reason
-- [x] Source page geometry carried through in points, so mixed-size and landscape documents
-  survive the round-trip and nothing assumes A4
-  - the reader must use the **same unit as the output document**, or every page is rebuilt at
-    1/2.835 of its size. Caught by a test, not by inspection
-- [x] Under TCPDF, margins, header, footer and auto-page-break all had to be zeroed before
-  the image was placed, or it was inset and each source page spilled onto two. tc-lib-pdf has
-  no such implicit page furniture, so the placement is simply explicit — but the failure is
-  worth remembering if the writer ever changes again
-- [x] Streams page by page: one bitmap in memory and on disk at a time, deleted before the
-  next is rendered
-- [x] Capped at 200 pages / 256 MiB, mirroring `ZipInterceptorPlugin`'s ceilings
-- [x] **Fails closed.** A failed flatten throws rather than falling back to the unflattened
-  file, because that file is precisely the removable-overlay version the setting exists to
-  avoid handing out
-- [x] Applied *after* the overlay, in `WatermarkService::renderToTemp` — the one choke point
-  every trigger already funnels through, so the delivery paths got flattening without a code
-  path of their own
-- [x] **Remove Watermark still works.** Verified end to end: 7497 B uploaded → 289 037 B
-  flattened in place → restored **byte-identical** to the upload, text layer and all
+Removed with it: `PdfFlattener`, `PdfFlattenerTest`, `ApiControllerFlattenTest`, the
+`flatten_pdf` / `flatten_dpi` columns (dropped by `Version1002Date20260730000000`), the
+`flattenAvailable` / `flattenDpiRange` API fields, the admin toggle and DPI slider, and
+five `WatermarkServiceTest` cases. The decisions taken when it was built — PNG page
+images, flatten-per-fetch with no cache, fail-closed on a failed rasterise, server forces a
+stranded setting off — are recorded in git history rather than duplicated here.
 
 ### Images (`ImageWatermarker`)
 
@@ -432,7 +400,7 @@ badge are all built. One SDD feature — group overrides — is stored but not h
 - [x] `ApiController` — `getConfig`, `saveConfig`, `deleteConfig`, `applyWatermark`,
   `removeWatermark`, `uploadImage`, `getLog`, `getWatermarkedStatus`
 - [x] `saveConfig` validates type, trigger, colour, template tokens, image reference,
-  MIME filter, folder tag, and the flattening settings — see [Security](#security) and the
+  MIME filter and folder tag — see [Security](#security) and the
   scope-field notes below for the two that were added after they caused real failures
 - [x] `applyWatermark` returns a descriptive error for unsupported file types
 - [x] `getLog` is admin-only (403 otherwise) via `IGroupManager::isAdmin()`
@@ -451,8 +419,8 @@ badge are all built. One SDD feature — group overrides — is stored but not h
     paths (the GD fallback decodes only PNG/JPEG; the PDF renderer cannot place an SVG), and
     storing attacker-authored markup that ImageMagick may parse with external-entity or
     remote-fetch delegates is not worth the one path where it did
-- [x] Flattening block — a real `NcCheckboxRadioSwitch` toggle plus a DPI slider, rendered
-  only when the server reports `flattenAvailable` **and** the config can touch a PDF
+- [x] ~~Flattening block~~ — removed with the feature; see
+  [No external binaries](#no-external-binaries)
 - [x] **"Where to apply" rebuilt after both of its fields turned out to be traps.** Each was
   stored verbatim, and each had a plausible wrong value that disabled watermarking with
   nothing on screen to explain it:
@@ -572,6 +540,68 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ---
 
+## No external binaries
+
+**Position:** done. The app spawns **no processes** — no `exec()`, `shell_exec()`,
+`proc_open()` or any equivalent, in production code or in tests. `grep -rn "exec("` over
+`lib/` and `tests/` returns nothing.
+
+**Why it matters here.** Every binary dependency this app had came with the same tail of
+problems: a runtime probe to see whether the host had it, a feature that silently changed
+shape when it did not, a package name that differed between the RHEL 9 target and the
+Debian dev containers, an unverified claim about which distro repository ships it, and a
+block of tests that skipped on whichever machine happened to lack it. The suite's skip
+count used to depend on the developer's laptop.
+
+### What was removed
+
+| Removed | Was used for | Consequence |
+| --- | --- | --- |
+| `PdfFlattener` + `pdftoppm` | Rasterising pages so the watermark could not be stripped | **Tamper resistance is gone.** See [Flattened PDFs](#flattened-rasterised-pdfs--removed) |
+| `PdfNormalizer` + `qpdf` | `--decrypt` on files locked with an empty password | **Empty-password encrypted PDFs are now skipped** rather than watermarked |
+| `BinaryLocator` | Probing `PATH` for both of the above | Nothing left to probe |
+
+Neither loss is invisible, and neither is being papered over:
+
+- **Encrypted PDFs.** tc-lib-pdf declines every encrypted document, including the
+  permission-flags-only case that is not real protection — a reader opens those without
+  ever prompting. `qpdf --decrypt` used to recover them. Now they take the ordinary
+  skip-plus-audit path. Pinned by `testEncryptedPdfIsRefusedCleanly`, which covers both a
+  real password and an empty one, and asserts the refusal is *clean*: no destination
+  written, source byte-identical
+- **Tamper resistance.** There is no pure-PHP replacement, because rasterising a PDF means
+  bundling a PDF interpreter. The honest position is that this app deters and traces; it
+  does not prevent
+
+### What it bought
+
+- [x] **Zero skips, on every host.** 198 PHPUnit tests, none conditional on a binary. The
+  suite result no longer depends on which machine ran it, which is worth more than it
+  sounds — the flattener's rasterise cases were green on the developer's laptop and
+  skipped in CI for most of their life
+- [x] **No `exec()` anywhere, including fixtures.** The encrypted-PDF fixtures were built by
+  shelling out to `qpdf --encrypt`; they now use tc-lib-pdf's own encryption support
+  (`Com\Tecnick\Pdf\Encrypt\Encrypt`), so the test suite spawns nothing either. A test
+  helper that shells out is still a process spawn in the repository
+- [x] **One platform requirement left**, `ext-bcmath`, and it is declared in
+  `appinfo/info.xml` so Nextcloud refuses to enable the app without it instead of failing
+  at render time
+- [x] **Two open questions closed by deletion** rather than answered: the RHEL 9 package
+  names for `qpdf` and `poppler-utils`, and the unmeasured memory ceiling of the
+  page-at-a-time rasterise loop
+
+### Open {#open-nobinary}
+
+- [ ] The **schema column drop is one-way.** `Version1002Date20260730000000` drops
+  `flatten_pdf` and `flatten_dpi`; Nextcloud migrations have no `down()`, and re-adding the
+  columns would not bring the feature back. An admin who had flattening enabled loses it
+  silently on upgrade — worth a release note, since the audit log will not explain why
+  newly watermarked PDFs are suddenly selectable text
+- [ ] Nothing enforces the no-`exec()` rule mechanically. A static-analysis rule or a
+  one-line grep in CI would keep it true; right now it rests on review
+
+---
+
 ## PDF stack migration to tc-lib-pdf
 
 **Position:** steps 1–8 done; the migration is **complete**. The PDF path moved off
@@ -597,11 +627,10 @@ A full round-trip — `setImportSourceFile` → `importPage` → `page->add()` �
 `useImportedPage` → `getOutPDFString` — placed the imported page at 210×297 and `pdftotext`
 still returned its text, so the import is a Form XObject and the text layer survives.
 
-**What this does not buy, and must not be lost in the move:** tc-lib-pdf refuses *all*
-encrypted documents, including the empty-password permission-flag case that
-`qpdf --decrypt` recovers today. The normalizer therefore **stays**, narrowed to
-decryption — dropping it would close the compressed-xref gap and reopen a smaller one.
-See step 5 under [Sequencing](#migration-plan).
+**What this does not buy:** tc-lib-pdf refuses *all* encrypted documents, including the
+empty-password permission-flag case. The normalizer was kept for exactly that, narrowed to
+decryption (step 5) — and then **deleted** when external binaries were removed altogether,
+so that gap is now simply open. See [No external binaries](#no-external-binaries).
 
 ### Sequencing {#migration-plan}
 
@@ -877,7 +906,9 @@ read, and one SDD type is still missing.
 - [x] `watermark_config` and `watermark_log` created by migration
   `Version1000Date20260625000000`
 - [x] Scope columns `mime_types` and `folder_tag`, both now validated on save
-- [x] Flattening columns `flatten_pdf` (boolean, default false) and `flatten_dpi` (smallint,
+- [x] ~~Flattening columns `flatten_pdf` and `flatten_dpi`~~ — added, then **dropped** by
+  `Version1002Date20260730000000` with the feature. Original note, for the record: (boolean,
+  default false) and (smallint,
   default 150), added by `Version1001Date20260727000000`
 - [x] `WatermarkConfigMapper` — `findAll`, `findByUser`, `findGlobal`, `findById`,
   `findByUserAndMimeType`
@@ -890,8 +921,9 @@ read, and one SDD type is still missing.
 ### Open {#open-env}
 
 - [ ] Confirm **`php-bcmath`** is in RHEL 9 AppStream on the real target build, alongside the
-  same open question for `qpdf` and `poppler-utils`. The extension is wired everywhere it needs
-  to be; only the RHEL package availability is unverified from here
+  the last such question standing — `qpdf` and `poppler-utils` are no longer used. The
+  extension is wired everywhere it needs to be; only the RHEL package availability is
+  unverified from here
 - [ ] Headless LibreOffice / Collabora in the Docker dev environment — blocked on Office
   support being designed
 - [ ] PHP `exif` / metadata libraries, for the invisible metadata watermark
@@ -915,26 +947,15 @@ read, and one SDD type is still missing.
   117 MB mirror. Two ~10 KB JSON files, metrics only, found through the global `K_PATH_FONTS`.
   See `resources/fonts/README.md`, including the unresolved licence provenance
 - [x] `Imagick` preferred with a `GD` fallback; both paths covered by `ImageWatermarkerTest`
-- [x] **`qpdf` for `PdfNormalizer`** — not optional in practice: without it most real-world
-  PDFs are skipped rather than watermarked. `dnf install qpdf` on RHEL 9; `apt-get install
-  qpdf` on the Debian dev images, where the compose entrypoint and `ci/php.Dockerfile` both
-  install it so the compressed-xref cases actually run instead of skipping
-  - chosen over the alternatives on the grounds that the app **already shells out** to a
-    poppler binary, so this adds a package rather than an architecture. `pdftk` would have
-    dragged in a JRE for the same job; Ghostscript re-distills the whole document and can shift
-    fonts and colour; the pure-PHP options are either commercial (setasign's FPDI PDF-Parser,
-    SetaPDF-Core) or unmaintained (`pauln/tcpdi`), and an unmaintained PDF *parser* is a
-    security surface this app would then own
-  - probed on PATH via `BinaryLocator`, shared with `PdfFlattener`, for the same
-    RHEL-vs-Debian reason
-- [x] **`poppler-utils` for `pdftoppm`** — optional, and only for flattening. `dnf install
-  poppler-utils` on RHEL 9 (AppStream, no EPEL); `apt-get install poppler-utils` on the Debian
-  dev images. Installed by both compose files' entrypoints, guarded so a restart is not a
-  re-download, and documented in the README
-  - **Imagick is deliberately not a fallback rasteriser.** On RHEL 9 that path is doubly weak:
-    ImageMagick is not in base or AppStream at all (EPEL only), and its PDF delegate *is*
-    Ghostscript, disabled by `policy.xml` by default over the Ghostscript CVEs. Requiring EPEL
-    to reintroduce a Ghostscript dependency this app just avoided is a bad trade
+- [x] ~~**`qpdf`** for `PdfNormalizer` and ~~**`poppler-utils`** for `pdftoppm`~~ — both
+  **removed**. See [No external binaries](#no-external-binaries) for what went with them
+  - kept here because the reasoning still applies to any future proposal to shell out.
+    `qpdf` was chosen over `pdftk` (which drags in a JRE) and Ghostscript (which re-distills
+    the document and can shift fonts and colour). **Imagick was deliberately never a
+    fallback rasteriser**: on RHEL 9 it is EPEL-only and its PDF delegate *is* Ghostscript,
+    disabled by `policy.xml` by default over the Ghostscript CVEs
+  - the argument that eventually beat all of them was not about which binary: it was that
+    every one of them makes behaviour depend on the host
 - [x] Frontend: `@nextcloud/vue` `^9.8`, `@nextcloud/axios` `^2.5`, `@nextcloud/files` `^3.9`
 - [x] `sabre/dav` pinned to **4.7.0** in `require-dev`, the exact version NC 31.0.14 ships —
   see the shadowing note under [Testing](#dav-plugin-test-harness)
@@ -971,8 +992,8 @@ read, and one SDD type is still missing.
   (step 7 of the [migration](#pdf-stack-migration-to-tc-lib-pdf)), so its licence no longer
   applies to anything here; tc-lib-pdf is LGPL-3.0, as TCPDF already was
   - **the capability gap outlived the licence one**: password-protected PDFs are still
-    refused, because tc-lib-pdf refuses every encrypted document and `qpdf --decrypt` only
-    rescues the empty-password ones. That is now a plain feature limit with no licensing
+    refused, because tc-lib-pdf refuses every encrypted document — and since `qpdf` was
+    removed, the empty-password case is refused too. A plain feature limit with no licensing
     dimension, documented in the README
   - a new provenance question replaced it, and it is smaller but real: the committed font
     metrics under `resources/fonts` come from a mirror whose `core/LICENSE` is a 0-byte
@@ -1012,9 +1033,9 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 229 PHPUnit tests (1–14 skip depending on which of `pdftoppm` and `qpdf` the
-host has) and 77 Jest tests. The DAV layer, which used to be the blind spot every delivery bug
-hid in, now has 48 of them.
+**Position:** 198 PHPUnit tests and 69 Jest tests, **all of them running on every host** —
+no test depends on an external binary any more. The DAV layer, which used to be the blind spot
+every delivery bug hid in, now has 48 of them.
 
 ### Open {#open-testing}
 
@@ -1025,7 +1046,7 @@ hid in, now has 48 of them.
 - [ ] Psalm or PHPStan: neither `php -l` nor php-cs-fixer does any type analysis, so the DAV
   stubs' fidelity to core is unchecked by any tool
 - [ ] `ApiControllerTest` gaps: `deleteConfig` and `getLog` have no tests. `getConfig` and
-  `saveConfig` are covered for the flattening and scope paths only
+  `saveConfig` are covered for the scope paths only
 - [ ] `WatermarkOnUploadJobTest` — an unknown user and a deleted file must be skipped rather
   than fatal, and the acting user must reach `watermarkInPlace()`
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest` — pending those services
@@ -1100,36 +1121,20 @@ only by driving a real instance by hand:
 Counts below are PHPUnit *test cases*, so a data-provider-driven test contributes one per row —
 which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
 
-- [x] `WatermarkServiceTest` (47) — config resolution (user / global / default), renderer
+- [x] `WatermarkServiceTest` (42) — config resolution (user / global / default), renderer
   delegation per MIME type, skip / filter / already-watermarked paths, audit row written after
   the write lands, explicit `?IUser $actor` overriding the session, `deliveryTriggerFor()` per
-  node, flattening order and fail-closed behaviour, and an unusable stored folder tag degrading
+  node, and an unusable stored folder tag degrading
   instead of crashing
   - the **group** resolution case is absent because group resolution does not exist
-- [x] `PdfNormalizerTest` (6) — empty-password encryption removed and the result readable, a
-  real password and garbage bytes both refused with no partial file left behind, a missing
-  source failing before it shells out, `isAvailable()` agreeing with PATH in both directions,
-  and the missing-binary path throwing rather than silently writing nothing
-  - the rewrite cases skip without `qpdf`, in the same shape as `PdfFlattenerTest`. Mocking the
-    binary away would assert nothing worth asserting: the claim under test is what qpdf
-    *actually* produces and that the renderer can then read it, which no mock can make
-  - one test went with FPDI's removal: the structural-rewrite case existed to prove a
-    compressed-xref file became readable, which the renderer now does natively
 - [x] `PdfWatermarkerTest` (25) — text / image / combined overlays, multi-page, corrupt PDF, a
-  compressed-xref PDF 1.5 watermarked with **no external binary** (the normalizer mocked
-  unavailable, which is what proves it), the fixture still structurally reproducing that case,
-  an empty-password file rescued through `qpdf` and a real-password one still refused, no
-  scratch rewrite left in the temp dir, the rotation convention tilting the text uphill to match
-  the settings preview, and the tile geometry: no overlap at any rotation, a lattice spanning
-  the whole page, and off-page tiles keeping their negative offsets (the regression test for the
-  smear, verified to fail against the old placement code)
-- [x] `PdfFlattenerTest` (11) — no extractable text layer (the actual security claim), one
-  output page per source page, geometry preserved for non-A4 and landscape, DPI honoured and
-  clamped, corrupt and missing sources failing closed, the page ceiling, and no leftover page
-  bitmaps
-  - the rasterise cases skip on a host without `pdftoppm`, which is a supported configuration.
-    They run for real in the container, where they caught two bugs the host run could not see:
-    the wrong FPDI base class, and a points-read-as-millimetres unit mismatch
+  compressed-xref PDF 1.5 watermarked with no external binary, the fixture still structurally
+  reproducing that case, encrypted PDFs refused cleanly with **both** a real and an empty user
+  password (fixtures built with the renderer's own encryption, so no `exec()`), the rotation
+  convention tilting the text uphill to match the settings preview, and the tile geometry: no
+  overlap at any rotation, a lattice spanning the whole page, and off-page tiles keeping their
+  negative offsets (the regression test for the smear, verified to fail against the old
+  placement code)
 - [x] `ImageWatermarkerTest` (10) — JPEG / PNG / WEBP output, GD fallback, opacity, rotation
 - [x] `ApiControllerScopeTest` (11) — unsupported and mistyped MIME types rejected, blank
   normalised to null, a tag name rejected, a non-existent tag id rejected, a real tag accepted,

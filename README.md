@@ -23,65 +23,32 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 | PHP | 8.2 or 8.3 |
 | PHP extension | `imagick` (preferred) or `gd` |
 | PHP extension | `bcmath` (required by the PDF renderer) |
-| `qpdf` | optional — only for PDFs encrypted with an empty password |
-| `pdftoppm` (poppler-utils) | optional — only for flattened PDFs |
 | Composer | 2.x |
 | Node.js | >= 20 |
 | npm | >= 10 |
 
-### Optional: flattened (rasterised) PDFs
+### No external binaries
 
-Flattening rebuilds each watermarked page as an image, so the watermark cannot be
-stripped as a separate layer. It needs the `pdftoppm` binary; tc-lib-pdf, which does the
-rebuild, ships via Composer and needs nothing extra.
+The app runs entirely inside PHP. It spawns no processes — no `exec()`, no shelling out
+to `qpdf`, `pdftoppm`, Ghostscript or anything else — so there is nothing to install
+beyond the PHP extensions above, and nothing that behaves differently because a host is
+missing a package.
 
-```bash
-dnf install poppler-utils      # RHEL 9 — in AppStream, no EPEL needed
-apt-get install poppler-utils  # Debian / Ubuntu, including the dev containers
-```
+Two consequences worth knowing:
 
-Without the binary the setting is hidden from the admin form and rejected by the API,
-so the feature is simply absent rather than half-working. Note that flattening removes
-the text layer — no selection, copy, search or screen-reader access — so weigh it
-against your accessibility obligations before switching it on.
+- **PDF 1.5+ documents with a compressed cross-reference table are watermarked normally**,
+  with no configuration. Most modern producers emit these, including whatever wrote two of
+  the three sample PDFs Nextcloud places in every new account. The renderer reads them
+  natively.
+- **Encrypted PDFs are skipped.** The renderer declines every encrypted document, and that
+  includes files "encrypted" with an empty password purely to set permission flags, which
+  are not really protected and open without prompting. Such a file is left exactly as it
+  was, an entry is written to the audit log, and an on-demand apply returns an error naming
+  it. Nothing is corrupted and no unwatermarked copy is served in place of a watermarked
+  one — the watermark simply does not get applied.
 
-### PDF 1.5 and later
-
-PDF 1.5 introduced the option of storing a document's cross-reference table as a
-compressed stream, and most modern producers now do — including whatever wrote two of the
-three sample PDFs Nextcloud places in every new account.
-
-**These are watermarked normally, with no external binary and no configuration.** The
-renderer is tc-lib-pdf, whose parser reads them natively. Earlier versions of this app
-skipped such files, and then handled them only where `qpdf` was installed; neither caveat
-applies any more.
-
-The watermark is a real content stream, so **the text layer survives** — this is not
-flattening, and costs none of the accessibility that flattening does. The user's file is
-never modified.
-
-### Optional: `qpdf`, for empty-password PDFs
-
-Some PDFs are "encrypted" with an empty password purely to set permission flags, and
-circulate freely regardless. The renderer refuses every encrypted document, so where
-`qpdf` is present the app rewrites those files and watermarks the rewrite:
-
-```bash
-dnf install qpdf      # RHEL 9
-apt-get install qpdf  # Debian / Ubuntu, including the dev containers
-```
-
-The rewrite only happens after the renderer has actually refused a file, so documents that
-already work are never touched and pay nothing for it. The rewrite is a temp copy, deleted
-before the request ends.
-
-**Without `qpdf`** those files are **skipped**: the file is left exactly as it was, an
-entry is written to the audit log, and an on-demand apply returns an error naming the
-file. Nothing is corrupted and no unwatermarked copy is served in place of a watermarked
-one — the watermark simply does not get applied.
-
-What is refused either way: documents that need a **real password** to open, and files
-damaged beyond qpdf's repair.
+The watermark is a real content stream, so **the text layer survives**: selection, copy,
+search and screen-reader access all keep working. The user's file is never modified.
 
 ### Fonts
 
@@ -101,7 +68,7 @@ files_watermark/
 │   ├── Controller/   # REST API controller
 │   ├── Db/           # Entities and QBMapper classes
 │   ├── Listener/     # ShareCreatedEvent listener
-│   ├── Service/      # WatermarkService, PdfWatermarker, PdfNormalizer, ImageWatermarker
+│   ├── Service/      # WatermarkService, PdfWatermarker, ImageWatermarker
 │   └── Settings/     # Admin settings panel registration
 ├── resources/
 │   └── fonts/        # Helvetica metrics for the PDF renderer (see the README there)

@@ -5,10 +5,8 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
-use OCA\FilesWatermark\Service\PdfNormalizer;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\LoggerInterface;
 
 /**
  * Functional tests for {@see PdfWatermarker}. They drive the real tc-lib-pdf
@@ -23,21 +21,9 @@ class PdfWatermarkerTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		$this->watermarker = new PdfWatermarker(new PdfNormalizer($this->createMock(LoggerInterface::class)));
+		$this->watermarker = new PdfWatermarker();
 		$this->tmpDir = sys_get_temp_dir() . '/wm_pdf_test_' . bin2hex(random_bytes(6));
 		mkdir($this->tmpDir, 0700, true);
-	}
-
-	/**
-	 * A watermarker whose normalizer reports no `qpdf` on the host, whatever this
-	 * machine actually has installed. Every assertion about the *without*-qpdf
-	 * behaviour has to use this, or the result depends on the test host.
-	 */
-	private function watermarkerWithoutNormalizer(): PdfWatermarker {
-		$normalizer = $this->createMock(PdfNormalizer::class);
-		$normalizer->method('isAvailable')->willReturn(false);
-		$normalizer->expects($this->never())->method('normalize');
-		return new PdfWatermarker($normalizer);
 	}
 
 	protected function tearDown(): void {
@@ -368,7 +354,7 @@ class PdfWatermarkerTest extends TestCase {
 		$before = (string)file_get_contents($source);
 		$dest = $this->tmpDir . '/out.pdf';
 
-		$this->watermarkerWithoutNormalizer()->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
+		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
 
 		$this->assertFileExists($dest);
 		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
@@ -417,83 +403,46 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * The one case the normalizer still exists for, end to end.
+	 * Encrypted PDFs are refused, and the refusal has to be *clean*: the same
+	 * RuntimeException a corrupt file raises, no destination written, the user's file
+	 * untouched. `WatermarkService` turns that into a skip plus an audit row, so a
+	 * partial failure here would deliver a half-written document.
 	 *
-	 * An empty user password with the permission flags set is not real protection — a
-	 * reader opens the file without ever prompting — but tc-lib-pdf refuses it like any
-	 * other encrypted document. `qpdf --decrypt` strips it and the watermark goes on.
+	 * Both fixtures matter. A real user password is protection the app has no business
+	 * bypassing. An **empty** user password is not protection at all — it only sets
+	 * permission flags, and a reader opens the file without ever prompting — but it is
+	 * refused just the same, because the parser declines every encrypted document.
+	 * That case used to be rescued by shelling out to `qpdf --decrypt`; removing the
+	 * external binaries removed the rescue with it, which is the trade this test pins.
 	 *
-	 * This is also what pins the *narrowing*: the rescue is now triggered only by
-	 * `ImportUnsupportedFeatureException`, so if that aim is ever wrong this stops
-	 * working while every other test stays green.
+	 * The fixtures are built with the renderer's own encryption support rather than an
+	 * external tool, so this suite spawns no processes either.
+	 *
+	 * @dataProvider encryptedPdfProvider
 	 */
-	public function testEmptyPasswordEncryptionIsRescuedByTheNormalizer(): void {
-		$this->requireQpdf();
-
-		$plain = $this->createSourcePdf(1);
-		$source = $this->tmpDir . '/permonly.pdf';
-		exec(sprintf(
-			'qpdf --encrypt "" ownerpw 256 -- %s %s 2>&1',
-			escapeshellarg($plain),
-			escapeshellarg($source),
-		), $output, $status);
-		$this->assertSame(0, $status, 'could not build the fixture: ' . implode(' ', $output));
-
-		$scratchBefore = count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []);
-		$dest = $this->tmpDir . '/out.pdf';
-
-		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
-
-		$this->assertFileExists($dest);
-		$this->assertStringContainsString('Alice', $this->pageContent($dest));
-		$this->assertSame(
-			$scratchBefore,
-			count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []),
-			'the decrypted scratch copy of the user file outlived the call',
-		);
-	}
-
-	/**
-	 * A password-protected document is the case qpdf cannot rescue either, and it
-	 * must not be mistaken for one it can: the refusal has to survive the pre-pass
-	 * and stay clean.
-	 */
-	public function testPasswordProtectedPdfIsStillRefusedWithQpdfAvailable(): void {
-		$this->requireQpdf();
-
-		$plain = $this->createSourcePdf(1);
+	public function testEncryptedPdfIsRefusedCleanly(string $userPassword, string $label): void {
 		$source = $this->tmpDir . '/encrypted.pdf';
-		$scratchBefore = count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []);
-		exec(sprintf(
-			'qpdf --encrypt secret secret 256 -- %s %s 2>&1',
-			escapeshellarg($plain),
-			escapeshellarg($source),
-		), $output, $status);
-		$this->assertSame(0, $status, 'could not build the encrypted fixture: ' . implode(' ', $output));
-
+		$this->writeEncryptedPdf($source, $userPassword);
+		$before = (string)file_get_contents($source);
 		$dest = $this->tmpDir . '/out.pdf';
-		$this->expectException(\RuntimeException::class);
-		$this->expectExceptionMessage('Cannot process PDF');
 
 		try {
 			$this->watermarker->apply($source, $dest, $this->makeConfig('text'), []);
-		} finally {
-			$this->assertFileDoesNotExist($dest, 'a refused render must not leave a partial file behind');
-			$this->assertSame(
-				$scratchBefore,
-				count(glob(sys_get_temp_dir() . '/wm_norm_*') ?: []),
-				'the failed rewrite left its scratch file behind',
-			);
+			$this->fail("Expected an encrypted PDF ($label) to be refused.");
+		} catch (\RuntimeException $e) {
+			$this->assertStringContainsString('Cannot process PDF', $e->getMessage());
 		}
+
+		$this->assertFileDoesNotExist($dest, 'a refused render must not leave a partial file behind');
+		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
 	}
 
-	private function requireQpdf(): void {
-		foreach (explode(PATH_SEPARATOR, getenv('PATH') ?: '') as $dir) {
-			if ($dir !== '' && is_executable(rtrim($dir, '/') . '/' . PdfNormalizer::BINARY)) {
-				return;
-			}
-		}
-		$this->markTestSkipped(PdfNormalizer::BINARY . ' is not installed on this host');
+	/** @return array<string, array{string, string}> */
+	public static function encryptedPdfProvider(): array {
+		return [
+			'real user password' => ['s3cret', 'real password'],
+			'empty user password' => ['', 'permission flags only'],
+		];
 	}
 
 	private function makeConfig(string $type): WatermarkConfig {

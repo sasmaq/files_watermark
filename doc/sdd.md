@@ -200,6 +200,11 @@ Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component libra
 | `tecnickcom/tc-lib-pdf` (PHP) | PDF page import, overlay rendering and writing |
 | `tecnickcom/tc-lib-pdf-parser` (PHP) | PDF parsing, including PDF 1.5+ compressed cross-reference streams |
 | `ext-bcmath` (PHP) | Required by `tc-lib-pdf`; the app will not enable without it |
+
+No external binaries. The app spawns no processes — no `exec()` and no shelling out to
+`qpdf`, `pdftoppm` or Ghostscript — so a host needs nothing beyond PHP and the extensions
+above. The PDF flattening feature, which rasterised each page through an external
+renderer, was removed for this reason.
 | PHP `Imagick` extension | Preferred image watermarking (better quality) |
 | PHP `GD` extension | Image watermarking fallback |
 | LibreOffice / Collabora (headless) | Office document conversion/rendering for watermarking |

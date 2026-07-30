@@ -4,21 +4,30 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Service;
 
-use Com\Tecnick\Pdf\Import\ImportUnsupportedFeatureException;
 use Com\Tecnick\Pdf\Tcpdf;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 
 /**
  * Draws the watermark over every page of a PDF, keeping the original pages as real
- * content rather than pictures of themselves — the text layer survives, unlike
- * {@see PdfFlattener}.
+ * content. The overlay is a content stream, so the text layer survives: selection,
+ * copy, search and screen-reader access all keep working.
+ *
+ * The trade-off is deliberate and worth knowing. A separate layer can be stripped by
+ * a determined user with ordinary tools. A `PdfFlattener` once rebuilt each page as a
+ * bitmap to prevent that, and was removed along with every other external-binary
+ * dependency — rasterising needs a PDF interpreter, which is not something to bundle.
+ * This app deters and traces; it does not prevent.
  *
  * Renders with tc-lib-pdf, the successor to TCPDF by the same author. It replaced
  * FPDI + TCPDF because its parser reads PDF 1.5+ documents whose cross-reference
  * table is a compressed stream, which the free FPDI parser refuses and which most
- * modern producers emit. {@see PdfNormalizer} is still the fallback for what
- * tc-lib-pdf will not open — anything encrypted, including the empty-password
- * permission-flag case.
+ * modern producers emit.
+ *
+ * Pure PHP, and deliberately so: this app spawns no processes. Documents the parser
+ * will not open — anything encrypted, including files locked with an empty password
+ * purely to set permission flags — are refused here and skipped by the caller. An
+ * external rewriter (`qpdf --decrypt`) used to rescue that case and was removed with
+ * the rest of the binary dependencies.
  *
  * Two things about this library are unlike TCPDF and easy to get wrong:
  *
@@ -34,48 +43,36 @@ class PdfWatermarker {
 	private const FONT_FAMILY = 'helvetica';
 	private const FONT_STYLE = 'B';
 
-	public function __construct(
-		private PdfNormalizer $normalizer,
-	) {
+	public function __construct() {
 		// Before any font call. Also claimed at app bootstrap; see PdfFontPath for why
 		// this is a global constant rather than an injected path.
 		PdfFontPath::register();
 	}
 
 	public function apply(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
-		$normalized = null;
-		try {
-			// Points, so user units and PDF units coincide and the page geometry read
-			// off the imported template needs no conversion.
-			$pdf = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath, $config)]);
-			[$sourceId, $pageCount, $normalized] = $this->openSource($pdf, $sourcePath);
+		// Points, so user units and PDF units coincide and the page geometry read
+		// off the imported template needs no conversion.
+		$pdf = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath, $config)]);
+		[$sourceId, $pageCount] = $this->openSource($pdf, $sourcePath);
 
-			for ($page = 1; $page <= $pageCount; $page++) {
-				// Adds a page matching the source page's size and places the imported
-				// page on it, which is FPDI's importPage + AddPage + useTemplate in one
-				// call. Mixed-size and landscape documents survive as a result.
-				$template = $pdf->addPageFromImport($sourceId, $page);
-				$width = $pdf->toUnit($template->getWidth());
-				$height = $pdf->toUnit($template->getHeight());
+		for ($page = 1; $page <= $pageCount; $page++) {
+			// Adds a page matching the source page's size and places the imported
+			// page on it, which is FPDI's importPage + AddPage + useTemplate in one
+			// call. Mixed-size and landscape documents survive as a result.
+			$template = $pdf->addPageFromImport($sourceId, $page);
+			$width = $pdf->toUnit($template->getWidth());
+			$height = $pdf->toUnit($template->getHeight());
 
-				if (in_array($config->getType(), ['text', 'combined'], true)) {
-					$this->applyTextOverlay($pdf, $config, $placeholders, $width, $height);
-				}
-
-				if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath()) {
-					$this->applyImageOverlay($pdf, $config, $width, $height);
-				}
+			if (in_array($config->getType(), ['text', 'combined'], true)) {
+				$this->applyTextOverlay($pdf, $config, $placeholders, $width, $height);
 			}
 
-			$this->write($pdf, $destPath);
-		} finally {
-			// The rewritten copy is scratch: everything needed has been read by the time
-			// the output is written, and on the failure paths it is worthless. Either
-			// way it is a plaintext copy of user content and must not outlive the call.
-			if ($normalized !== null && is_file($normalized)) {
-				unlink($normalized);
+			if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath()) {
+				$this->applyImageOverlay($pdf, $config, $width, $height);
 			}
 		}
+
+		$this->write($pdf, $destPath);
 	}
 
 	/**
@@ -118,71 +115,22 @@ class PdfWatermarker {
 	}
 
 	/**
-	 * Register `$sourcePath` for import, falling back to a normalized rewrite of it.
+	 * Register `$sourcePath` for import and return its id and page count.
 	 *
-	 * The direct read is tried first, so documents that already work are never rewritten
-	 * and cost nothing. The rewrite is then aimed at exactly one failure: encryption.
-	 * tc-lib-pdf refuses every encrypted document and says so with its own exception
-	 * type, and `qpdf --decrypt` recovers the empty-password ones — files locked purely
-	 * to set permission flags, which a reader opens without ever prompting.
+	 * Every parse failure is final. There is no rescue pass: the app spawns no
+	 * processes, so a document tc-lib-pdf cannot open — encrypted, or damaged beyond
+	 * its tolerance — is refused here and the trigger's own policy takes over (skip
+	 * plus an audit row for the in-place triggers, deny for `on_share`).
 	 *
-	 * @return array{0: string, 1: int, 2: string|null} source id, page count, and the
-	 *                                                  temp rewrite to delete, if one was made
+	 * @return array{0: string, 1: int} source id and page count
 	 */
 	private function openSource(Tcpdf $pdf, string $sourcePath): array {
 		try {
 			$sourceId = $pdf->setImportSourceFile($sourcePath);
-			return [$sourceId, $pdf->getSourcePageCount($sourceId), null];
+			return [$sourceId, $pdf->getSourcePageCount($sourceId)];
 		} catch (\Exception $cause) {
-			// Encryption only. tc-lib-pdf raises this distinctly, which FPDI never did,
-			// so the rescue can be aimed at the one case qpdf actually fixes instead of
-			// being tried against every parse failure. A corrupt or truncated file now
-			// fails immediately rather than paying for a rewrite that cannot help it.
-			if (!$cause instanceof ImportUnsupportedFeatureException) {
-				throw $this->unreadable($cause);
-			}
-
-			// No rewriter on this host: behave exactly as if it did not exist, keeping
-			// the parser's own exception as the cause so callers see why the file was
-			// refused rather than a complaint about a missing binary.
-			if (!$this->normalizer->isAvailable()) {
-				throw $this->unreadable($cause);
-			}
-
-			$normalized = $this->normalizeSource($sourcePath, $cause);
-
-			try {
-				$sourceId = $pdf->setImportSourceFile($normalized);
-				return [$sourceId, $pdf->getSourcePageCount($sourceId), $normalized];
-			} catch (\Exception $retry) {
-				unlink($normalized);
-				// The rewrite parsed for qpdf but still not for the renderer, so the
-				// second failure is the informative one.
-				throw $this->unreadable($retry);
-			}
-		}
-	}
-
-	/** @throws \RuntimeException if the rewrite fails, chaining the original parse error */
-	private function normalizeSource(string $sourcePath, \Exception $cause): string {
-		$normalized = tempnam(sys_get_temp_dir(), 'wm_norm_');
-		if ($normalized === false) {
 			throw $this->unreadable($cause);
 		}
-
-		try {
-			$this->normalizer->normalize($sourcePath, $normalized);
-		} catch (\RuntimeException) {
-			// qpdf could not read it either — a real password, or damage past repair.
-			// The original parse error stays the cause: it describes the document,
-			// while this one only says the rescue attempt failed.
-			if (is_file($normalized)) {
-				unlink($normalized);
-			}
-			throw $this->unreadable($cause);
-		}
-
-		return $normalized;
 	}
 
 	private function applyTextOverlay(
