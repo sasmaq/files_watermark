@@ -13,7 +13,7 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-30, both green: **198 PHPUnit** tests and **69 Jest** tests, with
+Suites re-run 2026-07-30, both green: **206 PHPUnit** tests and **69 Jest** tests, with
 **zero skips on every host**. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 That last point is new and worth stating plainly: the suite no longer varies by machine.
@@ -35,8 +35,8 @@ has any — see [No external binaries](#no-external-binaries).
 | [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone from the tree | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
-| [Security](#security) | Two real vulnerabilities found and fixed | Rate limiting, legacy `image_path` cleanup, font-metrics provenance |
-| [Testing](#testing) | 198 PHPUnit + 69 Jest, zero skips anywhere | Cypress E2E, the full trigger matrix, static analysis |
+| [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
+| [Testing](#testing) | 206 PHPUnit + 69 Jest, zero skips anywhere | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -77,7 +77,6 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [x] [PDF 1.5+ with compressed xref](#open-1) — read natively by the renderer. No
   configuration, no external binary, no host-dependent behaviour
 - [ ] [Archive caps](#open-3) are class constants, not configuration
-- [ ] [Legacy `image_path` rows](#open-security) still sit in the database looking valid
 - [ ] [Rate limiting](#open-security) for on-demand applies on large files
 - [ ] [Public file-drop uploads](#open-3) are watermarked by neither the inline path nor the job
 
@@ -575,7 +574,7 @@ Neither loss is invisible, and neither is being papered over:
 
 ### What it bought
 
-- [x] **Zero skips, on every host.** 198 PHPUnit tests, none conditional on a binary. The
+- [x] **Zero skips, on every host.** 206 PHPUnit tests, none conditional on a binary. The
   suite result no longer depends on which machine ran it, which is worth more than it
   sounds — the flattener's rasterise cases were green on the developer's laptop and
   skipped in CI for most of their life
@@ -597,6 +596,8 @@ Neither loss is invisible, and neither is being papered over:
   columns would not bring the feature back. An admin who had flattening enabled loses it
   silently on upgrade — worth a release note, since the audit log will not explain why
   newly watermarked PDFs are suddenly selectable text
+  - the app version is bumped to **1.2.0**, without which Nextcloud would not run the
+    migration at all
 - [ ] Nothing enforces the no-`exec()` rule mechanically. A static-analysis rule or a
   one-line grep in CI would keep it true; right now it rests on review
 
@@ -907,7 +908,12 @@ read, and one SDD type is still missing.
   `Version1000Date20260625000000`
 - [x] Scope columns `mime_types` and `folder_tag`, both now validated on save
 - [x] ~~Flattening columns `flatten_pdf` and `flatten_dpi`~~ — added, then **dropped** by
-  `Version1002Date20260730000000` with the feature. Original note, for the record: (boolean,
+  `Version1002Date20260730000000`, and the migration that added them (1001) deleted outright
+  since the pair was a no-op. **The version gap is deliberate.** A fresh install now takes the
+  final schema from 1000 and the cleanup is a no-op; an instance that already applied 1001
+  needs the cleanup, because 1000 will not re-run for it. `SchemaConvergenceTest` pins that
+  both paths end with identical columns, and fails if someone folds 1002 away as the next
+  obvious simplification. Original note, for the record: (boolean,
   default false) and (smallint,
   default 150), added by `Version1001Date20260727000000`
 - [x] `WatermarkConfigMapper` — `findAll`, `findByUser`, `findGlobal`, `findById`,
@@ -984,9 +990,19 @@ read, and one SDD type is still missing.
 
 ### Open {#open-security}
 
-- [ ] **Legacy `image_path` rows.** Configs that predate the reference check survive in the
-  database and still look valid, even though they now resolve to no image. A migration should
-  clear them; admins must re-upload either way
+- [x] **Legacy `image_path` rows — cleared** by `Version1003Date20260730120000`'s
+  `postSchemaChange()`. Configs predating the reference check survived in the database and
+  still looked valid in the admin form while resolving to no image; they are now nulled, which
+  is the honest state. Affected admins must re-upload, which was always true
+  - the test is `WatermarkImageStore::isReference()`, not a SQL pattern, so there is one
+    definition of a valid reference and it is the one the renderers use. It also keeps the
+    step portable — that regex is not something MySQL, PostgreSQL and SQLite would agree on
+  - the update is skipped entirely when nothing is stale, so a healthy instance does not take
+    a write on every upgrade, and chunked at 500 ids so a large one cannot outgrow a
+    parameter limit
+  - `LegacyImagePathCleanupTest` pins which rows are chosen — a valid reference, an absolute
+    path, a traversal attempt, a non-hex name and an empty string — and mutation-tested:
+    clearing every row instead of the stale ones fails it
 - [ ] Rate-limit or queue on-demand applies for large files — nothing throttles them today
 - [x] **FPDI licence question retired, not answered.** FPDI has left the tree entirely
   (step 7 of the [migration](#pdf-stack-migration-to-tc-lib-pdf)), so its licence no longer
@@ -1033,7 +1049,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 198 PHPUnit tests and 69 Jest tests, **all of them running on every host** —
+**Position:** 206 PHPUnit tests and 69 Jest tests, **all of them running on every host** —
 no test depends on an external binary any more. The DAV layer, which used to be the blind spot
 every delivery bug hid in, now has 48 of them.
 
@@ -1135,6 +1151,18 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   overlap at any rotation, a lattice spanning the whole page, and off-page tiles keeping their
   negative offsets (the regression test for the smear, verified to fail against the old
   placement code)
+- [x] `SchemaConvergenceTest` (6) — the whole schema now arrives in **one** migration, which
+  therefore meets three different starting states (fresh, applied-1000, applied-1000-and-1001)
+  and has to land all of them on identical columns. Also: the flattening columns dropped on
+  upgrade, and running twice changing nothing
+  - Doctrine is not a dependency of this app, so the schema objects are fakes. What is under
+    test is the migration's branching, not Doctrine's DDL
+  - **the fake had to be made stricter to be worth anything.** Its `createTable()` first
+    replaced an existing table silently; a mutation removing the migration's `hasTable()`
+    guard passed every test, because the recreated table happened to have the right columns.
+    It now throws like Doctrine's `TableExistsException`, and that mutation fails
+- [x] `LegacyImagePathCleanupTest` (2) — which `image_path` rows the migration clears, and
+  that no write is issued when every stored reference is valid
 - [x] `ImageWatermarkerTest` (10) — JPEG / PNG / WEBP output, GD fallback, opacity, rotation
 - [x] `ApiControllerScopeTest` (11) — unsupported and mistyped MIME types rejected, blank
   normalised to null, a tag name rejected, a non-existent tag id rejected, a real tag accepted,
