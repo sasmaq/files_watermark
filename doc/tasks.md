@@ -31,6 +31,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
+| [Arabic and RTL](#arabic-and-rtl-support) | **Not started.** No `l10n/` directory at all, and both text renderers would render Arabic broken | Shaping strategy, an embedded Arabic font, `ar` translations, RTL CSS |
 | [No external binaries](#no-external-binaries) | **Done.** No `exec()` anywhere; flattening removed with `pdftoppm`, decryption with `qpdf` | Release note for the dropped columns |
 | [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone from the tree | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
@@ -58,6 +59,12 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
   service, and `metadata` is not an accepted config type
 - [ ] [Group overrides](#open-4) — `group_id` is stored and validated but **never read**, so a
   group policy silently does nothing. Either implement resolution or drop the column
+- [ ] [Arabic in the watermark](#watermark-rendering-arabic-in-the-output) — the PDF renderer's
+  only font is metrics-only Helvetica, which has **no Arabic glyphs**, and neither GD nor a
+  plain ImageMagick build shapes or reorders Arabic. Arabic text renders broken today, not
+  merely unstyled
+- [ ] [Arabic in the Admin UI](#admin-ui-arabic-interface) — there is **no `l10n/` directory**,
+  so the app ships zero translations in any language, and no RTL work has been done
 
 ### Rewrites (done)
 
@@ -539,6 +546,153 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ---
 
+## Arabic and RTL support
+
+**Position:** not started. Nothing in the app is translated — there is no `l10n/` directory —
+and both text renderers would produce broken Arabic today, for different reasons.
+
+Two halves that share only the tokens they render, and they are worth keeping apart. The UI
+half is ordinary Nextcloud translation work with a known shape. The watermark half is a
+text-shaping problem that reaches into the font stack, and it is the one that can *look*
+finished while being wrong: Arabic drawn as disconnected left-to-right letters is still a
+valid PDF with a valid overlay, and every existing assertion would stay green.
+
+The order matters. **Do the watermark half first**, or at least decide it first, because the
+settings live preview is rendered by a browser — which shapes and reorders Arabic correctly —
+so shipping the UI translation first creates a preview that promises output the renderers
+cannot yet produce. That is the same trap as the rotation convention, where the preview is the
+contract and the renderer had to be made to match it.
+
+### Watermark rendering (Arabic in the output) {#watermark-rendering-arabic-in-the-output}
+
+Three blocking facts, each read off the current tree rather than assumed:
+
+- **The PDF renderer has exactly one font, and it has no Arabic.**
+  `PdfWatermarker::FONT_FAMILY` is `'helvetica'`, and `resources/fonts` holds
+  `helvetica.json` / `helveticab.json` — *metrics only*, no glyph outlines, nothing embedded
+  in the output, because Helvetica is one of the PDF standard 14 that every conforming reader
+  supplies itself. None of the standard 14 covers Arabic. So this is not a matter of picking a
+  nicer face: Arabic needs **glyphs embedded in the file**, which is the first real change to
+  the font story since it was set up. See `resources/fonts/README.md`
+- **The image renderer's font choice is by name, and two of the three names have no Arabic.**
+  `ImageWatermarker` hands Imagick `DejaVu-Sans-Bold`, and `findSystemFont()` walks a list of
+  DejaVu, Liberation and macOS Arial paths for the GD path. DejaVu Sans and Liberation Sans
+  carry no Arabic; Arial does. Arabic support on the image path is therefore *accidental and
+  host-dependent* — precisely the class of problem [No external binaries](#no-external-binaries)
+  was about, arrived at from a different direction
+- **Neither image backend can be relied on to shape or reorder.** `imagettftext()` draws the
+  code points it is given in the order it is given, so Arabic comes out as isolated letters in
+  reverse order **even with a font that has the glyphs**. Imagick's `annotateImage()` shapes
+  only if ImageMagick was built against Raqm/HarfBuzz, which is not something to require of a
+  host
+
+### Open {#open-arabic}
+
+- [ ] **Decide the shaping strategy first — everything below depends on it.** Either the app
+  shapes once (bidi reordering, contextual initial/medial/final/isolated forms, the lam-alef
+  ligature) and hands pre-ordered glyphs to every renderer, or each renderer delegates to
+  whatever its own stack offers. Only the first produces identical output on every host, which
+  is the standard this app already holds itself to
+- [ ] **Establish what `tc-lib-pdf` already does, by rendering rather than by reading.** TCPDF
+  shaped Arabic itself (`utf8Bidi()`, plus an RTL document mode) and tc-lib-pdf is the same
+  author's rewrite, so the machinery may already sit in `tecnickcom/tc-lib-unicode` and
+  `tc-lib-unicode-data` — both already installed as transitive dependencies, both already in
+  `Application::RUNTIME_VENDOR_PACKAGES`. Put a known string through `getTextCell()` and inspect
+  the emitted glyph order and forms
+  - `الاختبار` is a good single probe: it exercises reordering, medial forms and a lam-alef
+    ligature at once. A test that only checks "some Arabic came out" will pass on unshaped
+    output
+- [ ] **Bundle an Arabic-capable font and embed it.** Choose on coverage and licence — Noto
+  Naskh Arabic or Amiri, both OFL — and settle three things the Helvetica setup never had to
+  answer:
+  - **subsetting**, because a full Arabic face embedded whole is hundreds of KB *per
+    watermarked file*, and the delivery triggers render per fetch
+  - generation through the library's own `Com\Tecnick\Pdf\Font\Import` with the TrueType flag,
+    with the recipe recorded in `resources/fonts/README.md` beside the Helvetica one
+  - `php-cs-fixer` is already told to leave `resources/fonts` alone; confirm that still holds
+    for whatever the generator emits
+  - a licence win, incidentally: OFL is a clean answer to the provenance question that README
+    raises about the Helvetica metrics, whose upstream `core/LICENSE` is a 0-byte file
+- [ ] **One face covering both scripts, chosen per config — not per string.** A watermark is
+  usually mixed: `{username}` may be Arabic while `{date}` is digits. Per-run font fallback
+  means splitting a string into runs and measuring each, which the tile geometry is not built
+  for. A single face with Latin + Arabic coverage avoids the whole problem and is the
+  recommended route
+- [ ] **`measure()` must measure the *shaped* string.** It calls
+  `getTextCell(..., drawcell: false)` and reads back the width, which feeds `tilePositions()`.
+  Measuring unshaped code points overestimates — ligatures collapse two code points into one
+  glyph — and mis-spaces the entire lattice
+  - **do not touch `tilePositions()`.** It is pure geometry, script-agnostic, and its 22
+    assertions are the regression net for the illegible-watermark bug. If they start failing,
+    the caller is wrong; that is the signal, not a reason to edit the lattice
+- [ ] **Image path: shape and reorder before drawing, and select the font by coverage.**
+  `findSystemFont()`'s name list cannot express "has Arabic glyphs", so the bundled face should
+  serve the image path too — which removes the host dependency for images as a side effect
+- [ ] **Decide the failure mode, and rule one out.** When the configured text cannot be shaped
+  or the font lacks a glyph, the options are a skip-plus-audit-row (consistent with how
+  encrypted PDFs are handled) or drawing the text unshaped. Silently drawing broken Arabic is
+  the outcome to exclude — it is indistinguishable from success to everything except a human
+  looking at the file
+- [ ] **`{date}` / `{datetime}` are locale-free today** — `date('Y-m-d')` in
+  `WatermarkService::buildPlaceholders()`: ASCII digits, Gregorian, server timezone. For an
+  Arabic deployment, decide whether to offer Arabic-Indic digits (`٠١٢٣`) and/or a Hijri date,
+  and whether that follows the *viewer's* locale or a config field
+  - this is a real trade-off rather than cosmetics: the watermark is traceability evidence, and
+    a date that renders differently depending on who fetched the file is harder to reason about
+    in an audit
+- [ ] **Confirm Arabic round-trips the whole config path**, not just the renderer: `saveConfig`
+  validation (the template-token check must not reject non-ASCII), 4-byte UTF-8 storage in
+  `text_template` on MySQL, the JSON API, and back into the form
+- [ ] **Tests must assert shape, not validity.** An Arabic case in `PdfWatermarkerTest` that
+  checks extracted text *and* glyph order, plus a rendered-page image check — the standing
+  lesson from the smear bug is that only looking at the pixels proves anything about output
+  geometry, and shaping is the same kind of claim. Mirror it in `ImageWatermarkerTest` across
+  **both** Imagick and GD, since the two backends fail differently here
+
+### Admin UI (Arabic interface) {#admin-ui-arabic-interface}
+
+**There is no `l10n/` directory,** so the app ships zero translations in any language and every
+`t('files_watermark', …)` call falls through to its English source string. The calls themselves
+are already in place — `main-files.js` and all five components import `t` from
+`@nextcloud/l10n` — which is usually the part that is missing, so this is mostly extraction,
+translation and RTL rather than instrumentation.
+
+- [ ] **Create `l10n/ar.json` and `l10n/ar.js`** in Nextcloud's format (a `translations` map
+  plus `pluralForm`). Arabic takes **six** plural forms; a wrong `pluralForm` string breaks
+  every plural call. There are **no `n()` calls in the tree today**, which is worth knowing
+  before someone adds the first one — the pagination copy in `AuditLog.vue` is the obvious
+  candidate
+- [ ] **Audit for unwrapped strings before translating anything**, since a missing `t()` cannot
+  be found from the translation file. Worth reading specifically: the `PLACEHOLDERS` example
+  values and `TYPE_OPTIONS` labels/descriptions in `WatermarkForm.vue`, `AuditLog.vue`'s column
+  headers and page-size options, and the trigger/type option labels
+- [ ] **Server-side strings are user-facing too.** `AdminSection` already takes `IL10N`, but
+  `ApiController`'s validation errors are displayed verbatim by the UI — the 400 that names an
+  unknown MIME type or a non-existent tag is interface text and is currently English-only
+- [ ] **Translate the `info.xml` metadata** — `<name lang="ar">`, `<summary lang="ar">`,
+  `<description lang="ar">`. The apps list and the App Store read these, and `l10n/` does not
+  cover them
+- [ ] **RTL layout: replace directional CSS with logical properties.** Nextcloud sets
+  `dir="rtl"` on the document for RTL languages, so the work is making the app's own styles stop
+  fighting it — `margin-inline-start`, `padding-inline`, `inset-inline-start`,
+  `text-align: start`. The `.vue` scoped blocks are the source; `css/` is webpack output and
+  must not be edited
+  - known offender: `text-align: left` on `AuditLog.vue`'s table cells
+- [ ] **The live preview needs a decision, and it is not a CSS one.** Browsers shape and reorder
+  Arabic in SVG `<text>`, so the preview will look *correct* the moment an admin types Arabic —
+  including before either renderer can match it. Set `direction` explicitly on the preview
+  rather than letting it inherit the UI language, so the preview means one thing regardless of
+  who is looking at it, and treat any preview/output disagreement as a renderer bug
+- [ ] **Re-check the rotation contract for RTL text.** The preview is the pinned contract
+  (`testPositiveRotationTiltsTheTextUphill`, and `patternTransform="rotate(-rotation)"` in the
+  form), and it was already the single most likely place to reintroduce the smear bug. Confirm
+  "uphill" still means the same thing in the output once the reading direction reverses
+- [ ] **Jest:** `WatermarkForm.spec.js` and `AdminSettings.spec.js` assert English strings, so
+  check whether they survive a loaded locale at all, and pin the preview's direction handling
+  once decided
+
+---
+
 ## No external binaries
 
 **Position:** done. The app spawns **no processes** — no `exec()`, `shell_exec()`,
@@ -933,6 +1087,11 @@ read, and one SDD type is still missing.
 - [ ] Headless LibreOffice / Collabora in the Docker dev environment — blocked on Office
   support being designed
 - [ ] PHP `exif` / metadata libraries, for the invisible metadata watermark
+- [ ] **An Arabic-capable font, bundled and embedded** — the current `resources/fonts` holds
+  metrics only, for a standard-14 face with no Arabic coverage, and the image path picks a font
+  by *name* from a host list that is Latin-only apart from Arial. See
+  [Arabic and RTL support](#arabic-and-rtl-support). Unlike the RHEL 9 questions above this one
+  cannot be closed by a package: the glyphs have to travel inside the PDF
 
 ### Delivered
 
@@ -1066,6 +1225,9 @@ every delivery bug hid in, now has 48 of them.
 - [ ] `WatermarkOnUploadJobTest` — an unknown user and a deleted file must be skipped rather
   than fatal, and the acting user must reach `watermarkInPlace()`
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest` — pending those services
+- [ ] **Arabic text cases in `PdfWatermarkerTest` and `ImageWatermarkerTest`**, asserting glyph
+  order and shaping rather than "a valid file came out" — the whole failure mode here is output
+  that every current assertion accepts. See [Arabic and RTL support](#open-arabic)
 - [ ] `WatermarkConfigMapperTest` — mapper finders and insert/update (see
   [Data model](#open-data))
 
@@ -1212,6 +1374,13 @@ ideally promoted to E2E — each one has caught a real bug. Cross-check results 
 - [ ] **Large-file / many-member archive** — cross the caps and confirm `on_share` denies while
   `on_download` degrades
 - [ ] **Encrypted / password-protected PDF** through every trigger
+- [ ] **An Arabic watermark template, looked at.** Render PDF and image output with an Arabic
+  `text_template` and read the result: letters joined, right-to-left order, lam-alef ligature
+  formed, and the tile spacing not blown out by a mis-measured shaped width. Also with an
+  Arabic display name in `{username}`, and mixed Arabic + `{date}` in one template
+- [ ] **The admin UI under an Arabic locale** — settings page, audit log and the live preview at
+  `dir="rtl"`, with the preview's text matching the rendered output rather than only looking
+  plausible
 - [ ] **Concurrent uploads of the same path** — `suppressFor()` is a per-process static, so it
   does not span two simultaneous PHP workers; confirm `isAlreadyWatermarked()` is what actually
   prevents a double burn
@@ -1239,6 +1408,8 @@ None of this exists yet.
 - [ ] Folder and multi-select ZIP download → every supported member watermarked
 - [ ] Download via `/api/v1/download` → original untouched
 - [ ] The full flow on an S3-backed instance
+- [ ] Configure an Arabic template, apply on demand, and assert on the delivered file's text —
+  the one cell of the Arabic work that is worth automating rather than eyeballing
 
 ### Linting and CI
 
@@ -1269,6 +1440,10 @@ None of this exists yet.
 - [ ] Document every API endpoint (including `/api/v1/download`) with request and response
   examples
 - [ ] Developer guide: how to add a new file-type renderer
+- [ ] **Localisation section:** which languages ship, how to add one (`l10n/<code>.json` +
+  `.js`, plus the `lang` attributes in `info.xml`), and what an Arabic *watermark* additionally
+  requires — the bundled font, and whatever the shaping decision turns out to be. Record the
+  font's licence beside the Helvetica provenance note in `resources/fonts/README.md`
 - [ ] Add `CHANGELOG.md`, covering 1.0.0 and the 1.1.0 flattening release
 - [ ] Package for the App Store and tag the release
 - [ ] Headless LibreOffice in the documented Docker workflow, pending Office support
