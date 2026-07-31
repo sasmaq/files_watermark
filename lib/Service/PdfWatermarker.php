@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Service;
 
+use Com\Tecnick\Pdf\Import\PageTemplateInterface;
 use Com\Tecnick\Pdf\Tcpdf;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 
@@ -56,10 +57,7 @@ class PdfWatermarker {
 		[$sourceId, $pageCount] = $this->openSource($pdf, $sourcePath);
 
 		for ($page = 1; $page <= $pageCount; $page++) {
-			// Adds a page matching the source page's size and places the imported
-			// page on it, which is FPDI's importPage + AddPage + useTemplate in one
-			// call. Mixed-size and landscape documents survive as a result.
-			$template = $pdf->addPageFromImport($sourceId, $page);
+			$template = $this->addImportedPage($pdf, $sourceId, $page);
 			$width = $pdf->toUnit($template->getWidth());
 			$height = $pdf->toUnit($template->getHeight());
 
@@ -73,6 +71,95 @@ class PdfWatermarker {
 		}
 
 		$this->write($pdf, $destPath);
+	}
+
+	/**
+	 * Add a page matching the source page's size and place the imported page on it.
+	 *
+	 * This is the library's own `addPageFromImport()` with one correction, and the
+	 * correction is the whole reason it is unrolled here.
+	 *
+	 * **The imported form keeps the source page's coordinate system.** Its `/BBox` is the
+	 * source's visible box *in source coordinates* — `[72 72 540 720]` for a page cropped
+	 * 72pt on each side — while the new page is created at the box's *size*, 468×648, with
+	 * its origin at (0, 0). `addPageFromImport()` then places the form at (0, 0) with an
+	 * identity matrix, so content that lives at x≥72 in the source is drawn at x≥72 on a
+	 * page only 468 wide. The content is pushed off the top-right corner.
+	 *
+	 * How bad depends entirely on the crop. At a 72pt origin a quarter of the page is lost;
+	 * measured on a `/CropBox [300 300 612 792]` fixture, **98% of the content ends up off
+	 * the page** — which is indistinguishable from "the watermark blanked my file", because
+	 * every byte is still in there, just drawn where nothing can see it.
+	 *
+	 * Placing the form at `(-x0, +y0)` cancels the offset. The signs are not symmetric
+	 * because {@see \Com\Tecnick\Pdf\Tcpdf::useImportedPage()} takes y from the *top* and
+	 * flips it internally: it emits `yPt = pageHeight - y - formHeight`, so with the page
+	 * and the form the same height, a positive `y` moves the form down by exactly `y`.
+	 *
+	 * A page whose box starts at the origin — the overwhelming majority, and every fixture
+	 * this app had before — offsets by zero and is unaffected.
+	 */
+	private function addImportedPage(Tcpdf $pdf, string $sourceId, int $page): PageTemplateInterface {
+		$template = $pdf->importPage($sourceId, $page);
+		$width = $pdf->toUnit($template->getWidth());
+		$height = $pdf->toUnit($template->getHeight());
+
+		$pdf->addPage([
+			'format' => '',
+			'width' => $width,
+			'height' => $height,
+			'orientation' => $width > $height ? 'L' : 'P',
+		]);
+
+		[$xpos, $ypos] = $this->importOffset($template);
+
+		$pdf->useImportedPage(
+			$template,
+			$pdf->toUnit($xpos),
+			$pdf->toUnit($ypos),
+			$width,
+			$height,
+			['keepAspectRatio' => false],
+		);
+
+		return $template;
+	}
+
+	/**
+	 * Where to place the imported form so its visible box starts at the page origin.
+	 *
+	 * `getMediaBox()` reports the box the import was sized from, in points, as
+	 * `[x0, y0, x1, y1]` — despite the name that is the **CropBox** when the source has
+	 * one, and a non-zero `(x0, y0)` is what pushes the content off the page.
+	 *
+	 * The offset has to be applied in the *rotated* frame, because the library's own form
+	 * matrix is built for a box anchored at the origin — it uses the box's width and
+	 * height, never its coordinates. For a page cropped to `[300 300 612 792]` it emits
+	 * `[0 -1 1 0 0 312]` at 90°, mapping `(x, y)` to `(y, 312 - x)`; translating by
+	 * `(-x0, -y0)` there moves the content further off the page rather than back onto it.
+	 * Rotating the correction with the page is what makes all four orientations land.
+	 *
+	 * Returned as `useImportedPage()` arguments, not as a raw translation: that method
+	 * measures y from the *top* and emits `pageHeight - y - formHeight`, so with the page
+	 * and form the same height a positive y moves the form **down**. Hence the sign flips
+	 * on the second component.
+	 *
+	 * @return array{float, float} the `$xpos, $ypos` to place the form at
+	 */
+	private function importOffset(PageTemplateInterface $template): array {
+		[$x0, $y0] = $template->getMediaBox();
+
+		// PDF requires /Rotate to be a multiple of 90 but permits negatives.
+		$rotation = ((($template->getRotation() % 360) + 360) % 360);
+
+		return match ($rotation) {
+			90 => [-$y0, -$x0],
+			180 => [$x0, -$y0],
+			270 => [$y0, $x0],
+			// 0, and anything a malformed /Rotate produces: unrotated placement, which is
+			// also what this did before any of it was corrected.
+			default => [-$x0, $y0],
+		};
 	}
 
 	/**

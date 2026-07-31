@@ -13,7 +13,7 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-31, both green: **235 PHPUnit** tests and **74 Jest** tests, with
+Suites re-run 2026-07-31, both green: **242 PHPUnit** tests and **74 Jest** tests, with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -43,7 +43,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 235 PHPUnit + 74 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 242 PHPUnit + 74 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -141,6 +141,42 @@ Rasterised flattening existed for tamper resistance and was **removed** — see
     fixture is free to decay into an ordinary PDF 1.4 file that passes everything and proves
     nothing
 
+- [x] **Pages cropped away from the origin came out blank — fixed.** Reported from the field:
+  a PDF produced by a Windows print-to-PDF driver from an image was watermarked and the result
+  had no visible content. The file was intact — right page count, image bytes present, the
+  watermark itself rendering perfectly — because the original content was being drawn where
+  nothing could see it
+  - **the cause is a coordinate-system mismatch in the import.** A new page is created at the
+    source box's *size*, origin (0, 0), but the imported form keeps the source's own
+    coordinates: its `/BBox` is the visible box as the source numbered it. The library's
+    `addPageFromImport()` then places the form with an identity matrix, so a page cropped to
+    `/CropBox [300 300 612 792]` draws its content at x≥300 on a page 312 wide. Measured on
+    the fixture: **2% of the content still on the page**, and **0%** once the page was also
+    rotated
+  - `getMediaBox()` reports that box despite the name — it is the **CropBox** whenever the
+    source has one, which is exactly the case that goes wrong
+  - the correction has to be **rotated with the page**. The library builds its form matrix from
+    the box's width and height and never its coordinates, so at 90° it emits
+    `[0 -1 1 0 0 312]`; translating by `(-x0, -y0)` there pushes the content further off the
+    page. All four orientations are handled and asserted
+  - the signs are asymmetric — `useImportedPage()` measures y from the *top* and emits
+    `pageHeight - y - formHeight` — which is the kind of thing that is only ever established by
+    driving it, not by reading it
+  - **a page whose box starts at the origin offsets by zero**, so the common case, and every
+    fixture this app had before, is untouched. That is asserted rather than assumed: the two
+    origin-box rows of the provider stay green under the mutation that reinstates the old
+    placement
+  - `testCroppedPagesKeepTheirContentOnThePage` asserts on **geometry**, because nothing
+    cheaper can see this failure: it composes the form's own `/Matrix` with the placement `cm`
+    and intersects the result with the page. Page count, file size and a search for the image
+    bytes all pass on a blank file. Mutation-tested twice — reverting the offset fails 5 of 7
+    rows, applying it without rotating it fails 3
+  - **what this does not establish is that it was the reporter's file.** It reproduces the
+    reported symptom exactly and is a real bug either way, but the original file has not been
+    seen. Sixteen other structural variants were tried first and all rendered correctly:
+    inherited `/Resources` and `/MediaBox`, object streams, compressed and array content
+    streams, indirect `/Length`, nested form XObjects, DCTDecode / predictor / SMask / indexed
+    / CMYK images, `/UserUnit`, transparency groups, and multi-page sources
 - [ ] **Encrypted PDFs are refused**, and that is now the whole of the gap — including the
   empty-password, permission-flags-only case that is not real protection. `qpdf --decrypt`
   used to rescue those; it went with the [external
@@ -830,7 +866,7 @@ Neither loss is invisible, and neither is being papered over:
 
 ### What it bought
 
-- [x] **Zero binary-conditional skips.** 235 PHPUnit tests, none of them needing a binary. The
+- [x] **Zero binary-conditional skips.** 242 PHPUnit tests, none of them needing a binary. The
   suite result no longer depends on which machine ran it, which is worth more than it
   sounds — the flattener's rasterise cases were green on the developer's laptop and
   skipped in CI for most of their life
@@ -1313,7 +1349,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 235 PHPUnit tests and 74 Jest tests, and **no test depends on an external binary**
+**Position:** 242 PHPUnit tests and 74 Jest tests, and **no test depends on an external binary**
 any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
 for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
 has 48 of them.
@@ -1411,7 +1447,7 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   node, and an unusable stored folder tag degrading
   instead of crashing
   - the **group** resolution case is absent because group resolution does not exist
-- [x] `PdfWatermarkerTest` (25) — text / image / combined overlays, multi-page, corrupt PDF, a
+- [x] `PdfWatermarkerTest` (32) — text / image / combined overlays, multi-page, corrupt PDF, a
   compressed-xref PDF 1.5 watermarked with no external binary, the fixture still structurally
   reproducing that case, encrypted PDFs refused cleanly with **both** a real and an empty user
   password (fixtures built with the renderer's own encryption, so no `exec()`), the rotation

@@ -14,6 +14,7 @@ use PHPUnit\Framework\TestCase;
  */
 class PdfWatermarkerTest extends TestCase {
 	use CompressedXrefFixture;
+	use CroppedPageFixture;
 	use PdfFixtures;
 
 	private PdfWatermarker $watermarker;
@@ -32,6 +33,58 @@ class PdfWatermarkerTest extends TestCase {
 		}
 		@rmdir($this->tmpDir);
 		parent::tearDown();
+	}
+
+	/**
+	 * The regression test for watermarked files coming out blank.
+	 *
+	 * A source page whose visible area is a `/CropBox` offset from the origin was imported
+	 * without that offset being cancelled. The new page is created at the box's *size* with
+	 * its origin at (0, 0), but the imported form keeps the source's coordinates — so
+	 * content living at x≥300 was drawn at x≥300 on a page only 312 wide, i.e. off the
+	 * right-hand edge. Measured before the fix: **2% of the content still on the page** for
+	 * a `[300 300 612 792]` crop, and none of it once the page was also rotated.
+	 *
+	 * That failure is invisible to every cheaper check. The output is a valid PDF of the
+	 * right page count, the image bytes are still in the file, and the watermark itself
+	 * renders perfectly — the original content is simply drawn where nothing can see it.
+	 * So this asserts on *geometry*: where the imported form actually lands once its own
+	 * matrix and its placement are composed. See
+	 * {@see CroppedPageFixture::visibleFractionOfImportedPage()}.
+	 *
+	 * @dataProvider croppedPageProvider
+	 */
+	public function testCroppedPagesKeepTheirContentOnThePage(array $cropBox, int $rotate): void {
+		$source = $this->tmpDir . '/cropped.pdf';
+		$dest = $this->tmpDir . '/cropped_wm.pdf';
+		$this->writeCroppedPagePdf($source, $cropBox, $rotate);
+
+		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
+
+		$this->assertSame(1, $this->readPageCount($dest));
+		$this->assertGreaterThan(
+			0.999,
+			$this->visibleFractionOfImportedPage($dest),
+			sprintf('Imported content falls outside the page (crop [%s], rotated %d°)', implode(' ', $cropBox), $rotate),
+		);
+	}
+
+	/** @return array<string, array{array{float, float, float, float}, int}> */
+	public static function croppedPageProvider(): array {
+		return [
+			// The control: the overwhelmingly common shape, which was never broken.
+			'box at the origin' => [[0.0, 0.0, 612.0, 792.0], 0],
+			'small offset' => [[72.0, 72.0, 540.0, 720.0], 0],
+			// Large enough that essentially nothing survived before the fix.
+			'large offset' => [[300.0, 300.0, 612.0, 792.0], 0],
+			// Rotation needs the correction rotated with it: the library builds the form
+			// matrix for a box anchored at the origin, so an unrotated translation pushes
+			// the content further off the page instead of back onto it.
+			'offset, rotated 90' => [[300.0, 300.0, 612.0, 792.0], 90],
+			'offset, rotated 180' => [[300.0, 300.0, 612.0, 792.0], 180],
+			'offset, rotated 270' => [[300.0, 300.0, 612.0, 792.0], 270],
+			'origin, rotated 90' => [[0.0, 0.0, 612.0, 792.0], 90],
+		];
 	}
 
 	public function testTextOverlayAppliedAcrossMultiplePages(): void {
