@@ -40,18 +40,25 @@ class ApiController extends Controller {
 		parent::__construct($appName, $request);
 	}
 
-	#[NoAdminRequired]
+	/**
+	 * The global policy, or an empty list on an install where none has been saved yet.
+	 *
+	 * Admin-only, like the settings page it feeds. The Files app does not call this — the
+	 * one thing it needs, the effective trigger, arrives as initial state from
+	 * {@see \OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener}.
+	 *
+	 * Still a list rather than a bare object: the response shape predates there being
+	 * exactly one config, and `AdminSettings.vue` reads `configs[0]`.
+	 */
 	public function getConfig(): DataResponse {
-		$user = $this->userSession->getUser();
-		$userId = $user?->getUID();
-		$configs = $userId ? $this->configMapper->findByUser($userId) : [];
+		if (!$this->isAdmin()) {
+			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
+		}
 
-		if (empty($configs)) {
-			try {
-				$configs = [$this->configMapper->findGlobal()];
-			} catch (DoesNotExistException) {
-				$configs = [];
-			}
+		try {
+			$configs = [$this->configMapper->findGlobal()];
+		} catch (DoesNotExistException) {
+			$configs = [];
 		}
 
 		return new DataResponse([
@@ -59,11 +66,19 @@ class ApiController extends Controller {
 		]);
 	}
 
+	private function isAdmin(): bool {
+		$user = $this->userSession->getUser();
+
+		return $user !== null && $this->groupManager->isAdmin($user->getUID());
+	}
+
 	private const VALID_TYPES = ['text', 'image', 'combined'];
 	private const VALID_TRIGGERS = ['on_demand', 'on_download', 'on_upload', 'on_share'];
 	private const VALID_TOKENS = ['username', 'displayname', 'email', 'date', 'datetime', 'filename'];
 
-	#[NoAdminRequired]
+	/**
+	 * Save the global policy. Admin-only: there is exactly one, and it is server-wide.
+	 */
 	public function saveConfig(
 		string $type,
 		?string $textTemplate,
@@ -76,10 +91,14 @@ class ApiController extends Controller {
 		string $trigger = 'on_demand',
 		?string $mimeTypes = null,
 		?string $folderTag = null,
-		?string $userId = null,
-		?string $groupId = null,
 		?int $id = null,
 	): DataResponse {
+
+		// Checked before any validation, so a non-admin learns nothing about the policy
+		// from which complaint comes back.
+		if (!$this->isAdmin()) {
+			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
+		}
 
 		if (!in_array($type, self::VALID_TYPES, true)) {
 			return new DataResponse(
@@ -173,15 +192,6 @@ class ApiController extends Controller {
 			}
 		}
 
-		$currentUser = $this->userSession->getUser();
-		$isAdmin = $currentUser && $this->groupManager->isAdmin($currentUser->getUID());
-
-		// Non-admins can only set their own config
-		if (!$isAdmin) {
-			$userId = $currentUser?->getUID();
-			$groupId = null;
-		}
-
 		if ($id !== null) {
 			try {
 				$config = $this->configMapper->findById($id);
@@ -204,8 +214,6 @@ class ApiController extends Controller {
 		$config->setTrigger($trigger);
 		$config->setMimeTypes($mimeTypes);
 		$config->setFolderTag($folderTag);
-		$config->setUserId($userId);
-		$config->setGroupId($groupId);
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));
 
 		if ($id !== null) {
@@ -225,8 +233,7 @@ class ApiController extends Controller {
 	 * from content, size ceiling) lives in {@see WatermarkImageStore}.
 	 */
 	public function uploadImage(): DataResponse {
-		$user = $this->userSession->getUser();
-		if ($user === null || !$this->groupManager->isAdmin($user->getUID())) {
+		if (!$this->isAdmin()) {
 			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
 		}
 
@@ -253,19 +260,16 @@ class ApiController extends Controller {
 		return new DataResponse(['imagePath' => $reference]);
 	}
 
-	#[NoAdminRequired]
+	/** Discard the global policy, reverting the server to the built-in default. */
 	public function deleteConfig(int $id): DataResponse {
-		$currentUser = $this->userSession->getUser();
-		$isAdmin = $currentUser && $this->groupManager->isAdmin($currentUser->getUID());
+		if (!$this->isAdmin()) {
+			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
+		}
 
 		try {
 			$config = $this->configMapper->findById($id);
 		} catch (DoesNotExistException) {
 			return new DataResponse(['error' => $this->l->t('Config not found')], Http::STATUS_NOT_FOUND);
-		}
-
-		if (!$isAdmin && $config->getUserId() !== $currentUser?->getUID()) {
-			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
 		}
 
 		$this->configMapper->delete($config);

@@ -53,7 +53,7 @@ class BeforePreviewFetchedListenerTest extends TestCase {
 		$this->watermarkService->method('isSupported')->willReturn(true);
 		// Received-share mount or anonymous public-link request → non-owner access.
 		$this->watermarkService->method('isShareAccess')->with($node)->willReturn(true);
-		$this->watermarkService->method('resolveConfig')->with('alice')->willReturn($this->config('on_share'));
+		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_share'));
 
 		$this->expectException(NotFoundException::class);
 		$this->listener->handle($this->event($node));

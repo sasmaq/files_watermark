@@ -7,10 +7,8 @@ namespace OCA\FilesWatermark\Db;
 use OCP\AppFramework\Db\Entity;
 
 /**
- * @method string|null getUserId()
- * @method void setUserId(?string $userId)
- * @method string|null getGroupId()
- * @method void setGroupId(?string $groupId)
+ * The server-wide watermark policy. There is one, set by an administrator.
+ *
  * @method string getType()
  * @method void setType(string $type)
  * @method string|null getTextTemplate()
@@ -40,8 +38,6 @@ use OCP\AppFramework\Db\Entity;
  */
 class WatermarkConfig extends Entity {
 
-	protected ?string $userId = null;
-	protected ?string $groupId = null;
 	protected string $type = 'text';
 	protected ?string $textTemplate = null;
 	protected ?string $imagePath = null;
@@ -75,8 +71,6 @@ class WatermarkConfig extends Entity {
 	public function jsonSerialize(): array {
 		return [
 			'id' => $this->id,
-			'userId' => $this->userId,
-			'groupId' => $this->groupId,
 			'type' => $this->type,
 			'textTemplate' => $this->textTemplate,
 			'imagePath' => $this->imagePath,

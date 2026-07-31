@@ -10,7 +10,6 @@ use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Services\IInitialState;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
-use OCP\IUserSession;
 use OCP\Util;
 
 /**
@@ -25,7 +24,6 @@ class LoadAdditionalScriptsListener implements IEventListener {
 	public function __construct(
 		private IInitialState $initialState,
 		private WatermarkService $watermarkService,
-		private IUserSession $userSession,
 	) {
 	}
 
@@ -37,9 +35,8 @@ class LoadAdditionalScriptsListener implements IEventListener {
 		// The Apply/Remove file actions only make sense when watermarking happens
 		// on demand — in on_upload / on_download / on_share modes the app applies
 		// watermarks itself, so the manual action is hidden. Expose the resolved
-		// trigger (user → global → default) so `main-files.js` can gate on it.
-		$userId = $this->userSession->getUser()?->getUID();
-		$trigger = $this->watermarkService->resolveConfig($userId)->getTrigger();
+		// trigger (global → default) so `main-files.js` can gate on it.
+		$trigger = $this->watermarkService->resolveConfig()->getTrigger();
 		$this->initialState->provideInitialState('effective-trigger', $trigger);
 
 		// Registered explicitly rather than left to whatever the server does on its own:

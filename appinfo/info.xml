@@ -19,7 +19,7 @@ Features:
 - On-demand watermarking via file action menu
 - On-download watermarking (original file untouched)
 - On-share watermarking
-- Admin-configurable global and per-group policies
+- Admin-configurable global policy, applied server-wide
 - Full audit log of every watermark event
     ]]></description>
     <description lang="ar"><![CDATA[
@@ -33,10 +33,10 @@ Features:
 - التطبيق عند الطلب من قائمة إجراءات الملف
 - التطبيق عند التنزيل (يبقى الملف الأصلي دون تغيير)
 - التطبيق عند المشاركة
-- سياسات عامة وسياسات لكل مجموعة يضبطها المدير
+- سياسة عامة يضبطها المدير وتسري على الخادم كله
 - سجل تدقيق كامل لكل حدث علامة مائية
     ]]></description>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">files_watermark contributors</author>
     <namespace>FilesWatermark</namespace>

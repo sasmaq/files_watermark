@@ -65,7 +65,7 @@ class NodeWrittenListener implements IEventListener {
 		}
 
 		try {
-			$config = $this->watermarkService->resolveConfig($uid);
+			$config = $this->watermarkService->resolveConfig();
 		} catch (\Throwable) {
 			return;
 		}

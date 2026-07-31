@@ -28,8 +28,8 @@ class WatermarkService {
 	/** Log trigger recorded when a watermark is undone; see {@see removeWatermark}. */
 	public const TRIGGER_REMOVED = 'removed';
 
-	/** Per-request memo for {@see resolveConfig}, keyed by user id ('' for none). */
-	private array $configCache = [];
+	/** Per-request memo for {@see resolveConfig}. One policy, so one slot. */
+	private ?WatermarkConfig $configCache = null;
 
 	public function __construct(
 		private WatermarkConfigMapper $configMapper,
@@ -73,7 +73,7 @@ class WatermarkService {
 		$this->assertSupported($mime, $file);
 
 		if ($config === null) {
-			$config = $this->resolveConfig(($actor ?? $this->userSession->getUser())?->getUID());
+			$config = $this->resolveConfig();
 		}
 
 		$this->assertMimeAllowed($mime, $config);
@@ -264,11 +264,11 @@ class WatermarkService {
 	}
 
 	/**
-	 * The owner's config when a delivery trigger applies to this fetch of $node, or null
-	 * when the node should be served unmodified.
+	 * The config when a delivery trigger applies to this fetch of $node, or null when the
+	 * node should be served unmodified.
 	 *
-	 * This is the type-agnostic half of {@see resolveDelivery}: owner policy lookup plus
-	 * the on_download / on_share(+non-owner) rule, with no per-file exclusions.
+	 * This is the type-agnostic half of {@see resolveDelivery}: the policy plus the
+	 * on_download / on_share(+non-owner) rule, with no per-file exclusions.
 	 *
 	 * Only ever ask this about a *file*. A folder cannot answer for its members under
 	 * on_share: a received single-file share is mounted inside the recipient's own home,
@@ -277,10 +277,8 @@ class WatermarkService {
 	 * per member is the correct question.
 	 */
 	private function deliveryConfig(FileInfo $node, bool $publicContext = false): ?WatermarkConfig {
-		$ownerUid = $node->getOwner()?->getUID() ?? $this->userSession->getUser()?->getUID();
-
 		try {
-			$config = $this->resolveConfig($ownerUid);
+			$config = $this->resolveConfig();
 		} catch (\Throwable) {
 			return null;
 		}
@@ -421,30 +419,25 @@ class WatermarkService {
 		return $this->configMapper->hasDeliveryTrigger();
 	}
 
-	public function resolveConfig(?string $userId = null): WatermarkConfig {
+	/**
+	 * The policy in force: the admin's global config, or the built-in default.
+	 *
+	 * It takes no user, deliberately. The policy is server-wide, so every caller — every
+	 * trigger, every access path, owner and recipient alike — resolves the same one, and
+	 * there is no "whose config is this" question to get wrong.
+	 */
+	public function resolveConfig(): WatermarkConfig {
 		// Memoised for the request: a folder download resolves the policy once per member,
-		// which is two queries a file without this. Configs are not mutated mid-request —
+		// which is a query a file without this. Configs are not mutated mid-request —
 		// the settings endpoints write and return, they do not then re-read through here.
-		$key = $userId ?? '';
-		if (isset($this->configCache[$key])) {
-			return $this->configCache[$key];
-		}
-
-		return $this->configCache[$key] = $this->resolveConfigUncached($userId);
-	}
-
-	private function resolveConfigUncached(?string $userId = null): WatermarkConfig {
-		if ($userId !== null) {
-			$userConfigs = $this->configMapper->findByUser($userId);
-			if (!empty($userConfigs)) {
-				return $userConfigs[0];
-			}
+		if ($this->configCache !== null) {
+			return $this->configCache;
 		}
 
 		try {
-			return $this->configMapper->findGlobal();
+			return $this->configCache = $this->configMapper->findGlobal();
 		} catch (DoesNotExistException) {
-			return $this->defaultConfig();
+			return $this->configCache = $this->defaultConfig();
 		}
 	}
 

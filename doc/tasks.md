@@ -12,8 +12,8 @@ How to read it:
 - A claim marked done means it was *observed* working — by a test, or by driving a real
   instance. Where the evidence is manual, it says so.
 
-Verified against **Nextcloud 31.0.14.1**, app version **1.4.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-31, both green: **404 PHPUnit** tests and **85 Jest** tests, with
+Verified against **Nextcloud 31.0.14.1**, app version **1.5.0**, PHP 8.2 + 8.3.
+Suites re-run 2026-07-31, both green: **408 PHPUnit** tests and **85 Jest** tests, with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -35,7 +35,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [1. Renderers](#1-renderers-goal-1) | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started; flattening removed | Office pipeline, encrypted PDFs |
 | [2. Watermark content](#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
-| [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
+| [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | **Complete.** Settings, audit log, apply/remove actions and the watermarked badge all done; group *and* per-user overrides removed — one server-wide policy | — |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
 | [Arabic and RTL](#arabic-and-rtl-support) | **Both halves done** — watermark shaped and reordered; UI translated (130 strings), RTL-clean, preview direction pinned | `{date}` localisation, a real Arabic instance, a renderer bidi bug this surfaced |
 | [No external binaries](#no-external-binaries) | **Done.** No `exec()` anywhere; flattening removed with `pdftoppm`, decryption with `qpdf` | Release note for the dropped columns |
@@ -43,7 +43,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 404 PHPUnit + 85 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 408 PHPUnit + 85 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -63,8 +63,12 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
   pipeline, no MIME registration. The largest single piece of missing scope
 - [ ] [Invisible metadata watermark](#open-2) — no
   service, and `metadata` is not an accepted config type
-- [ ] [Group overrides](#open-4) — `group_id` is stored and validated but **never read**, so a
-  group policy silently does nothing. Either implement resolution or drop the column
+- [x] [Group overrides](#open-4) — **removed.** `group_id` was stored and validated but never
+  read, so a group policy silently did nothing; the column, its index and the parameter are
+  gone rather than wired up
+- [x] [Per-user overrides](#open-4) — **removed.** `user_id` *was* read, but no UI ever set
+  it, so it was a `curl`-only feature. The policy is now one admin-set config; the config
+  endpoints are admin-only and `resolveConfig()` no longer takes a user
 - [x] [Arabic in the watermark](#watermark-rendering-arabic-in-the-output) — **done.** IBM Plex
   Sans Arabic Bold (OFL) draws every watermark, subsetted into each file; Arabic is shaped,
   reordered and ligated in both PDFs and images. `{date}` localisation is the one piece open
@@ -530,16 +534,60 @@ every `on_share` deny goes through a failed render.
 ## 4. Admin UI and file actions (Goal 4)
 
 **Position:** the settings page, audit log, apply/remove file actions and the watermarked
-badge are all built. One SDD feature — group overrides — is stored but not honoured.
+badge are all built. Both scoping features the SDD described — group overrides and per-user
+overrides — have been **removed** rather than finished: the policy is one config, set by an
+admin, in force server-wide. Nothing here is stored without being honoured.
 
 ### Open {#open-4}
 
-- [ ] **Group overrides.** `group_id` is accepted by `saveConfig` and stored, but
-  `WatermarkService` resolves user → global → default and **never reads it**, and the mapper
-  has no `findByGroup`. A group policy therefore does nothing at all. Either implement
-  resolution (mapper finder + a place in the precedence chain + UI) or drop the column and the
-  parameter — the current state is the worst of both, because it looks supported
-- [ ] `AdminSettings.vue` group-overrides UI, dependent on the above
+- [x] **Group overrides removed, rather than implemented.** `group_id` was accepted by
+  `saveConfig`, validated, indexed and stored, while `WatermarkService` resolved
+  user → global → default and never read it; the mapper had no `findByGroup` and no UI ever
+  set it. A group policy did nothing at all, which is worse than not offering one — an admin
+  who stored one saw it persist and would reasonably conclude it was in force
+  - dropped on the same reasoning that removed the flattening columns: a stored setting no
+    code consults is a setting being quietly ignored. Per-user overrides went the same
+    way immediately after (see below), so what is left is one policy: **global → default**
+  - `Version1005Date20260731140000` drops the column and its `wm_config_group_idx` index for
+    instances that already applied 1003, which no longer creates either. Both halves are
+    needed: 1003 will not re-run on an instance that has recorded it, and an index left over
+    a dropped column is DDL the database platforms disagree about
+  - `SchemaConvergenceTest` gained the **applied 1003** starting state and now drives both
+    schema steps, so all four states still converge on one column list. `FakeTable` had to
+    learn indexes for it — it discarded them before, which would have let the index drop go
+    unnoticed
+  - the app version is bumped to **1.5.0**; without it the migration would not run at all
+
+- [x] **Per-user overrides removed too — the policy is now one config, set by an admin.**
+  `user_id` was the other half of the same idea and was genuinely read: `resolveConfig()`
+  looked for the acting user's row first and fell back to the global one. What it never had
+  was a way in. No personal settings section was ever registered, and no Vue component set
+  the field, so the only way to create an override was a direct API call — a feature reachable
+  by `curl` and nothing else
+  - **the resolution signature is where the change is real.** `resolveConfig()` takes no user
+    id at all now, so every trigger and access path resolves the same policy and there is no
+    "whose config is this" question left to answer differently in four places. The
+    per-request memo went from an array keyed by uid to one slot
+  - `saveConfig`, `getConfig` and `deleteConfig` are **admin-only**; `NoAdminRequired` is
+    gone from all three, with an explicit `isAdmin()` check in each so a direct call is
+    refused the same way the routing layer would. The check runs *before* validation, so a
+    non-admin's 403 says nothing about whether the value would have been accepted.
+    `applyWatermark` / `removeWatermark` / `getWatermarkedStatus` stay open to ordinary users
+    — applying a watermark on demand is not configuring the policy
+  - **`Version1006Date20260731160000` deletes the per-user rows before dropping the column,
+    and that ordering is the whole point of the migration.** Dropping first would leave those
+    rows in the table as ordinary ones, indistinguishable from the global config — and
+    `findGlobal()` takes the first row it finds, so a former per-user override could silently
+    become the server-wide policy. The delete therefore lives in `preSchemaChange`, which is
+    the only hook that runs while the column still exists
+  - this is the one migration in the app that **destroys live data**: an install that had
+    per-user policies loses them, and those users fall back to the global one. That is the
+    requested behaviour, not a side effect, but it is a change in what their files get
+    watermarked with
+  - `ApiControllerImageTest` had to split: the arbitrary-server-path rejection is now
+    asserted as an admin, since that is the only role that reaches the validation, with a
+    separate case pinning the 403 for everyone else. The path check stays server-side
+    regardless of who can call it
 
 ### Backend
 
@@ -596,7 +644,7 @@ badge are all built. One SDD feature — group overrides — is stored but not h
   - `exec` opens `WatermarkModal` and awaits the result; spinner on the row; list refreshed
   - app SVG icon plus a localized display name
   - [x] Shown **only when the effective trigger is `on_demand`**.
-    `LoadAdditionalScriptsListener` resolves the effective trigger (user → global → default)
+    `LoadAdditionalScriptsListener` resolves the effective trigger (global → default)
     and hands it to the client as initial state; the shared single-file + supported-MIME +
     `on_demand` conditions are factored into `isSingleSupportedFile()` so Remove can reuse the
     same rule
@@ -1340,7 +1388,7 @@ Recorded because they were raised before the decision, not to relitigate it.
 
 ## Data model
 
-**Position:** the schema carries every implemented feature. Two columns are stored but never
+**Position:** the schema carries every implemented feature. One column is stored but never
 read, and one SDD type is still missing.
 
 ### Open {#open-data}
@@ -1348,12 +1396,13 @@ read, and one SDD type is still missing.
 - [ ] Verify the migrations run cleanly on **MySQL, PostgreSQL and SQLite**. They use the
   portable schema builder and run on SQLite; a cross-DB run has not been done
 - [ ] `metadata` is not an accepted `type` — needs both `VALID_TYPES` and a migration
-- [ ] **Two dead columns.** `position` and `group_id` are accepted, validated and stored, and
-  then never read by anything:
-  - `position` — text is always tiled and images always centred, which matches the UI copy, so
-    the column encodes a choice the renderers do not offer
-  - `group_id` — see [group overrides](#open-4)
-  - both look supported from the outside. Either wire them up or remove them
+- [ ] **One dead column left.** `position` is accepted, validated and stored, and then never
+  read by anything: text is always tiled and images always centred, which matches the UI copy,
+  so the column encodes a choice the renderers do not offer. It looks supported from the
+  outside. Either wire it up or remove it, as `group_id` was
+- [x] **`group_id` and `user_id` dropped**, with the group- and per-user-override features
+  they scoped — see [Admin UI](#open-4). `watermark_config` now holds exactly one row: the
+  server-wide policy. (`watermark_log.user_id` is untouched — that one records who acted.)
 - [ ] `WatermarkConfigMapperTest` covers the **entity**; the mapper's finders and
   insert/update are still untested, including `hasDeliveryTrigger()`, which the archive fast
   path depends on and which is currently only exercised through a mock
@@ -1372,8 +1421,9 @@ read, and one SDD type is still missing.
   obvious simplification. Original note, for the record: (boolean,
   default false) and (smallint,
   default 150), added by `Version1001Date20260727000000`
-- [x] `WatermarkConfigMapper` — `findAll`, `findByUser`, `findGlobal`, `findById`,
-  `findByUserAndMimeType`
+- [x] `WatermarkConfigMapper` — `findAll`, `findGlobal`, `findById`, `hasDeliveryTrigger`.
+  `findByUser` and `findByUserAndMimeType` are gone with per-user policies; the latter had
+  no caller even before that
 - [x] `WatermarkLogMapper` — `findAll` with pagination, plus `findWatermarkedFileIds`
 
 ---
@@ -1513,7 +1563,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 404 PHPUnit tests and 85 Jest tests, and **no test depends on an external binary**
+**Position:** 408 PHPUnit tests and 85 Jest tests, and **no test depends on an external binary**
 any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
 for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
 has 48 of them.
@@ -1622,12 +1672,17 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   overlap at any rotation, a lattice spanning the whole page, and off-page tiles keeping their
   negative offsets (the regression test for the smear, verified to fail against the old
   placement code)
-- [x] `SchemaConvergenceTest` (6) — the whole schema now arrives in **one** migration, which
-  therefore meets three different starting states (fresh, applied-1000, applied-1000-and-1001)
-  and has to land all of them on identical columns. Also: the flattening columns dropped on
-  upgrade, and running twice changing nothing
+- [x] `SchemaConvergenceTest` (9) — the schema arrives in **two** steps (1003 builds it, 1005
+  drops `group_id`), which between them meet four different starting states (fresh,
+  applied-1000, applied-1000-and-1001, applied-1003) and have to land all of them on identical
+  columns. Also: the flattening columns dropped on upgrade, `group_id` and its index dropped on
+  upgrade and skipped on a fresh install, and running twice changing nothing
   - Doctrine is not a dependency of this app, so the schema objects are fakes. What is under
-    test is the migration's branching, not Doctrine's DDL
+    test is the migrations' branching, not Doctrine's DDL
+  - `FakeTable` records **index names** as well as columns, which it did not have to before.
+    Dropping a column whose index survives is invalid DDL on some platforms and invisible to a
+    fake that discards indexes, so the group-column drop would have looked correct while
+    leaving `wm_config_group_idx` behind
   - **the fake had to be made stricter to be worth anything.** Its `createTable()` first
     replaced an existing table silently; a mutation removing the migration's `hasTable()`
     guard passed every test, because the recreated table happened to have the right columns.

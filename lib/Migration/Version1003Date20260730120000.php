@@ -119,16 +119,6 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 			'autoincrement' => true,
 			'notnull' => true,
 		]);
-		$table->addColumn('user_id', Types::STRING, [
-			'notnull' => false,
-			'length' => 64,
-			'default' => null,
-		]);
-		$table->addColumn('group_id', Types::STRING, [
-			'notnull' => false,
-			'length' => 64,
-			'default' => null,
-		]);
 		$table->addColumn('type', Types::STRING, [
 			'notnull' => true,
 			'length' => 16,
@@ -186,8 +176,6 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 		$table->addColumn('created_at', Types::DATETIME, ['notnull' => true]);
 		$table->addColumn('updated_at', Types::DATETIME, ['notnull' => true]);
 		$table->setPrimaryKey(['id']);
-		$table->addIndex(['user_id'], 'wm_config_user_idx');
-		$table->addIndex(['group_id'], 'wm_config_group_idx');
 	}
 
 	private function ensureLogTable(ISchemaWrapper $schema): void {

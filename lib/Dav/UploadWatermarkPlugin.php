@@ -93,7 +93,7 @@ class UploadWatermarkPlugin extends ServerPlugin {
 		}
 
 		try {
-			$config = $this->watermarkService->resolveConfig($user->getUID());
+			$config = $this->watermarkService->resolveConfig();
 		} catch (\Throwable) {
 			return;
 		}

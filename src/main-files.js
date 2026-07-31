@@ -51,7 +51,7 @@ export function isNodeExplicitlyNotWatermarked(node) {
 
 /**
  * The effective watermark trigger for the current user, resolved server-side
- * (user → group → global → default) and handed over as initial state by
+ * (the global policy, or the built-in default) and handed over as initial state by
  * LoadAdditionalScriptsListener. Defaults to `on_demand` when the state is
  * absent so the manual actions degrade to available rather than silently gone.
  * @return {string} one of on_demand / on_upload / on_download / on_share

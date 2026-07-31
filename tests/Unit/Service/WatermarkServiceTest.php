@@ -92,41 +92,21 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertFalse($this->service->isSupported('application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
 	}
 
-	public function testResolveConfigReturnsUserConfigWhenPresent(): void {
-		$userConfig = new WatermarkConfig();
-		$userConfig->setType('text');
-		$userConfig->setUserId('alice');
-
-		$this->configMapper->expects($this->once())
-			->method('findByUser')
-			->with('alice')
-			->willReturn([$userConfig]);
-
-		$result = $this->service->resolveConfig('alice');
-		$this->assertSame($userConfig, $result);
-	}
-
-	public function testResolveConfigFallsBackToGlobal(): void {
+	public function testResolveConfigReturnsTheGlobalPolicy(): void {
 		$globalConfig = new WatermarkConfig();
 		$globalConfig->setType('image');
-
-		$this->configMapper->expects($this->once())
-			->method('findByUser')
-			->willReturn([]);
 
 		$this->configMapper->expects($this->once())
 			->method('findGlobal')
 			->willReturn($globalConfig);
 
-		$result = $this->service->resolveConfig('bob');
-		$this->assertSame($globalConfig, $result);
+		$this->assertSame($globalConfig, $this->service->resolveConfig());
 	}
 
 	public function testResolveConfigReturnsDefaultWhenNoneExist(): void {
-		$this->configMapper->method('findByUser')->willReturn([]);
 		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException(''));
 
-		$result = $this->service->resolveConfig('carol');
+		$result = $this->service->resolveConfig();
 		$this->assertSame('text', $result->getType());
 		$this->assertSame(80, $result->getOpacity());
 		$this->assertSame(45, $result->getRotation());
@@ -153,7 +133,7 @@ class WatermarkServiceTest extends TestCase {
 		$user->method('getUID')->willReturn('alice');
 		$user->method('getDisplayName')->willReturn('Alice');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -192,7 +172,7 @@ class WatermarkServiceTest extends TestCase {
 		$user->method('getUID')->willReturn('alice');
 		$user->method('getDisplayName')->willReturn('Alice');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -238,7 +218,7 @@ class WatermarkServiceTest extends TestCase {
 		$user->method('getUID')->willReturn('alice');
 		$user->method('getDisplayName')->willReturn('Alice');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -454,7 +434,7 @@ class WatermarkServiceTest extends TestCase {
 		$file->method('getMimeType')->willReturn('text/plain');
 
 		// Gated out before any config lookup or rendering.
-		$this->configMapper->expects($this->never())->method('findByUser');
+		$this->configMapper->expects($this->never())->method('findGlobal');
 		$this->pdfWatermarker->expects($this->never())->method('apply');
 		$this->imageWatermarker->expects($this->never())->method('apply');
 
@@ -469,7 +449,7 @@ class WatermarkServiceTest extends TestCase {
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')->willReturn('alice');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -497,7 +477,7 @@ class WatermarkServiceTest extends TestCase {
 		$user->method('getDisplayName')->willReturn('Alice');
 		$user->method('getEMailAddress')->willReturn('alice@example.com');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -537,7 +517,7 @@ class WatermarkServiceTest extends TestCase {
 		$user->method('getUID')->willReturn('alice');
 		$user->method('getDisplayName')->willReturn('Alice');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -569,7 +549,7 @@ class WatermarkServiceTest extends TestCase {
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')->willReturn('alice');
 		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('image/jpeg');
@@ -590,7 +570,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
 
 		$file = $this->createMock(File::class);
@@ -613,7 +593,7 @@ class WatermarkServiceTest extends TestCase {
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
 		$this->userSession->method('getUser')->willReturn($alice);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -643,7 +623,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -713,7 +693,7 @@ class WatermarkServiceTest extends TestCase {
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
 		// The owner's policy governs the file, so we resolve alice's config, not bob's.
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -758,7 +738,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('image/png');
@@ -794,7 +774,7 @@ class WatermarkServiceTest extends TestCase {
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
 		$this->userSession->method('getUser')->willReturn($alice);
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -821,7 +801,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$alice = $this->createMock(IUser::class);
 		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findByUser')->with('alice')->willReturn([$config]);
+		$this->configMapper->method('findGlobal')->willReturn($config);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
@@ -1241,7 +1221,6 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	public function testDeliveryTriggerForReportsOnShareForAReceivedShare(): void {
-		$this->configMapper->method('findByUser')->willReturn([]);
 		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
 
 		$bob = $this->createMock(IUser::class);
@@ -1261,7 +1240,6 @@ class WatermarkServiceTest extends TestCase {
 	 * hasDeliveryTriggerConfigured() and judges each member with deliveryTriggerFor().
 	 */
 	public function testDeliveryTriggerForReportsNothingForTheRecipientsOwnHomeFolder(): void {
-		$this->configMapper->method('findByUser')->willReturn([]);
 		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
 
 		$bob = $this->createMock(IUser::class);
@@ -1286,16 +1264,27 @@ class WatermarkServiceTest extends TestCase {
 
 	public function testResolveConfigIsMemoisedPerRequest(): void {
 		// A folder download resolves the policy once per member; without the memo that is
-		// two queries a file.
+		// a query a file.
 		$global = new WatermarkConfig();
 		$global->setTrigger('on_share');
 
-		$this->configMapper->expects($this->once())->method('findByUser')->with('alice')->willReturn([]);
 		$this->configMapper->expects($this->once())->method('findGlobal')->willReturn($global);
 
-		$first = $this->service->resolveConfig('alice');
-		$second = $this->service->resolveConfig('alice');
+		$first = $this->service->resolveConfig();
+		$second = $this->service->resolveConfig();
 
 		$this->assertSame($first, $second);
+	}
+
+	/**
+	 * The default is memoised too, so an install with no policy saved does not re-query
+	 * per member — the miss is the case a folder download hits hardest.
+	 */
+	public function testTheDefaultConfigIsMemoisedToo(): void {
+		$this->configMapper->expects($this->once())
+			->method('findGlobal')
+			->willThrowException(new DoesNotExistException(''));
+
+		$this->assertSame($this->service->resolveConfig(), $this->service->resolveConfig());
 	}
 }

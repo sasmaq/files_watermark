@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks can be applied through several triggers — on demand, on upload, on download, and on share — and the app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define global and group policies through a management panel, while users adjust their own preferences through a per-user settings panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
+`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks can be applied through several triggers — on demand, on upload, on download, and on share — and the app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define a single, server-wide policy through a management panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
 
 ---
 
@@ -21,7 +21,7 @@
 - Allow users and administrators to watermark files (PDFs, images, Office documents) within Nextcloud.
 - Support visible watermarks (text and/or image overlays) and, where applicable, invisible metadata watermarks.
 - Integrate with Nextcloud's existing sharing, permission, and file event system.
-- Provide a management UI in the Nextcloud admin panel and a per-user settings panel.
+- Provide a management UI in the Nextcloud admin panel for the single, server-wide policy.
 - Support for S3 storage backends.
 
 ### Out of Scope (v1.0)
@@ -71,7 +71,7 @@
 | --- | --- |
 | `ApiController` | REST API endpoints for watermark configuration, on-demand watermarking, and audit-log retrieval |
 | `DownloadController` | Streams a watermarked temporary copy at download time; original file untouched |
-| `SettingsController` | Backend for the admin management panel and per-user settings panel |
+| `SettingsController` | Backend for the admin management panel |
 | `WatermarkService` | Core watermark application logic; resolves the effective config and delegates to format-specific renderers |
 | `PdfWatermarker` | Applies text/image overlays to PDF files using a PHP PDF library |
 | `ImageWatermarker` | Applies watermarks to JPEG, PNG, WEBP via GD (Imagick for what GD cannot decode) |
@@ -81,7 +81,7 @@
 | `ShareCreatedListener` | Listens to `ShareCreatedEvent` to watermark on share |
 | `WatermarkConfigMapper` | ORM mapper for persisting watermark policies/templates in the database |
 | `WatermarkLogMapper` | ORM mapper for the audit log (with pagination) |
-| `Vue.js frontend` | Admin management panel, per-user settings panel, and file-action menu integration |
+| `Vue.js frontend` | Admin management panel and file-action menu integration |
 
 ---
 
@@ -138,8 +138,6 @@
 | Column | Type | Description |
 | --- | --- | --- |
 | `id` | INT PK | Auto-increment |
-| `user_id` | VARCHAR(64) | NULL = global/group config |
-| `group_id` | VARCHAR(64) | NULL = user/global config |
 | `type` | ENUM('text','image','combined','metadata') | Watermark type |
 | `text_template` | TEXT | Text with placeholders |
 | `image_path` | VARCHAR(512) | Nextcloud path to watermark image |
@@ -172,9 +170,9 @@
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/apps/files_watermark/api/v1/config` | Get current user/admin config |
-| `POST` | `/apps/files_watermark/api/v1/config` | Create or update config |
-| `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Remove a config |
+| `GET` | `/apps/files_watermark/api/v1/config` | Get the global config (admin only) |
+| `POST` | `/apps/files_watermark/api/v1/config` | Create or update the global config (admin only) |
+| `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Remove the global config (admin only) |
 | `POST` | `/apps/files_watermark/api/v1/apply` | Apply watermark to a file on demand |
 | `GET` | `/apps/files_watermark/api/v1/download` | Stream a watermarked copy of a file (original untouched) |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
@@ -185,7 +183,7 @@ All endpoints require a valid Nextcloud session or app password. Admin-only endp
 
 ## 8. Frontend (Vue.js)
 
-- **Admin Settings** (`/settings/admin/watermark`) — global policy, group overrides, default template, MIME/tag scope, audit log viewer.
+- **Admin Settings** (`/settings/admin/watermark`) — global policy, default template, MIME/tag scope, audit log viewer.
 
 - **File Action** — context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
 

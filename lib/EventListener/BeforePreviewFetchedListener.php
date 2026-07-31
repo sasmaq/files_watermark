@@ -59,7 +59,7 @@ class BeforePreviewFetchedListener implements IEventListener {
 		}
 
 		try {
-			$config = $this->watermarkService->resolveConfig($node->getOwner()?->getUID());
+			$config = $this->watermarkService->resolveConfig();
 		} catch (\Throwable) {
 			return;
 		}

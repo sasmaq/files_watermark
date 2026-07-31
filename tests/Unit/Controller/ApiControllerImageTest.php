@@ -144,9 +144,11 @@ class ApiControllerImageTest extends TestCase {
 	}
 
 	public function testSaveConfigRejectsAnArbitraryServerPath(): void {
-		// The regression this change exists for: a non-admin used to be able to persist
-		// any server path here and have the renderers read it.
-		$this->login('bob', isAdmin: false);
+		// The regression this validation exists for: an arbitrary server path used to be
+		// persisted here and read by the renderers. Asserted as an admin, because that is
+		// now the only role that reaches the validation at all — but the check has to stay
+		// server-side regardless of who can call it.
+		$this->login('admin', isAdmin: true);
 		$this->configMapper->expects($this->never())->method('insert');
 
 		$response = $this->controller->saveConfig(
@@ -157,6 +159,26 @@ class ApiControllerImageTest extends TestCase {
 
 		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
 		$this->assertStringContainsString('Upload an image', $response->getData()['error']);
+	}
+
+	/**
+	 * A non-admin cannot save the policy at all — there is one config, and it is
+	 * server-wide.
+	 *
+	 * The 403 lands *before* validation, so the response says nothing about whether the
+	 * value would have been accepted.
+	 */
+	public function testSaveConfigIsForbiddenForNonAdmins(): void {
+		$this->login('bob', isAdmin: false);
+		$this->configMapper->expects($this->never())->method('insert');
+
+		$response = $this->controller->saveConfig(
+			type: 'image',
+			textTemplate: null,
+			imagePath: str_repeat('a', 32) . '.png',
+		);
+
+		$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
 	}
 
 	public function testSaveConfigAcceptsAnUploadedReference(): void {

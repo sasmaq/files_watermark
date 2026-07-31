@@ -22,15 +22,6 @@ class WatermarkConfigMapper extends QBMapper {
 		return $this->findEntities($qb);
 	}
 
-	/** @return WatermarkConfig[] */
-	public function findByUser(string $userId): array {
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->getTableName())
-			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
-		return $this->findEntities($qb);
-	}
-
 	/**
 	 * Whether *any* config uses a delivery trigger (`on_download` / `on_share`).
 	 *
@@ -56,35 +47,19 @@ class WatermarkConfigMapper extends QBMapper {
 		return $row !== false;
 	}
 
+	/**
+	 * The server-wide policy — the only one there is.
+	 *
+	 * Throws `DoesNotExistException` on an install where no admin has saved one yet;
+	 * {@see WatermarkService::resolveConfig} answers that with its built-in default
+	 * rather than treating it as an error.
+	 */
 	public function findGlobal(): WatermarkConfig {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->getTableName())
-			->where($qb->expr()->isNull('user_id'))
-			->andWhere($qb->expr()->isNull('group_id'))
 			->setMaxResults(1);
 		return $this->findEntity($qb);
-	}
-
-	/**
-	 * Returns configs for a user that match the given MIME type, including
-	 * configs with no MIME whitelist (meaning they apply to all types).
-	 *
-	 * @return WatermarkConfig[]
-	 */
-	public function findByUserAndMimeType(string $userId, string $mimeType): array {
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->getTableName())
-			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
-			->andWhere(
-				$qb->expr()->orX(
-					$qb->expr()->isNull('mime_types'),
-					$qb->expr()->eq('mime_types', $qb->createNamedParameter('')),
-					$qb->expr()->like('mime_types', $qb->createNamedParameter('%' . $mimeType . '%')),
-				)
-			);
-		return $this->findEntities($qb);
 	}
 
 	public function findById(int $id): WatermarkConfig {
