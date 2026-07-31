@@ -604,13 +604,21 @@ const PV_H = 400
 
 const previewFont = computed(() => Math.min(80, Math.max(7, Math.round((form.fontSize || 24) * 0.55))))
 
+// Tile spacing, mirroring TileLattice::GAP_FACTOR and ::LINE_HEIGHT_FACTOR on the server.
+// The preview is the contract an admin approves against, so a preview that spaces its
+// repetitions differently from the renderers is a preview that promises the wrong picture.
+// It used to: `font * 2.2` across and a flat `font * 2.6` down, against the renderers'
+// `fontSize * 2` and `lineHeight + fontSize * 2`. Keep these three numbers in step.
+const GAP_FACTOR = 3.5
+const LINE_HEIGHT_FACTOR = 1.2
+
 const tile = computed(() => {
 	const font = previewFont.value
 	const charW = font * 0.56
 	const textW = Math.max(displayText.value.length * charW, font)
 	return {
-		w: Math.round(textW + font * 2.2),
-		h: Math.round(font * 2.6),
+		w: Math.round(textW + font * GAP_FACTOR),
+		h: Math.round(font * LINE_HEIGHT_FACTOR + font * GAP_FACTOR),
 	}
 })
 

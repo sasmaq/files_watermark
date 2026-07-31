@@ -74,7 +74,7 @@
 | `SettingsController` | Backend for the admin management panel and per-user settings panel |
 | `WatermarkService` | Core watermark application logic; resolves the effective config and delegates to format-specific renderers |
 | `PdfWatermarker` | Applies text/image overlays to PDF files using a PHP PDF library |
-| `ImageWatermarker` | Applies watermarks to JPEG, PNG, WEBP via Imagick (GD fallback) |
+| `ImageWatermarker` | Applies watermarks to JPEG, PNG, WEBP via GD (Imagick for what GD cannot decode) |
 | `OfficeWatermarker` | Applies watermarks to Office documents (e.g. via headless conversion / document rendering) |
 | `MetadataWatermarker` | Embeds invisible metadata watermarks where the file format supports it |
 | `NodeWrittenListener` | Listens to `NodeWrittenEvent` to auto-watermark on upload |
@@ -205,8 +205,8 @@ No external binaries. The app spawns no processes — no `exec()` and no shellin
 `qpdf`, `pdftoppm` or Ghostscript — so a host needs nothing beyond PHP and the extensions
 above. The PDF flattening feature, which rasterised each page through an external
 renderer, was removed for this reason.
-| PHP `Imagick` extension | Preferred image watermarking (better quality) |
-| PHP `GD` extension | Image watermarking fallback |
+| PHP `GD` extension | Image watermarking — the default engine |
+| PHP `Imagick` extension | Optional; used for formats GD cannot decode (WebP without libwebp) |
 | LibreOffice / Collabora (headless) | Office document conversion/rendering for watermarking |
 | PHP `exif` / metadata libraries | Reading/writing invisible metadata watermarks |
 | `@nextcloud/vue` | Nextcloud UI component library |

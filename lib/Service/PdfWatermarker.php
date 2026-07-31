@@ -167,7 +167,7 @@ class PdfWatermarker {
 		$pdf->page->addContent($font['out']);
 
 		$textWidth = max(1.0, $this->measure($pdf, $text));
-		$lineHeight = $fontSize * 1.2;
+		$lineHeight = $fontSize * TileLattice::LINE_HEIGHT_FACTOR;
 		$angle = $config->getRotation();
 
 		$content = $pdf->color->getPdfColor($config->getColor())
@@ -211,18 +211,12 @@ class PdfWatermarker {
 	 * coordinates (origin top-left, y downwards). Centres outside the page are
 	 * expected and required — they are what covers the edges and corners.
 	 *
-	 * The lattice is built in the text's *own* rotated frame rather than as a grid
-	 * of rows and columns: spacing runs `textWidth + gap` along the direction the
-	 * text reads and `lineHeight + gap` across it. That keeps neighbouring tiles
-	 * clear of each other at any angle and puts the gap where it is meaningful —
-	 * between adjacent lines of text. Stepping a row/column grid by the text's
-	 * unrotated width and height, as this did before, instead spaced tiles by a
-	 * bounding box that inflates with rotation, so the density of the pattern
-	 * depended on the angle the user happened to pick.
-	 *
-	 * Pure geometry, and deliberately untouched by the move off TCPDF: it is the
-	 * regression test for the illegible-watermark bug, so if its assertions start
-	 * failing the fault is in the caller above, not here.
+	 * The geometry itself now lives in {@see TileLattice}, because the image renderer
+	 * needed the same lattice and had been making do with a fixed grid that ignored the
+	 * text. This stays as the entry point rather than being replaced at every call site:
+	 * it is the regression test for the illegible-watermark bug, its 22 assertions are
+	 * pinned to this signature, and those assertions passing unchanged across the
+	 * extraction is what proves the move was faithful.
 	 *
 	 * @return list<array{float, float}> `[x, y]` centre of each tile
 	 */
@@ -234,46 +228,7 @@ class PdfWatermarker {
 		int $rotation,
 		int $fontSize,
 	): array {
-		// Breathing room between repetitions, scaled to the type size so the
-		// density looks the same at every font size.
-		$gap = $fontSize * 2;
-		$stepAlong = $textWidth + $gap;
-		$stepAcross = $lineHeight + $gap;
-
-		// A positive-angle watermark reads up and to the right on a y-downwards page.
-		// `$across` is that direction turned 90°; the two are orthonormal, which is
-		// what makes the projections below a change of basis.
-		$rad = deg2rad((float)$rotation);
-		$along = [cos($rad), -sin($rad)];
-		$across = [sin($rad), cos($rad)];
-
-		// How far the page extends along each axis of that frame, measured by
-		// projecting its corners, so the lattice is only as large as it needs to be.
-		$alongOffsets = [];
-		$acrossOffsets = [];
-		foreach ([[0.0, 0.0], [$pageWidth, 0.0], [0.0, $pageHeight], [$pageWidth, $pageHeight]] as [$x, $y]) {
-			$alongOffsets[] = $x * $along[0] + $y * $along[1];
-			$acrossOffsets[] = $x * $across[0] + $y * $across[1];
-		}
-
-		$positions = [];
-		$firstAlong = (int)floor(min($alongOffsets) / $stepAlong);
-		$lastAlong = (int)ceil(max($alongOffsets) / $stepAlong);
-		$firstAcross = (int)floor(min($acrossOffsets) / $stepAcross);
-		$lastAcross = (int)ceil(max($acrossOffsets) / $stepAcross);
-
-		for ($i = $firstAlong; $i <= $lastAlong; $i++) {
-			for ($j = $firstAcross; $j <= $lastAcross; $j++) {
-				$u = $i * $stepAlong;
-				$v = $j * $stepAcross;
-				$positions[] = [
-					$u * $along[0] + $v * $across[0],
-					$u * $along[1] + $v * $across[1],
-				];
-			}
-		}
-
-		return $positions;
+		return TileLattice::positions($pageWidth, $pageHeight, $textWidth, $lineHeight, $rotation, $fontSize);
 	}
 
 	private function applyImageOverlay(Tcpdf $pdf, WatermarkConfig $config, float $width, float $height): void {

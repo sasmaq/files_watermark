@@ -13,7 +13,7 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 - Full audit log of every watermark event
 - Supports PDF, JPEG, PNG, and WEBP files
 - PDF rendering via tc-lib-pdf, which reads PDF 1.5+ documents natively; image rendering
-  via Imagick (preferred) or GD fallback
+  via GD by default, with Imagick used for anything GD cannot decode
 
 ## Requirements
 
@@ -21,11 +21,28 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 | --- | --- |
 | Nextcloud | 31.x |
 | PHP | 8.2 or 8.3 |
-| PHP extension | `imagick` (preferred) or `gd` |
+| PHP extension | `gd` (used by default); `imagick` optional, see below |
 | PHP extension | `bcmath` (required by the PDF renderer) |
 | Composer | 2.x |
 | Node.js | >= 20 |
 | npm | >= 10 |
+
+### Image rendering: GD by default, Imagick where GD cannot go
+
+JPEG, PNG and WEBP are watermarked with **GD**, which ships with essentially every PHP
+build and which Nextcloud server already requires. **Imagick is used when GD cannot decode
+the file** — in practice that means WebP on a GD compiled without libwebp — and when GD is
+not installed at all. Nothing to configure either way.
+
+The preference used to run the other way round, and it was flipped for the same reason the
+app spawns no external processes: two servers running the same configuration should produce
+the same file. Imagick is optional on every platform and EPEL-only on RHEL 9, so preferring
+it meant the output depended on how the host happened to be packaged.
+
+One thing to be aware of if you run a minimal container: with **no TrueType font installed**,
+GD falls back to its built-in bitmap font, which cannot be rotated — the watermark still
+appears, but flat and coarse rather than tiled diagonally. Any of `dejavu-sans-fonts`,
+`liberation-sans-fonts` (RHEL 9) or `fonts-dejavu-core` (Debian/Ubuntu) is enough.
 
 ### No external binaries
 

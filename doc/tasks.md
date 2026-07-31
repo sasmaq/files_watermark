@@ -13,8 +13,14 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-30, both green: **206 PHPUnit** tests and **69 Jest** tests, with
-**zero skips on every host**. Local run was PHP 8.2; 8.3 is covered by CI only.
+Suites re-run 2026-07-31, both green: **222 PHPUnit** tests and **69 Jest** tests, with
+**no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
+
+One qualification the earlier "zero skips on every host" glossed over, and which widened when
+[GD became the default image engine](#images-imagewatermarker): nothing is conditional on an
+external *binary* any more, but two image tests are still conditional on the host's own build —
+WebP support, and a TrueType font for the rotation case, which now cannot borrow Imagick's
+renderer to get one.
 
 That last point is new and worth stating plainly: the suite no longer varies by machine.
 Every test that used to skip did so for want of an external binary, and the app no longer
@@ -37,7 +43,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 206 PHPUnit + 69 Jest, zero skips anywhere | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 222 PHPUnit + 69 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -203,9 +209,74 @@ stranded setting off — are recorded in git history rather than duplicated here
 
 ### Images (`ImageWatermarker`)
 
-- [x] Text and image watermarks on JPEG, PNG, WEBP via Imagick
-- [x] GD fallback produces equivalent output when Imagick is absent
+- [x] Text and image watermarks on JPEG, PNG, WEBP
+- [x] **GD is the default engine; Imagick handles what GD cannot decode.** The preference used
+  to run the other way round, and was flipped for the reason that runs through the rest of this
+  document: output should not depend on how the host was packaged. GD ships with essentially
+  every PHP build and Nextcloud server already requires it, while Imagick is optional
+  everywhere and EPEL-only on the RHEL 9 target — so "Imagick preferred" meant two servers with
+  the same config could produce visibly different files, decided by an accident of packaging
+  - **Imagick is not demoted to a missing-extension fallback.** It is selected whenever GD
+    cannot read the input, which today means WebP on a GD without libwebp. That case used to
+    throw `GD was compiled without WebP support. Install Imagick or recompile GD with
+    libwebp.` — advice that was wrong precisely when Imagick *was* installed, since the old
+    code only reached the GD path at all when it was not
+  - engine choice depends on **format support alone**, deliberately. The tempting extra rule —
+    hand text to Imagick when the host has no TrueType font, since GD's bitmap fallback cannot
+    rotate — was rejected: it would make the engine, and so the output, depend on font
+    packaging, which is the same trap one level down. That cliff is real and is a *font*
+    problem, answered by bundling one (see [Arabic and RTL](#open-arabic), which needs a
+    bundled font anyway)
+  - `ImageWatermarker::engineForMime()` is public because it is the only part of the decision
+    observable without reading pixels, and the two engines are meant to be indistinguishable in
+    pixels
+  - `apply()` detects the MIME type once and passes it down rather than letting the selector
+    and the GD path each detect it, so the two cannot disagree
 - [x] Opacity and rotation match the configured values
+- [x] **Tiles no longer overlap — the image path now measures its text.** It stepped a fixed
+  grid, `max(210, fontSize * 10)` across by `max(225, fontSize * 11)` down, that never looked
+  at the string it was drawing. The *default* `{username} — {date}` template overran its
+  neighbour by 30px at the default font size; `Mohammed Al-Amri — 2026-07-31 14:22:05` overran
+  by 329px, which is more than the whole step, so it ran through the tile beyond as well. Long
+  names, long templates and larger font sizes all made it worse, and the `{datetime}` token
+  guaranteed it
+  - this is the *same bug the PDF renderer had and fixed* — "spacing derived from the text's
+    unrotated width and height" is half of what made PDF watermarks illegible. The image
+    renderer never received that fix, and nothing connected the two, because each renderer
+    owned its own copy of the placement code
+  - so the lattice moved to `TileLattice`, and `PdfWatermarker::tilePositions()` now delegates
+    to it. That entry point is kept rather than replaced at the call sites: its 22 assertions
+    are the regression net for the illegible-watermark bug, and **those tests passing unchanged
+    is the evidence the extraction was faithful**
+  - both engines now measure with the same font that will draw — `imagettfbbox()` for GD,
+    `queryFontMetrics()` for Imagick — and both anchor text at the *left end of the baseline*,
+    which is neither corner of the box, so centring a rotated tile means rotating the
+    anchor-to-centre offset and stepping back along it (`TileLattice::rotateOffset()`)
+  - the bitmap-font fallback asks for an **unrotated** lattice, because `imagestring()` cannot
+    rotate: spacing a tilted pattern for text that will be drawn flat is its own way of
+    stacking tiles. Its font id is also clamped to 5 now, the highest `imagestring()` accepts —
+    `intval(fontSize / 4)` handed it 8 for a 32pt watermark
+  - **verified by looking at it**, at 0°, 45°, 90° and with a 40pt font, per the standing rule
+    that geometry claims are only worth what the rendered pixels say
+- [x] **Spacing widened, and all three surfaces now derive it from one number.** The gap
+  between repetitions went from `fontSize * 2` to `fontSize * 3.5` — `TileLattice::GAP_FACTOR`,
+  which is the single control on watermark density
+  - it applies everywhere by construction: PDF and images share `TileLattice`, so on A4 at 18pt
+    the step went 325.1 → 352.1pt along the text and **57.6 → 84.6pt across it**, where the
+    crowding was most visible
+  - **the settings preview was the one that could drift, and it had.** It spaced its pattern
+    `font * 2.2` across and a flat `font * 2.6` down, against the renderers' `fontSize * 2` and
+    `lineHeight + fontSize * 2` — so it was already showing a tighter vertical rhythm than any
+    renderer produced. `WatermarkForm.vue` now mirrors `GAP_FACTOR` and `LINE_HEIGHT_FACTOR`
+    with the same formula, both named and commented on both sides. The preview is what an admin
+    approves; it has to be what the renderers draw
+  - `PdfWatermarker` picked up `LINE_HEIGHT_FACTOR` in place of its own `1.2` literal. The
+    image renderers deliberately keep measuring real glyph heights, which is closer still
+- [x] **Tile count scales with canvas area, as a tiled watermark must** — and the wider gap took
+  the edge off it. Measured on the delivery-path shape (per-fetch render): 85 tiles / 0.08s at
+  1200×800, 684 / 0.82s at 4000×3000, 1296 / **1.75s** at 6000×4000, down from 125 / 1105 /
+  2178 at the old spacing. Still uncapped; if it ever needs a limit it belongs beside the
+  archive caps under [Delivery and triggers](#open-3), which are also class constants
 
 ### Office documents (`OfficeWatermarker`)
 
@@ -580,11 +651,14 @@ Three blocking facts, each read off the current tree rather than assumed:
   carry no Arabic; Arial does. Arabic support on the image path is therefore *accidental and
   host-dependent* — precisely the class of problem [No external binaries](#no-external-binaries)
   was about, arrived at from a different direction
-- **Neither image backend can be relied on to shape or reorder.** `imagettftext()` draws the
-  code points it is given in the order it is given, so Arabic comes out as isolated letters in
-  reverse order **even with a font that has the glyphs**. Imagick's `annotateImage()` shapes
+- **Neither image backend can be relied on to shape or reorder, and the one that definitely
+  cannot is now the default.** `imagettftext()` draws the code points it is given in the order
+  it is given, so Arabic comes out as isolated letters in reverse order **even with a font that
+  has the glyphs** — and GD is [the default engine](#images-imagewatermarker) as of this
+  version, so that is the path Arabic will actually take. Imagick's `annotateImage()` shapes
   only if ImageMagick was built against Raqm/HarfBuzz, which is not something to require of a
-  host
+  host — and pushing Arabic to Imagick would reintroduce exactly the host-dependent output the
+  default was flipped to remove. The app has to shape
 
 ### Open {#open-arabic}
 
@@ -728,7 +802,7 @@ Neither loss is invisible, and neither is being papered over:
 
 ### What it bought
 
-- [x] **Zero skips, on every host.** 206 PHPUnit tests, none conditional on a binary. The
+- [x] **Zero binary-conditional skips.** 222 PHPUnit tests, none of them needing a binary. The
   suite result no longer depends on which machine ran it, which is worth more than it
   sounds — the flattener's rasterise cases were green on the developer's laptop and
   skipped in CI for most of their life
@@ -1111,7 +1185,10 @@ read, and one SDD type is still missing.
   Composer package deliberately contains no font data and its `make fonts` target downloads a
   117 MB mirror. Two ~10 KB JSON files, metrics only, found through the global `K_PATH_FONTS`.
   See `resources/fonts/README.md`, including the unresolved licence provenance
-- [x] `Imagick` preferred with a `GD` fallback; both paths covered by `ImageWatermarkerTest`
+- [x] **`GD` is the default image engine, `Imagick` covers what GD cannot decode** — see
+  [Images](#images-imagewatermarker) for why the preference was flipped. GD is a Nextcloud
+  server requirement already, so the default engine is present on every host by definition;
+  Imagick stays optional and stays supported
 - [x] ~~**`qpdf`** for `PdfNormalizer` and ~~**`poppler-utils`** for `pdftoppm`~~ — both
   **removed**. See [No external binaries](#no-external-binaries) for what went with them
   - kept here because the reasoning still applies to any future proposal to shell out.
@@ -1208,9 +1285,10 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 206 PHPUnit tests and 69 Jest tests, **all of them running on every host** —
-no test depends on an external binary any more. The DAV layer, which used to be the blind spot
-every delivery bug hid in, now has 48 of them.
+**Position:** 222 PHPUnit tests and 69 Jest tests, and **no test depends on an external binary**
+any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
+for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
+has 48 of them.
 
 ### Open {#open-testing}
 
@@ -1325,7 +1403,32 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
     It now throws like Doctrine's `TableExistsException`, and that mutation fails
 - [x] `LegacyImagePathCleanupTest` (2) — which `image_path` rows the migration clears, and
   that no write is issued when every stored reference is valid
-- [x] `ImageWatermarkerTest` (10) — JPEG / PNG / WEBP output, GD fallback, opacity, rotation
+- [x] `ImageWatermarkerTest` (26) — JPEG / PNG / WEBP output, opacity, rotation, **tiles never
+  overlapping at any rotation**, and the
+  **engine-selection matrix**: GD chosen for PNG/JPEG/WebP even with Imagick installed, Imagick
+  chosen for WebP when GD lacks libwebp and for anything when GD is absent, and each of the
+  three failure messages naming the limit that was hit
+  - the matrix runs through `FakeImageStack`, which dictates the three capability probes rather
+    than reading the host, so hosts this suite will never run on — a GD without libwebp, a
+    server with neither extension — are covered anyway. Probing the real machine would have
+    made which branches get exercised an accident of how PHP was compiled
+  - `testBothEnginesProduceAWatermarkedImage` forces each engine in turn, since with GD now
+    always winning the selection, Imagick would otherwise never execute on a normal host. It
+    asserts equivalence — dimensions, format, ink drawn — not a checksum: the two engines are
+    not pixel-identical and are not meant to be
+  - **Imagick's rendering is therefore only executed where Imagick is installed**, which is CI
+    (`ci/php.Dockerfile` installs it) and not a stock macOS dev box
+  - `testTilesNeverOverlapInTheRenderedImage` reads the overlap out of the pixels rather than
+    out of the geometry: at 50% opacity a singly covered pixel lands on 126 and a doubly
+    covered one composites to 62, so the darkest pixel in the output *is* the measurement, and
+    antialiasing cannot fake a pass because it only ever lightens. Mutation-tested — shortening
+    the lattice step to `textWidth * 0.6` fails it at all five rotations
+  - `testFontSizeIsConfigurable` had to change with the fix and is worth knowing about: it
+    asserted that a bigger font adds more *ink*, which was only true because the old grid kept
+    the tile count roughly fixed (12 tiles at both 12pt and 20pt on a 600×400 image). Spacing
+    now scales with type size, so bigger text arrives in fewer tiles and total ink is not
+    monotonic. It asserts the longest unbroken run of ink instead — that the glyphs actually
+    got bigger, which is what the setting controls
 - [x] `ApiControllerScopeTest` (11) — unsupported and mistyped MIME types rejected, blank
   normalised to null, a tag name rejected, a non-existent tag id rejected, a real tag accepted,
   and no tag lookup when none is given
