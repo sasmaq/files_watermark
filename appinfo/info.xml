@@ -6,9 +6,8 @@
     <!-- The apps list and the App Store read these three, and l10n/ does not cover them:
          an app whose entire interface is translated still appears in the app list under
          its English name unless the metadata is translated here as well. -->
-    <name lang="ar">العلامة المائية للملفات</name>
-    <summary>Apply configurable watermarks to files stored in Nextcloud</summary>
-    <summary lang="ar">طبِّق علامات مائية قابلة للتخصيص على الملفات المخزَّنة في نكست كلاود</summary>
+    <summary>Apply configurable watermarks to files</summary>
+    <summary lang="ar">طبِّق علامات مائية قابلة للتخصيص على الملفات</summary>
     <description><![CDATA[
 Protect your documents from unauthorized distribution by applying text or image watermarks to PDFs and images.
 
@@ -38,10 +37,9 @@ Features:
     ]]></description>
     <version>1.5.0</version>
     <licence>agpl</licence>
-    <author mail="admin@example.com">files_watermark contributors</author>
+    <author mail="admin@example.com">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>
     <category>files</category>
-    <bugs>https://github.com/example/files_watermark/issues</bugs>
     <dependencies>
         <php min-version="8.2"/>
         <!-- tc-lib-pdf, the PDF renderer, requires bcmath; Composer will not
