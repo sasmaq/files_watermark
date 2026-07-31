@@ -906,6 +906,32 @@ base direction is pinned to the rule the renderer uses rather than to the viewer
   - **file paths are pinned `dir="ltr"`**, which is a bug fix, not styling: a path is
     structurally LTR, and its leading slash is a neutral that an RTL paragraph renders at the
     far end — `/Documents/تقرير.pdf` reads as though the file were named backwards
+- [x] **The tag picker's dropdown was broken in Arabic, in two ways, and both are in
+  `@nextcloud/vue` / `vue-select` rather than here.** Reported from the field — "the list is
+  not shown correctly" — and both are fixed from this app with two rules in the one **unscoped**
+  style block in `WatermarkForm.vue`. Unscoped is not laziness: `NcSelect` renders with
+  `appendToBody` (true by default), so the list is a child of `<body>` carrying none of the
+  component's scope attributes, and a scoped rule cannot reach it at all
+  - **the list appeared at the edge of the window instead of under the field.** An
+    over-constrained absolute box: `.vs__dropdown-menu--floating` sets `inset-inline-start: 0`
+    as a fallback, which is `right: 0` under RTL, while floating-ui writes the real position as
+    an inline `left` *and* an inline `width`. With `left`, `right` and `width` all non-auto the
+    box is over-constrained, and CSS 2.2 §10.3.7 discards `left` when the direction is RTL — so
+    the computed position is thrown away. In LTR the same fallback resolves to `left: 0` and the
+    inline `left` simply overrides it, which is why this could not be seen until the interface
+    was Arabic
+  - **the option labels were left-aligned inside a right-to-left list.** vue-select does ship an
+    RTL block, but it is written `.v-select[dir=rtl] .vs__dropdown-menu` and cannot match for two
+    independent reasons: the component renders `dir="auto"` on its root, not `dir="rtl"`, and the
+    menu is outside `.v-select` entirely once appended to the body. The unconditional base rule,
+    `text-align: left`, is what applies
+  - **measured in Chrome against the app's own built stylesheet**, with the markup `NcSelect`
+    actually produces, because this is a layout claim and nothing cheaper can see it: a field at
+    x=400 had its list at **x=506, the window edge, and `text-align: left`**; after the two rules,
+    **x=400 and `text-align: start`**, with LTR unchanged at x=400 throughout
+  - not fixed, and not worth it: `.vs__actions` keeps its LTR padding under RTL (`0 6px 0 3px`
+    against the `0 3px 0 6px` the unreachable RTL block intended), a 3px asymmetry on the
+    clear/expand buttons
 - [x] **The preview's direction is decided by the text, never by the locale** — and the rule is
   not a style choice, it is the shaper's. `Com\Tecnick\Unicode\Bidi` resolves the paragraph
   direction from the first strong character of the string it is handed, so the preview computes

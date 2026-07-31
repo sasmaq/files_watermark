@@ -1094,3 +1094,49 @@ const contentLines = [
     border: 0;
 }
 </style>
+
+<!--
+	Deliberately unscoped, which is the only thing that can work here: NcSelect renders
+	its dropdown with `appendToBody` (true by default), so the list is a child of <body>
+	and carries none of this component's scope attributes. A scoped rule cannot reach it.
+-->
+<style>
+/**
+ * The tag picker's dropdown lands at the edge of the window instead of under the field
+ * when the interface is right-to-left.
+ *
+ * The cause is an over-constrained absolute box, and it is in @nextcloud/vue rather than
+ * here. Its `.vs__dropdown-menu--floating` sets `inset-inline-start: 0` as a fallback,
+ * which resolves to `right: 0` under RTL — while floating-ui writes the real position as
+ * an inline `left`, together with an inline `width`. With `left`, `right` and `width` all
+ * non-auto the box is over-constrained, and CSS 2.2 §10.3.7 says the loser is `left` when
+ * the direction is RTL. So the computed position is discarded and the list is pinned to
+ * the page edge. In LTR the same fallback resolves to `left: 0`, which the inline `left`
+ * simply overrides, which is why this is invisible until the interface is Arabic.
+ *
+ * Releasing `right` lets the inline `left` position the list again. Measured in Chrome
+ * against a field at x=400: RTL put the list at 506 (the window edge) before this rule and
+ * at 400 after it, with LTR unchanged at 400.
+ */
+[dir="rtl"] .vs__dropdown-menu--floating {
+    inset-inline-start: auto;
+    right: auto;
+}
+
+/**
+ * The option labels inside that list are left-aligned, so Arabic tag names sit against
+ * the wrong edge of a right-to-left list.
+ *
+ * Same root cause, one level down. vue-select does ship an RTL block, but it is written
+ * `.v-select[dir=rtl] .vs__dropdown-menu`, which cannot match here for two independent
+ * reasons: the component renders `dir="auto"` on its root rather than `dir="rtl"`, and
+ * the menu is appended to <body>, so it is not a descendant of `.v-select` at all. What
+ * does apply is the unconditional base rule, `text-align: left`.
+ *
+ * `start` rather than `right`, so the declaration states the intent instead of restating
+ * the direction it is already nested under.
+ */
+[dir="rtl"] .vs__dropdown-menu {
+    text-align: start;
+}
+</style>

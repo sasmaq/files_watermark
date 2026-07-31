@@ -1108,28 +1108,28 @@ body {
   color: var(--color-border-success, var(--color-success));
 }
 
-.watermark-form[data-v-b64a6580] {
+.watermark-form[data-v-76f5bc02] {
     max-width: 980px;
 }
-.wm-title[data-v-b64a6580] {
+.wm-title[data-v-76f5bc02] {
     margin: 0 0 16px;
     font-size: 20px;
     font-weight: 700;
 }
 
 /* Two-column layout: settings + sticky preview */
-.wm-grid[data-v-b64a6580] {
+.wm-grid[data-v-76f5bc02] {
     display: grid;
     grid-template-columns: 1fr;
     gap: 20px;
 }
 @media (min-width: 880px) {
-.wm-grid[data-v-b64a6580] {
+.wm-grid[data-v-76f5bc02] {
         grid-template-columns: minmax(0, 1fr) 300px;
         align-items: start;
 }
 }
-.wm-main[data-v-b64a6580] {
+.wm-main[data-v-76f5bc02] {
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -1137,30 +1137,30 @@ body {
 }
 
 /* Grouped setting cards */
-.wm-card[data-v-b64a6580] {
+.wm-card[data-v-76f5bc02] {
     border: 1px solid var(--color-border);
     border-radius: var(--border-radius-large, 12px);
     padding: 16px 18px;
     background: var(--color-main-background);
 }
-.wm-card__title[data-v-b64a6580] {
+.wm-card__title[data-v-76f5bc02] {
     margin: 0 0 2px;
     font-size: 15px;
     font-weight: 700;
 }
-.wm-card__desc[data-v-b64a6580] {
+.wm-card__desc[data-v-76f5bc02] {
     margin: 0 0 14px;
     font-size: 13px;
     color: var(--color-text-maxcontrast);
 }
 
 /* Type picker cards */
-.wm-type-options[data-v-b64a6580] {
+.wm-type-options[data-v-76f5bc02] {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 10px;
 }
-.wm-type-card[data-v-b64a6580] {
+.wm-type-card[data-v-76f5bc02] {
     position: relative;
     display: flex;
     flex-direction: column;
@@ -1173,48 +1173,48 @@ body {
     cursor: pointer;
     transition: border-color 0.1s ease, background-color 0.1s ease;
 }
-.wm-type-card[data-v-b64a6580]:hover {
+.wm-type-card[data-v-76f5bc02]:hover {
     background: var(--color-background-hover);
 }
-.wm-type-card.is-active[data-v-b64a6580] {
+.wm-type-card.is-active[data-v-76f5bc02] {
     border-color: var(--color-primary-element);
     background: color-mix(in srgb, var(--color-primary-element) 8%, transparent);
 }
-.wm-type-card[data-v-b64a6580]:focus-within {
+.wm-type-card[data-v-76f5bc02]:focus-within {
     outline: 2px solid var(--color-primary-element);
     outline-offset: 2px;
 }
-.wm-type-card__icon[data-v-b64a6580] {
+.wm-type-card__icon[data-v-76f5bc02] {
     width: 28px;
     height: 28px;
     fill: var(--color-text-maxcontrast);
 }
-.wm-type-card.is-active .wm-type-card__icon[data-v-b64a6580] {
+.wm-type-card.is-active .wm-type-card__icon[data-v-76f5bc02] {
     fill: var(--color-primary-element);
 }
-.wm-type-card__label[data-v-b64a6580] {
+.wm-type-card__label[data-v-76f5bc02] {
     font-size: 13px;
     font-weight: 700;
 }
-.wm-type-card__desc[data-v-b64a6580] {
+.wm-type-card__desc[data-v-76f5bc02] {
     font-size: 11px;
     line-height: 1.3;
     color: var(--color-text-maxcontrast);
 }
 
 /* Placeholder chips */
-.wm-chips[data-v-b64a6580] {
+.wm-chips[data-v-76f5bc02] {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     margin-top: 12px;
 }
-.wm-chips__hint[data-v-b64a6580] {
+.wm-chips__hint[data-v-76f5bc02] {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
-.wm-chip[data-v-b64a6580] {
+.wm-chip[data-v-76f5bc02] {
     padding: 3px 10px;
     border: 1px solid var(--color-border);
     border-radius: var(--border-radius-pill, 16px);
@@ -1225,47 +1225,47 @@ body {
     cursor: pointer;
     transition: border-color 0.1s ease, background-color 0.1s ease;
 }
-.wm-chip[data-v-b64a6580]:hover {
+.wm-chip[data-v-76f5bc02]:hover {
     border-color: var(--color-primary-element);
     background: color-mix(in srgb, var(--color-primary-element) 10%, transparent);
 }
 
 /* Appearance fields */
-.wm-fields[data-v-b64a6580] {
+.wm-fields[data-v-76f5bc02] {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 16px;
 }
-.wm-field[data-v-b64a6580] {
+.wm-field[data-v-76f5bc02] {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
-.wm-field > label[data-v-b64a6580] {
+.wm-field > label[data-v-76f5bc02] {
     font-size: 13px;
     font-weight: 600;
 }
-.wm-inline[data-v-b64a6580] {
+.wm-inline[data-v-76f5bc02] {
     display: flex;
     align-items: center;
     gap: 10px;
 }
-.wm-inline__val[data-v-b64a6580] {
+.wm-inline__val[data-v-76f5bc02] {
     min-width: 46px;
     font-size: 13px;
     font-variant-numeric: tabular-nums;
     color: var(--color-text-maxcontrast);
 }
-.wm-inline__val--mono[data-v-b64a6580] {
+.wm-inline__val--mono[data-v-76f5bc02] {
     font-family: var(--font-face-monospace, monospace);
     text-transform: uppercase;
 }
-.wm-range[data-v-b64a6580] {
+.wm-range[data-v-76f5bc02] {
     flex: 1;
     min-width: 0;
     accent-color: var(--color-primary-element);
 }
-.wm-color[data-v-b64a6580] {
+.wm-color[data-v-76f5bc02] {
     width: 44px;
     height: 34px;
     padding: 2px;
@@ -1275,29 +1275,29 @@ body {
     cursor: pointer;
 }
 /* Stands in for the <label for> the picker/checkbox group has no single input for. */
-.wm-field__label[data-v-b64a6580] {
+.wm-field__label[data-v-76f5bc02] {
     font-size: 13px;
     font-weight: 600;
 }
-.wm-checks[data-v-b64a6580] {
+.wm-checks[data-v-76f5bc02] {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 18px;
 }
-.wm-field--stacked[data-v-b64a6580] {
+.wm-field--stacked[data-v-76f5bc02] {
     margin-bottom: 14px;
 }
-.wm-field--stacked[data-v-b64a6580]:last-child {
+.wm-field--stacked[data-v-76f5bc02]:last-child {
     margin-bottom: 0;
 }
 
 /* Radio option list (trigger) */
-.wm-option-list[data-v-b64a6580] {
+.wm-option-list[data-v-76f5bc02] {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
-.wm-option[data-v-b64a6580] {
+.wm-option[data-v-76f5bc02] {
     display: flex;
     align-items: flex-start;
     gap: 12px;
@@ -1307,14 +1307,14 @@ body {
     cursor: pointer;
     transition: border-color 0.1s ease, background-color 0.1s ease;
 }
-.wm-option[data-v-b64a6580]:hover {
+.wm-option[data-v-76f5bc02]:hover {
     background: var(--color-background-hover);
 }
-.wm-option.is-active[data-v-b64a6580] {
+.wm-option.is-active[data-v-76f5bc02] {
     border-color: var(--color-primary-element);
     background: color-mix(in srgb, var(--color-primary-element) 8%, transparent);
 }
-.wm-option__radio[data-v-b64a6580] {
+.wm-option__radio[data-v-76f5bc02] {
     flex: none;
     width: 16px;
     height: 16px;
@@ -1328,31 +1328,31 @@ body {
     box-shadow: none !important;
     background-color: transparent !important;
 }
-.wm-option__radio[data-v-b64a6580]:focus-visible {
+.wm-option__radio[data-v-76f5bc02]:focus-visible {
     outline: 2px solid var(--color-primary-element);
     outline-offset: 1px;
 }
-.wm-option__body[data-v-b64a6580] {
+.wm-option__body[data-v-76f5bc02] {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
-.wm-option__label[data-v-b64a6580] {
+.wm-option__label[data-v-76f5bc02] {
     font-size: 13px;
     font-weight: 600;
 }
-.wm-option__desc[data-v-b64a6580] {
+.wm-option__desc[data-v-76f5bc02] {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
-.wm-help[data-v-b64a6580] {
+.wm-help[data-v-76f5bc02] {
     margin: 4px 0 0;
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
 /* The real input is driven by the buttons above it; hidden rather than removed so it
    stays focusable and keeps native file-picker behaviour. */
-.wm-file-input[data-v-b64a6580] {
+.wm-file-input[data-v-76f5bc02] {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1363,13 +1363,13 @@ body {
     white-space: nowrap;
     border: 0;
 }
-.wm-upload[data-v-b64a6580] {
+.wm-upload[data-v-76f5bc02] {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
 }
-.wm-upload__thumb[data-v-b64a6580] {
+.wm-upload__thumb[data-v-76f5bc02] {
     max-width: 64px;
     max-height: 40px;
     object-fit: contain;
@@ -1378,30 +1378,30 @@ body {
     background: var(--color-background-dark);
     padding: 2px;
 }
-.wm-upload__name[data-v-b64a6580] {
+.wm-upload__name[data-v-76f5bc02] {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
-.wm-field-error[data-v-b64a6580] {
+.wm-field-error[data-v-76f5bc02] {
     margin: 8px 0 0;
     font-size: 13px;
     color: var(--color-error, #e9322d);
 }
 
 /* Live preview */
-.wm-preview__sticky[data-v-b64a6580] {
+.wm-preview__sticky[data-v-76f5bc02] {
     position: static;
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 @media (min-width: 880px) {
-.wm-preview__sticky[data-v-b64a6580] {
+.wm-preview__sticky[data-v-76f5bc02] {
         position: sticky;
         top: 16px;
 }
 }
-.wm-preview__label[data-v-b64a6580] {
+.wm-preview__label[data-v-76f5bc02] {
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -1411,11 +1411,11 @@ body {
 /* Arabic letters join, and letter-spacing pulls the joins apart — the word comes out as
    disconnected characters. Neither does uppercasing mean anything in a script with no
    case, so both are dropped rather than kept and ignored. */
-[dir="rtl"] .wm-preview__label[data-v-b64a6580] {
+[dir="rtl"] .wm-preview__label[data-v-76f5bc02] {
     text-transform: none;
     letter-spacing: normal;
 }
-.wm-preview__page[data-v-b64a6580] {
+.wm-preview__page[data-v-76f5bc02] {
     aspect-ratio: 3 / 4;
     width: 100%;
     max-width: 300px;
@@ -1423,12 +1423,12 @@ body {
     overflow: hidden;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
 }
-.wm-preview__svg[data-v-b64a6580] {
+.wm-preview__svg[data-v-76f5bc02] {
     display: block;
     width: 100%;
     height: 100%;
 }
-.wm-preview__note[data-v-b64a6580] {
+.wm-preview__note[data-v-76f5bc02] {
     margin: 0;
     max-width: 300px;
     font-size: 12px;
@@ -1436,56 +1436,56 @@ body {
 }
 
 /* Actions */
-.wm-actions[data-v-b64a6580] {
+.wm-actions[data-v-76f5bc02] {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 10px 12px;
     margin-top: 24px;
 }
-.wm-status[data-v-b64a6580] {
+.wm-status[data-v-76f5bc02] {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: 13px;
     font-weight: 600;
-    animation: wm-status-in-b64a6580 0.18s ease-out;
+    animation: wm-status-in-76f5bc02 0.18s ease-out;
 }
-.wm-status svg[data-v-b64a6580] {
+.wm-status svg[data-v-76f5bc02] {
     width: 18px;
     height: 18px;
     flex: none;
     fill: currentColor;
 }
-.wm-status--success[data-v-b64a6580] {
+.wm-status--success[data-v-76f5bc02] {
     color: var(--color-success, #2d7b41);
 }
-.wm-status--error[data-v-b64a6580] {
+.wm-status--error[data-v-76f5bc02] {
     color: var(--color-error, #c7361f);
 }
 /* The status slides in from the side the text starts on, so it reads as arriving rather
    than as being pushed backwards. That side is mirrored under RTL — a keyframe cannot
    take a logical property, so the direction is chosen by a second animation. */
-@keyframes wm-status-in-b64a6580 {
+@keyframes wm-status-in-76f5bc02 {
 from { opacity: 0; transform: translateX(-4px);
 }
 to { opacity: 1; transform: none;
 }
 }
-@keyframes wm-status-in-rtl-b64a6580 {
+@keyframes wm-status-in-rtl-76f5bc02 {
 from { opacity: 0; transform: translateX(4px);
 }
 to { opacity: 1; transform: none;
 }
 }
-[dir="rtl"] .wm-status[data-v-b64a6580] {
-    animation-name: wm-status-in-rtl-b64a6580;
+[dir="rtl"] .wm-status[data-v-76f5bc02] {
+    animation-name: wm-status-in-rtl-76f5bc02;
 }
 @media (prefers-reduced-motion: reduce) {
-.wm-status[data-v-b64a6580] { animation: none;
+.wm-status[data-v-76f5bc02] { animation: none;
 }
 }
-.wm-sr-only[data-v-b64a6580] {
+.wm-sr-only[data-v-76f5bc02] {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1494,6 +1494,46 @@ to { opacity: 1; transform: none;
     overflow: hidden;
     clip: rect(0 0 0 0);
     border: 0;
+}
+
+
+/**
+ * The tag picker's dropdown lands at the edge of the window instead of under the field
+ * when the interface is right-to-left.
+ *
+ * The cause is an over-constrained absolute box, and it is in @nextcloud/vue rather than
+ * here. Its `.vs__dropdown-menu--floating` sets `inset-inline-start: 0` as a fallback,
+ * which resolves to `right: 0` under RTL — while floating-ui writes the real position as
+ * an inline `left`, together with an inline `width`. With `left`, `right` and `width` all
+ * non-auto the box is over-constrained, and CSS 2.2 §10.3.7 says the loser is `left` when
+ * the direction is RTL. So the computed position is discarded and the list is pinned to
+ * the page edge. In LTR the same fallback resolves to `left: 0`, which the inline `left`
+ * simply overrides, which is why this is invisible until the interface is Arabic.
+ *
+ * Releasing `right` lets the inline `left` position the list again. Measured in Chrome
+ * against a field at x=400: RTL put the list at 506 (the window edge) before this rule and
+ * at 400 after it, with LTR unchanged at 400.
+ */
+[dir="rtl"] .vs__dropdown-menu--floating {
+    inset-inline-start: auto;
+    right: auto;
+}
+
+/**
+ * The option labels inside that list are left-aligned, so Arabic tag names sit against
+ * the wrong edge of a right-to-left list.
+ *
+ * Same root cause, one level down. vue-select does ship an RTL block, but it is written
+ * `.v-select[dir=rtl] .vs__dropdown-menu`, which cannot match here for two independent
+ * reasons: the component renders `dir="auto"` on its root rather than `dir="rtl"`, and
+ * the menu is appended to <body>, so it is not a descendant of `.v-select` at all. What
+ * does apply is the unconditional base rule, `text-align: left`.
+ *
+ * `start` rather than `right`, so the declaration states the intent instead of restating
+ * the direction it is already nested under.
+ */
+[dir="rtl"] .vs__dropdown-menu {
+    text-align: start;
 }
 
 
