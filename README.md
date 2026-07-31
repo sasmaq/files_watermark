@@ -1,10 +1,14 @@
 # files_watermark
 
-A Nextcloud 31 app that applies configurable watermarks to PDF and image files. Watermarks embed user identity information (username, date, email) to deter unauthorized distribution and provide traceability.
+A Nextcloud 31 app that applies configurable watermarks to PDF and image files. Watermarks embed user identity information (display name, account name, date, email) to deter unauthorized distribution and provide traceability.
 
 ## Features
 
-- **Text watermarks** with customizable templates — `{username}`, `{email}`, `{date}`, `{filename}`
+- **Text watermarks** with customizable templates — `{displayname}`, `{username}`, `{email}`,
+  `{date}`, `{datetime}`, `{filename}`
+  - `{displayname}` is the name shown in Nextcloud (*John Doe*); `{username}` is the account
+    name used to sign in (*john.doe*). Display names are neither unique nor permanent, so use
+    the account name when the watermark has to identify exactly one account
 - **Image watermarks** — overlay a logo or image on files
 - **Combined** text + image watermarks
 - Diagonal tiled placement at 45° rotation and 80% opacity by default

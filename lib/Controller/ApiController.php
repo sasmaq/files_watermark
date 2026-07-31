@@ -59,7 +59,7 @@ class ApiController extends Controller {
 
 	private const VALID_TYPES = ['text', 'image', 'combined'];
 	private const VALID_TRIGGERS = ['on_demand', 'on_download', 'on_upload', 'on_share'];
-	private const VALID_TOKENS = ['username', 'email', 'date', 'datetime', 'filename'];
+	private const VALID_TOKENS = ['username', 'displayname', 'email', 'date', 'datetime', 'filename'];
 
 	#[NoAdminRequired]
 	public function saveConfig(

@@ -449,7 +449,9 @@ class WatermarkService {
 	private function defaultConfig(): WatermarkConfig {
 		$config = new WatermarkConfig();
 		$config->setType('text');
-		$config->setTextTemplate('{username} — {date}');
+		// The display name, not the account name: a watermark is read by a person, and
+		// "Alice Smith" identifies the leak to them in a way "asmith3" does not.
+		$config->setTextTemplate('{displayname} - {date}');
 		$config->setPosition('diagonal');
 		$config->setOpacity(80);
 		$config->setFontSize(24);
@@ -528,8 +530,18 @@ class WatermarkService {
 	 */
 	private function buildPlaceholders(File $file, string $trigger, ?IUser $actor = null): array {
 		$user = $actor ?? $this->userSession->getUser();
+		$anonymous = $this->anonymousLabel($trigger, 'Public link', 'Unknown');
 		return [
-			'username' => $user?->getDisplayName() ?? $this->anonymousLabel($trigger, 'Public link', 'Unknown'),
+			// Two different identities, and the difference matters in a watermark. The
+			// account name is the uid: unique, stable, and what an admin greps the audit
+			// log or the user list for. The display name is what a human recognises, and
+			// is neither unique nor fixed — a user can change it, and two people can share
+			// one. `{username}` used to render the *display* name, which made the account
+			// name unreachable and the token a lie; both are now available under the name
+			// that describes them. Existing templates were rewritten to `{displayname}` by
+			// Version1004Date20260731000000 so no watermark changed on upgrade.
+			'username' => $user?->getUID() ?? $anonymous,
+			'displayname' => $user?->getDisplayName() ?? $anonymous,
 			'email' => $user?->getEMailAddress() ?? '',
 			'date' => date('Y-m-d'),
 			'datetime' => date('Y-m-d H:i:s'),

@@ -13,7 +13,7 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-31, both green: **222 PHPUnit** tests and **69 Jest** tests, with
+Suites re-run 2026-07-31, both green: **235 PHPUnit** tests and **74 Jest** tests, with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -43,7 +43,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 222 PHPUnit + 69 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 235 PHPUnit + 74 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -235,9 +235,9 @@ stranded setting off — are recorded in git history rather than duplicated here
 - [x] Opacity and rotation match the configured values
 - [x] **Tiles no longer overlap — the image path now measures its text.** It stepped a fixed
   grid, `max(210, fontSize * 10)` across by `max(225, fontSize * 11)` down, that never looked
-  at the string it was drawing. The *default* `{username} — {date}` template overran its
-  neighbour by 30px at the default font size; `Mohammed Al-Amri — 2026-07-31 14:22:05` overran
-  by 329px, which is more than the whole step, so it ran through the tile beyond as well. Long
+  at the string it was drawing. The *default* `{username} - {date}` template overran its
+  neighbour by 12px at the default font size; `Mohammed Al-Amri - 2026-07-31 14:22:05` overran
+  by 312px, which is more than the whole step, so it ran through the tile beyond as well. Long
   names, long templates and larger font sizes all made it worse, and the `{datetime}` token
   guaranteed it
   - this is the *same bug the PDF renderer had and fixed* — "spacing derived from the text's
@@ -312,7 +312,35 @@ Not started. The largest piece of missing SDD scope.
 
 ### Delivered
 
-- [x] Text watermark with `{username}`, `{email}`, `{date}`, `{datetime}`, `{filename}`
+- [x] Text watermark with `{displayname}`, `{username}`, `{email}`, `{date}`, `{datetime}`,
+  `{filename}`
+- [x] **Account name and display name separated, having been conflated.** `{username}`
+  resolved to `getDisplayName()`, so the token said one thing and rendered another, and the
+  account name — the only identifier that is unique and stable — could not be watermarked at
+  all. `{username}` is now the uid and `{displayname}` the human-readable name
+  - **which one to reach for is a real decision, so the form says so** rather than leaving it
+    to be inferred from two similar chips: a display name is what a person reading the
+    watermark recognises, but users can change it and two accounts can share one, so a
+    watermark meant to identify exactly one account needs `{username}`. The chips carry a
+    label and an example each (*John Doe* against *john.doe*), and the sample values are
+    deliberately unalike — equal ones would have let either resolution look correct
+  - the default template is `{displayname} - {date}`, in the service and in the form both:
+    watermarks are read by people, and "Alice Smith" places a leak in a way "asmith3" does not
+  - **no existing watermark changed on upgrade.** `Version1004Date20260731000000` rewrites
+    stored `{username}` to `{displayname}`, so what an admin already approved keeps rendering
+    byte-for-byte and the account name becomes an opt-in choice. Without it every existing
+    install would have switched identity silently, with nothing in the UI or the audit log to
+    explain why — the app version is bumped to **1.3.0**, without which the migration would
+    not run at all
+  - the anonymous fallback covers *both* tokens. Missing that would leave a public-link
+    download watermarked with a blank where the identity belongs, which reads as a rendering
+    fault rather than as "nobody was signed in"
+  - `ApiControllerTokenTest` guards the drift that this change could most easily have shipped:
+    the form offers a chip per token and the server keeps its own allowlist, so a token added
+    to one and not the other is a 400 in the admin's face. It asserts every offered token is
+    accepted, and that a near-miss (`{displayName}`) is rejected *by name* — an error listing
+    only the allowed tokens would leave an admin comparing two strings that differ by one
+    capital letter
 - [x] Image watermark (logo overlay), and combined text + image
 - [x] Tiled diagonal placement, 45° default, configurable font size / colour / opacity /
   rotation
@@ -338,7 +366,7 @@ share, and public-link access. This is where every delivery-time bug has been fo
   inline path nor the job covers them. Not a confidentiality leak — the dropper is
   watermarking their own upload — but on-upload does not cover them. The open decision is
   whether to attribute the burn to the **share owner** (the only identity available at drop
-  time, and the one `{username}` would then render), or to leave file-drop out of scope and
+  time, and the one the identity tokens would then render), or to leave file-drop out of scope and
   say so in the README. Doing neither is what makes it a gap
 - [ ] Unit tests still missing for three archive behaviours: that the handler claims only
   `Directory` + archive-accepting GETs, that tar member size is the watermarked length, and
@@ -367,7 +395,7 @@ share, and public-link access. This is where every delivery-time bug has been fo
       failed inline burn — which is why the inline path leaves the queued job alone on error
       and removes it only on success
   - the job has no session, so it passes the uploading user to `watermarkInPlace()`
-    explicitly; otherwise `{username}` renders "Unknown" and the audit row says "system"
+    explicitly; otherwise the identity tokens render "Unknown" and the audit row says "system"
 - [x] **On download** — `DownloadController` streams a watermarked temp copy, original
   untouched, temp deleted after the response is sent
 - [x] **On share** — watermarked at *delivery* time, not at share-creation time
@@ -802,7 +830,7 @@ Neither loss is invisible, and neither is being papered over:
 
 ### What it bought
 
-- [x] **Zero binary-conditional skips.** 222 PHPUnit tests, none of them needing a binary. The
+- [x] **Zero binary-conditional skips.** 235 PHPUnit tests, none of them needing a binary. The
   suite result no longer depends on which machine ran it, which is worth more than it
   sounds — the flattener's rasterise cases were green on the developer's laptop and
   skipped in CI for most of their life
@@ -1285,7 +1313,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 222 PHPUnit tests and 69 Jest tests, and **no test depends on an external binary**
+**Position:** 235 PHPUnit tests and 74 Jest tests, and **no test depends on an external binary**
 any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
 for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
 has 48 of them.
@@ -1377,7 +1405,7 @@ only by driving a real instance by hand:
 Counts below are PHPUnit *test cases*, so a data-provider-driven test contributes one per row —
 which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
 
-- [x] `WatermarkServiceTest` (42) — config resolution (user / global / default), renderer
+- [x] `WatermarkServiceTest` (44) — config resolution (user / global / default), renderer
   delegation per MIME type, skip / filter / already-watermarked paths, audit row written after
   the write lands, explicit `?IUser $actor` overriding the session, `deliveryTriggerFor()` per
   node, and an unusable stored folder tag degrading
@@ -1429,6 +1457,12 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
     now scales with type size, so bigger text arrives in fewer tiles and total ink is not
     monotonic. It asserts the longest unbroken run of ink instead — that the glyphs actually
     got bigger, which is what the setting controls
+- [x] `ApiControllerTokenTest` (8) — every token the settings form offers is accepted by
+  `saveConfig`, both identity tokens work together in one template, and a near-miss token is
+  rejected *by name*. This is a drift guard: the form and the server keep separate lists
+- [x] `UsernameTokenRewriteTest` (3) — which templates `Version1004Date20260731000000`
+  rewrites, that **every** occurrence in a template is rewritten rather than the first, and
+  that an instance with nothing to migrate takes no write
 - [x] `ApiControllerScopeTest` (11) — unsupported and mistyped MIME types rejected, blank
   normalised to null, a tag name rejected, a non-existent tag id rejected, a real tag accepted,
   and no tag lookup when none is given
@@ -1447,7 +1481,9 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
 
 ### Frontend (Jest)
 
-- [x] `WatermarkForm.spec.js` (30) — image upload validation and server rejection, the
+- [x] `WatermarkForm.spec.js` (35) — the two identity placeholders: both offered, each
+  labelled with what it resolves to, previewing as *different* values, and the display name as
+  the default. Then image upload validation and server rejection, the
   flattening block's presence, absence and DPI reveal, and the "Where to apply" controls:
   exactly the supported types offered, a stored filter reflected, the selection written back in
   canonical order, the tag picker used instead of a typed id, and the corrected help text

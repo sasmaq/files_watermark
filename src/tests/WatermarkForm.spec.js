@@ -53,6 +53,41 @@ describe('WatermarkForm', () => {
 		expect(wrapper.find('input[type="file"]').exists()).toBe(false)
 	})
 
+	describe('identity placeholders', () => {
+		// {username} used to resolve to the display name, so the account name could not be
+		// watermarked at all and the token said one thing while meaning another. Both are
+		// offered now, and the form has to make clear which is which — otherwise an admin
+		// picks by name and gets the other one.
+		it('offers both the display name and the account name', () => {
+			const chips = mountForm().findAll('.wm-chip').map((c) => c.text())
+			expect(chips).toContain('{displayname}')
+			expect(chips).toContain('{username}')
+		})
+
+		it('labels each identity chip with what it resolves to', () => {
+			const chips = mountForm().findAll('.wm-chip')
+			const titleOf = (token) => chips.find((c) => c.text() === token).attributes('title')
+
+			expect(titleOf('{displayname}')).toContain('Display name')
+			expect(titleOf('{displayname}')).toContain('John Doe')
+			expect(titleOf('{username}')).toContain('Account name')
+			expect(titleOf('{username}')).toContain('john.doe')
+		})
+
+		it('spells out the difference in the section help text', () => {
+			expect(mountForm().text()).toContain('account name used to sign in')
+		})
+
+		it('defaults to the display name, which is what a person reads', () => {
+			expect(mountForm().vm.form.textTemplate).toBe('{displayname} - {date}')
+		})
+
+		it('previews the two tokens as different values', () => {
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '{displayname}/{username}' } })
+			expect(wrapper.find('.wm-preview__svg text').text()).toBe('John Doe/john.doe')
+		})
+	})
+
 	describe('watermark image upload', () => {
 		it('offers a file picker instead of a path field', () => {
 			const wrapper = mountForm({ modelValue: { type: 'image' } })

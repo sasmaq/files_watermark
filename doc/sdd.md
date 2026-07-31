@@ -90,8 +90,8 @@
 ### 5.1 Watermark Types
 
 - **Text watermark**
-  - default string (`{username}` + `{datetime}`)
-  - custom string (supports placeholders: `{username}`, `{email}`, `{date}`, `{datetime}`, `{filename}`)
+  - default string (`{displayname}` + `{date}`)
+  - custom string (supports placeholders: `{displayname}`, `{username}`, `{email}`, `{date}`, `{datetime}`, `{filename}`)
 
 - **Image watermark**
   - upload a logo/image to overlay on files

@@ -1022,7 +1022,8 @@ class WatermarkServiceTest extends TestCase {
 			->with('bob', 11, '/bob/files/photo.png', 'on_upload', null);
 
 		$this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config, $actor));
-		$this->assertSame('Bob', $placeholders['username']);
+		$this->assertSame('bob', $placeholders['username'], 'The account name is the uid');
+		$this->assertSame('Bob', $placeholders['displayname']);
 		$this->assertSame('bob@example.com', $placeholders['email']);
 	}
 
@@ -1098,10 +1099,71 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertFalse($this->service->watermarkInPlace($file, 'on_demand'));
 	}
 
+	/**
+	 * With no user to attribute the watermark to, *both* identity tokens have to fall back
+	 * to the anonymous label. Leaving `{displayname}` unhandled would render an empty
+	 * string, so a public-link download would carry a watermark with a blank where the
+	 * identity belongs — which reads as a rendering fault rather than as "nobody signed in".
+	 *
+	 * @dataProvider anonymousTriggerProvider
+	 */
+	public function testBothIdentityTokensFallBackWhenThereIsNoUser(string $trigger, string $expected): void {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{displayname} / {username}');
+		$config->setOpacity(80);
+		$config->setFontSize(24);
+		$config->setColor('#cccccc');
+		$config->setRotation(45);
+		$config->setTrigger($trigger);
+
+		$this->userSession->method('getUser')->willReturn(null);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('image/png');
+		$file->method('getName')->willReturn('report.png');
+		$file->method('getId')->willReturn(9);
+		$file->method('getPath')->willReturn('/alice/files/report.png');
+		$file->method('getContent')->willReturn('fake');
+
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+		$captured = null;
+		$this->imageWatermarker->expects($this->once())
+			->method('apply')
+			->with(
+				$this->anything(),
+				$this->anything(),
+				$this->anything(),
+				$this->callback(function (array $placeholders) use (&$captured): bool {
+					$captured = $placeholders;
+					return true;
+				}),
+			);
+
+		$tmpPath = $this->service->watermarkFile($file, $trigger, $config);
+
+		$this->assertSame($expected, $captured['username']);
+		$this->assertSame($expected, $captured['displayname']);
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	/** @return array<string, array{string, string}> */
+	public static function anonymousTriggerProvider(): array {
+		return [
+			'public link' => ['on_share', 'Public link'],
+			'no session' => ['on_demand', 'Unknown'],
+		];
+	}
+
 	public function testTextWatermarkPassesAllPlaceholdersToRenderer(): void {
 		$config = new WatermarkConfig();
 		$config->setType('text');
-		$config->setTextTemplate('{username} {email} {date} {datetime} {filename}');
+		$config->setTextTemplate('{displayname} {username} {email} {date} {datetime} {filename}');
 		$config->setOpacity(80);
 		$config->setFontSize(24);
 		$config->setColor('#cccccc');
@@ -1138,7 +1200,11 @@ class WatermarkServiceTest extends TestCase {
 
 		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
 
-		$this->assertSame('Alice', $captured['username']);
+		// The two identity tokens are deliberately different values here: `{username}` is
+		// the account name (uid) and `{displayname}` the human-readable one. A fixture
+		// where they matched would let either resolution pass.
+		$this->assertSame('alice', $captured['username']);
+		$this->assertSame('Alice', $captured['displayname']);
 		$this->assertSame('alice@example.com', $captured['email']);
 		$this->assertSame(date('Y-m-d'), $captured['date']);
 		$this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $captured['datetime']);

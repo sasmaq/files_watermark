@@ -43,16 +43,19 @@
 					<p class="wm-card__desc">
 						{{ t('files_watermark', 'Type the text to stamp. Insert a placeholder to fill in details automatically.') }}
 					</p>
+					<p class="wm-card__desc">
+						{{ t('files_watermark', '{displayname} is the name shown in Nextcloud (John Doe); {username} is the account name used to sign in (john.doe). Display names can change and are not unique — use the account name when the watermark has to identify exactly one account.') }}
+					</p>
 					<NcTextField v-model="form.textTemplate"
 						:label="t('files_watermark', 'Watermark text')"
-						:placeholder="t('files_watermark', '{username} — {date}')" />
+						:placeholder="t('files_watermark', '{displayname} - {date}')" />
 					<div class="wm-chips">
 						<span class="wm-chips__hint">{{ t('files_watermark', 'Insert:') }}</span>
 						<button v-for="ph in PLACEHOLDERS"
 							:key="ph.token"
 							type="button"
 							class="wm-chip"
-							:title="t('files_watermark', 'Example: {ex}', { ex: ph.example })"
+							:title="t('files_watermark', '{label} — example: {ex}', { label: ph.label, ex: ph.example })"
 							@click="insertPlaceholder(ph.token)">
 							{{ ph.token }}
 						</button>
@@ -377,7 +380,9 @@ const emit = defineEmits(['save', 'update:modelValue'])
 
 const DEFAULTS = {
 	type: 'text',
-	textTemplate: '{username} — {date}',
+	// Matches WatermarkService::defaultConfig(): the display name, since a watermark is
+	// read by a person. {username} is available for when exactness matters more.
+	textTemplate: '{displayname} - {date}',
 	imagePath: '',
 	fontSize: 24,
 	color: '#cccccc',
@@ -464,8 +469,12 @@ const TRIGGER_OPTIONS = [
 	{ value: 'on_upload', label: t('files_watermark', 'On upload'), desc: t('files_watermark', 'Automatically when a matching file is uploaded.') },
 ]
 
+// The two identity samples are deliberately unalike, because they are what tells an admin
+// which token they want: the account name is the login/uid, the display name is the
+// human-readable one that a person reading the watermark will recognise.
 const SAMPLE = {
 	username: 'john.doe',
+	displayname: 'John Doe',
 	email: 'john.doe@example.com',
 	date: new Date().toISOString().slice(0, 10),
 	datetime: new Date().toISOString().slice(0, 19).replace('T', ' '),
@@ -473,11 +482,12 @@ const SAMPLE = {
 }
 
 const PLACEHOLDERS = [
-	{ token: '{username}', example: SAMPLE.username },
-	{ token: '{email}', example: SAMPLE.email },
-	{ token: '{date}', example: SAMPLE.date },
-	{ token: '{datetime}', example: SAMPLE.datetime },
-	{ token: '{filename}', example: SAMPLE.filename },
+	{ token: '{displayname}', label: t('files_watermark', 'Display name'), example: SAMPLE.displayname },
+	{ token: '{username}', label: t('files_watermark', 'Account name'), example: SAMPLE.username },
+	{ token: '{email}', label: t('files_watermark', 'Email address'), example: SAMPLE.email },
+	{ token: '{date}', label: t('files_watermark', 'Date'), example: SAMPLE.date },
+	{ token: '{datetime}', label: t('files_watermark', 'Date and time'), example: SAMPLE.datetime },
+	{ token: '{filename}', label: t('files_watermark', 'File name'), example: SAMPLE.filename },
 ]
 
 const previewText = computed(() => {
@@ -485,7 +495,7 @@ const previewText = computed(() => {
 	return form.textTemplate.replace(/\{(\w+)\}/g, (_, key) => SAMPLE[key] ?? `{${key}}`)
 })
 
-const displayText = computed(() => previewText.value || `${SAMPLE.username} — ${SAMPLE.date}`)
+const displayText = computed(() => previewText.value || `${SAMPLE.displayname} - ${SAMPLE.date}`)
 
 // Kept in step with WatermarkImageStore::MAX_BYTES and its allowed types. Checking here
 // too only saves the user a round-trip — the server re-validates from the file's actual
