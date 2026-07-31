@@ -43,10 +43,9 @@ app spawns no external processes: two servers running the same configuration sho
 the same file. Imagick is optional on every platform and EPEL-only on RHEL 9, so preferring
 it meant the output depended on how the host happened to be packaged.
 
-One thing to be aware of if you run a minimal container: with **no TrueType font installed**,
-GD falls back to its built-in bitmap font, which cannot be rotated — the watermark still
-appears, but flat and coarse rather than tiled diagonally. Any of `dejavu-sans-fonts`,
-`liberation-sans-fonts` (RHEL 9) or `fonts-dejavu-core` (Debian/Ubuntu) is enough.
+**No host fonts are needed.** Both engines draw with the font bundled in `resources/fonts`,
+so a minimal container renders exactly what a full one does. This used to walk a list of
+system fonts and fall back to GD's built-in bitmap font when it found none.
 
 ### No external binaries
 
@@ -71,13 +70,30 @@ Two consequences worth knowing:
 The watermark is a real content stream, so **the text layer survives**: selection, copy,
 search and screen-reader access all keep working. The user's file is never modified.
 
-### Fonts
+### Fonts and Arabic text
 
-`resources/fonts` holds Helvetica *metrics* — no glyphs are embedded, since Helvetica is
-one of the PDF standard 14 fonts that readers supply themselves. They are committed
-because the renderer does not ship them via Composer, and without them any text call
-fails. See the README there before moving or deleting anything in that directory; the
-path reaches the renderer through the global `K_PATH_FONTS`.
+**One font draws every watermark** — IBM Plex Sans Arabic Bold (SIL Open Font License),
+committed in `resources/fonts`. Latin and Arabic render in the same face, so a watermark
+looks the same whatever the text contains.
+
+**Arabic is shaped and reordered** before it is drawn: letters take their contextual forms,
+lam-alef becomes a single ligature, and the text runs right to left. That happens for PDFs
+and images alike, in PHP rather than in the image backend, so output does not depend on
+whether the host's ImageMagick was built with Raqm/HarfBuzz — or on which fonts the host
+has installed at all.
+
+The font is embedded **subsetted**: only the glyphs actually drawn. A watermarked PDF is
+about 31 KB rather than the 125 KB a whole embedded face would cost, and `/ToUnicode` is
+still written so the watermark stays searchable and selectable.
+
+If the bundled font cannot be read, the file is **skipped with an audit-log entry** rather
+than watermarked with substitute glyphs — an unreadable watermark is worse than a missing
+one, because it looks like it worked.
+
+See `resources/fonts/README.md` for why this face and not another (the constraint is Arabic
+Presentation Forms-B coverage, which rules out most modern Arabic fonts including Cairo),
+and before moving anything in that directory — the path reaches the renderer through the
+global `K_PATH_FONTS`.
 
 ## Project Structure
 
@@ -92,7 +108,7 @@ files_watermark/
 │   ├── Service/      # WatermarkService, PdfWatermarker, ImageWatermarker
 │   └── Settings/     # Admin settings panel registration
 ├── resources/
-│   └── fonts/        # Helvetica metrics for the PDF renderer (see the README there)
+│   └── fonts/        # The bundled watermark font (see the README there)
 ├── migration/        # Database schema migration
 ├── src/              # Vue 3 frontend source
 │   ├── components/   # AdminSettings.vue, WatermarkModal.vue

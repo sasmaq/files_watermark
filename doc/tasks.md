@@ -13,7 +13,7 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-31, both green: **242 PHPUnit** tests and **74 Jest** tests, with
+Suites re-run 2026-07-31, both green: **258 PHPUnit** tests and **74 Jest** tests, with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -37,13 +37,13 @@ has any — see [No external binaries](#no-external-binaries).
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [Arabic and RTL](#arabic-and-rtl-support) | **Not started.** No `l10n/` directory at all, and both text renderers would render Arabic broken | Shaping strategy, an embedded Arabic font, `ar` translations, RTL CSS |
+| [Arabic and RTL](#arabic-and-rtl-support) | **Watermark done** — shaped, reordered, one bundled face for both scripts. UI not started; no `l10n/` at all | `ar` translations, RTL CSS, `{date}` localisation |
 | [No external binaries](#no-external-binaries) | **Done.** No `exec()` anywhere; flattening removed with `pdftoppm`, decryption with `qpdf` | Release note for the dropped columns |
 | [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone from the tree | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 242 PHPUnit + 74 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 258 PHPUnit + 74 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -65,10 +65,9 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
   service, and `metadata` is not an accepted config type
 - [ ] [Group overrides](#open-4) — `group_id` is stored and validated but **never read**, so a
   group policy silently does nothing. Either implement resolution or drop the column
-- [ ] [Arabic in the watermark](#watermark-rendering-arabic-in-the-output) — the PDF renderer's
-  only font is metrics-only Helvetica, which has **no Arabic glyphs**, and neither GD nor a
-  plain ImageMagick build shapes or reorders Arabic. Arabic text renders broken today, not
-  merely unstyled
+- [x] [Arabic in the watermark](#watermark-rendering-arabic-in-the-output) — **done.** IBM Plex
+  Sans Arabic Bold (OFL) draws every watermark, subsetted into each file; Arabic is shaped,
+  reordered and ligated in both PDFs and images. `{date}` localisation is the one piece open
 - [ ] [Arabic in the Admin UI](#admin-ui-arabic-interface) — there is **no `l10n/` directory**,
   so the app ships zero translations in any language, and no RTL work has been done
 
@@ -683,8 +682,9 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ## Arabic and RTL support
 
-**Position:** not started. Nothing in the app is translated — there is no `l10n/` directory —
-and both text renderers would produce broken Arabic today, for different reasons.
+**Position: the watermark half is done; the UI half is not started.** Arabic is shaped,
+reordered and drawn correctly in PDFs and images, with an OFL face bundled. Nothing in the
+app is translated, though — there is still no `l10n/` directory.
 
 Two halves that share only the tokens they render, and they are worth keeping apart. The UI
 half is ordinary Nextcloud translation work with a known shape. The watermark half is a
@@ -726,66 +726,113 @@ Three blocking facts, each read off the current tree rather than assumed:
 
 ### Open {#open-arabic}
 
-- [ ] **Decide the shaping strategy first — everything below depends on it.** Either the app
-  shapes once (bidi reordering, contextual initial/medial/final/isolated forms, the lam-alef
-  ligature) and hands pre-ordered glyphs to every renderer, or each renderer delegates to
-  whatever its own stack offers. Only the first produces identical output on every host, which
-  is the standard this app already holds itself to
-- [ ] **Establish what `tc-lib-pdf` already does, by rendering rather than by reading.** TCPDF
-  shaped Arabic itself (`utf8Bidi()`, plus an RTL document mode) and tc-lib-pdf is the same
-  author's rewrite, so the machinery may already sit in `tecnickcom/tc-lib-unicode` and
-  `tc-lib-unicode-data` — both already installed as transitive dependencies, both already in
-  `Application::RUNTIME_VENDOR_PACKAGES`. Put a known string through `getTextCell()` and inspect
-  the emitted glyph order and forms
-  - `الاختبار` is a good single probe: it exercises reordering, medial forms and a lam-alef
-    ligature at once. A test that only checks "some Arabic came out" will pass on unshaped
-    output
-- [ ] **Bundle an Arabic-capable font and embed it.** Choose on coverage and licence — Noto
-  Naskh Arabic or Amiri, both OFL — and settle three things the Helvetica setup never had to
-  answer:
-  - **subsetting**, because a full Arabic face embedded whole is hundreds of KB *per
-    watermarked file*, and the delivery triggers render per fetch
-  - generation through the library's own `Com\Tecnick\Pdf\Font\Import` with the TrueType flag,
-    with the recipe recorded in `resources/fonts/README.md` beside the Helvetica one
-  - `php-cs-fixer` is already told to leave `resources/fonts` alone; confirm that still holds
-    for whatever the generator emits
-  - a licence win, incidentally: OFL is a clean answer to the provenance question that README
-    raises about the Helvetica metrics, whose upstream `core/LICENSE` is a 0-byte file
-- [ ] **One face covering both scripts, chosen per config — not per string.** A watermark is
-  usually mixed: `{username}` may be Arabic while `{date}` is digits. Per-run font fallback
-  means splitting a string into runs and measuring each, which the tile geometry is not built
-  for. A single face with Latin + Arabic coverage avoids the whole problem and is the
-  recommended route
-- [ ] **`measure()` must measure the *shaped* string.** It calls
-  `getTextCell(..., drawcell: false)` and reads back the width, which feeds `tilePositions()`.
-  Measuring unshaped code points overestimates — ligatures collapse two code points into one
-  glyph — and mis-spaces the entire lattice
-  - **do not touch `tilePositions()`.** It is pure geometry, script-agnostic, and its 22
-    assertions are the regression net for the illegible-watermark bug. If they start failing,
-    the caller is wrong; that is the signal, not a reason to edit the lattice
-- [ ] **Image path: shape and reorder before drawing, and select the font by coverage.**
-  `findSystemFont()`'s name list cannot express "has Arabic glyphs", so the bundled face should
-  serve the image path too — which removes the host dependency for images as a side effect
-- [ ] **Decide the failure mode, and rule one out.** When the configured text cannot be shaped
-  or the font lacks a glyph, the options are a skip-plus-audit-row (consistent with how
-  encrypted PDFs are handled) or drawing the text unshaped. Silently drawing broken Arabic is
-  the outcome to exclude — it is indistinguishable from success to everything except a human
-  looking at the file
-- [ ] **`{date}` / `{datetime}` are locale-free today** — `date('Y-m-d')` in
+**Position: the watermark half is done.** Arabic is shaped, reordered and drawn correctly in
+both PDFs and images, with a bundled OFL face. What is left here is the `{date}` locale
+question, and the [Admin UI](#admin-ui-arabic-interface) below is untouched.
+
+- [x] **Shaping strategy decided, and it cost nothing: the library already shapes.** TCPDF
+  did it (`utf8Bidi()`), and tc-lib-pdf is the same author's rewrite — the machinery sits in
+  `tecnickcom/tc-lib-unicode` and `tc-lib-unicode-data`, both already installed as transitive
+  dependencies and already in `Application::RUNTIME_VENDOR_PACKAGES`. Nothing new to require
+  - established **by rendering, not by reading**, as the plan insisted. `الاختبار` through
+    `Com\Tecnick\Unicode\Bidi`: 8 code points in, **7 glyphs out, every one in Arabic
+    Presentation Forms-B, one of them a lam-alef ligature** — which is where the eighth went —
+    and the last source letter drawn first, so the reordering is real too
+  - the same string through `getTextCell()` emits `(fead fe8e fe92 fe98 fea7 fefb fedf) Tj`,
+    which is that shaper output exactly. So **the PDF path must never pre-shape**: it would
+    put an already-visual string through reordering a second time
+  - the image path *does* shape, through the same library. One shaper, one result, no
+    dependence on whether the host's ImageMagick was built against Raqm/HarfBuzz — which is
+    the "app shapes once" option, arrived at for free
+- [x] **IBM Plex Sans Arabic Bold bundled (SIL OFL), and it draws *every* watermark** — Latin
+  and Arabic alike, so the same configuration produces the same typeface whatever the text
+  contains. An earlier round kept Latin on standard-14 Helvetica and embedded a second face
+  only when needed, which was cheaper but meant a watermark changed appearance depending on
+  whether someone's display name happened to be Arabic
+  - **the face was chosen by measurement across ten OFL candidates, and the binding
+    constraint is not looks.** The shaper substitutes into **Arabic Presentation Forms-B**
+    (U+FE70–FEFF), so a font omitting that block draws nothing for shaped Arabic however
+    complete its `U+0600` coverage looks. Most modern faces omit it because they shape
+    through OpenType `GSUB` instead
+  - **Cairo was proposed and ruled out on evidence**: it lacks 14 forms everyday Arabic
+    produces, including U+FEAD (final reh), U+FE8D (isolated alef) and U+FEED (isolated waw).
+    Tajawal, Almarai, Markazi Text and Readex Pro fail the same way; the SIL Naskh faces
+    (Scheherazade New, Lateef, Harmattan) miss 64 forms apiece. Noto Naskh Arabic has the
+    Arabic but only **15 printable ASCII** — no Latin letters, no hyphen — so
+    `{displayname} - {date}` would lose its separator and any Latin name with it
+  - three covered both scripts completely. IBM Plex Sans Arabic has the smallest font program
+    of them (**103 KB** against Noto Kufi's 210 KB and Noto Sans Arabic's 445 KB) and is a
+    sans, which is the register a watermark wants
+  - the licence question the Helvetica metrics left open is answered for this face: OFL, with
+    `IBMPlexSansArabic-OFL.txt` committed beside it. The Helvetica 0-byte-`LICENSE` gap is
+    unchanged and still recorded, but nothing shipped to a user is drawn with it any more —
+    those metrics now serve the *test fixtures* alone
+  - `php-cs-fixer` still leaves `resources/fonts` alone, confirmed against what the generator
+    emitted
+- [x] **Subsetting is what makes one face affordable.** `subsetfont: true` embeds only the
+  glyphs actually drawn, and a watermark repeats one short string: measured **31 KB against
+  125 KB** for the whole face, on paths that render per fetch. It is also *faster* — 0.025s
+  against 0.071s — despite the library's docblock calling the option "computational and
+  memory intensive", which is worth having measured rather than believed
+  - `/ToUnicode` is still written, so the watermark stays searchable and selectable. Without
+    it the "text layer survives" promise would have quietly become false for every file
+  - pinned by the six-letter subset tag PDF requires on the font name
+    (`AAAAAB+IBMPlexSansArabic-Bold`), which is definitive where a file-size bound is only
+    suggestive. Mutation-tested: turning subsetting off fails it
+  - one consequence worth knowing: **Latin text is no longer written as ASCII** in the content
+    stream, because the embedded face is a Unicode font with two-byte code units. Three tests
+    that grepped for literal `Alice` / `Confidential` had to learn that
+- [x] **`measure()` needed no change.** It already measured through `getTextCell()`, which
+  shapes internally, so the width it reports is the shaped one — 62.1pt for the probe's seven
+  glyphs, against the meaningless 44.5pt it reported for eight `?` characters before. The font
+  is inserted before the measurement, which is what makes that true
+  - `tilePositions()` untouched, as instructed, and its assertions never moved
+- [x] **The image path shapes, and draws with the same bundled face.** `findSystemFont()` is
+  gone: its name list — DejaVu, Liberation, macOS Arial — could not express "has the glyphs
+  this string needs", and two of those three carry no Arabic at all, so image output depended
+  on what the host had installed. GD's bitmap-font fallback went with it, since a missing
+  bundled font is a broken install rather than a routine condition
+  - **the font is not committed twice.** `ibmplexsansarabicb.z` is the font program the PDF
+    embeds and is the original TTF under zlib, verified byte for byte against upstream;
+    `ShapedText::bundledFontPath()` inflates it to a temp file cached by content hash, since
+    GD and ImageMagick draw through FreeType and need bytes on disk. The glyphs in a JPEG are
+    therefore provably the ones in a PDF
+- [x] **Failure mode decided: refuse, never draw something unreadable.** If the text needs the
+  bundled font and it cannot be read, the renderer throws and the file takes the app's existing
+  honest-failure path — skip plus an audit row for the in-place triggers, deny for `on_share`,
+  a named error for an on-demand apply. The alternatives were the bitmap fallback (mojibake) or
+  a Latin TTF (a row of empty boxes), and both produce a *valid image file that no one can
+  read*, which is the outcome the plan said to rule out
+- [x] **Arabic round-trips `saveConfig` byte for byte**, pinned by
+  `ApiControllerTokenTest::testAnArabicTemplateRoundTripsUnchanged` — the token check runs a
+  regex over the template, and one that was not UTF-8-aware would mangle or reject it, which
+  would surface as a rendering bug rather than a validation one
+  - still unverified: **4-byte UTF-8 storage on MySQL**. Arabic itself is 2-byte, so this is
+    not blocking it, but it belongs with the cross-database run under [Data model](#open-data)
+- [x] **Tests assert shape, not validity** — the whole point, since unshaped Arabic produces a
+  perfectly valid file of the right size and page count
+  - `ShapedTextTest` (9) pins the transform precisely: every glyph in Presentation Forms-B,
+    8 code points becoming 7, the lam-alef ligature present, the last source letter drawn
+    first, Latin and Latin-1 left untouched and *not* dragging in the embedded font
+  - `PdfWatermarkerTest` reads the glyph codes back out of the emitted `Tj` operand and
+    compares them to the shaper's output. Mutation-tested: forcing Helvetica fails it
+  - the image test could not do that — an image carries no text — so it uses shaping's own
+    non-idempotency as a discriminator. A second pass reads visual order as logical and
+    reverses it, a third puts it back, so `x` and `shape(shape(x))` are **different strings
+    that shape identically**: a renderer that shapes draws them the same, one that draws what
+    it is handed cannot. The first version of this test compared raw against shaped output and
+    was **vacuous** — it passed with shaping deleted, which is exactly how it was caught
+- [ ] **`{date}` / `{datetime}` are still locale-free** — `date('Y-m-d')` in
   `WatermarkService::buildPlaceholders()`: ASCII digits, Gregorian, server timezone. For an
   Arabic deployment, decide whether to offer Arabic-Indic digits (`٠١٢٣`) and/or a Hijri date,
-  and whether that follows the *viewer's* locale or a config field
+  and whether that follows the *viewer's* locale or a config field. IBM Plex Sans Arabic carries both
+  digit sets, so the font is not the obstacle
   - this is a real trade-off rather than cosmetics: the watermark is traceability evidence, and
     a date that renders differently depending on who fetched the file is harder to reason about
     in an audit
-- [ ] **Confirm Arabic round-trips the whole config path**, not just the renderer: `saveConfig`
-  validation (the template-token check must not reject non-ASCII), 4-byte UTF-8 storage in
-  `text_template` on MySQL, the JSON API, and back into the form
-- [ ] **Tests must assert shape, not validity.** An Arabic case in `PdfWatermarkerTest` that
-  checks extracted text *and* glyph order, plus a rendered-page image check — the standing
-  lesson from the smear bug is that only looking at the pixels proves anything about output
-  geometry, and shaping is the same kind of claim. Mirror it in `ImageWatermarkerTest` across
-  **both** Imagick and GD, since the two backends fail differently here
+- [ ] **Drive a real Arabic instance.** Everything above is asserted against generated
+  fixtures and rendered output read back byte by byte; none of it has been through the Files
+  app with an Arabic display name and an Arabic template on a real server
 
 ### Admin UI (Arabic interface) {#admin-ui-arabic-interface}
 
@@ -866,7 +913,7 @@ Neither loss is invisible, and neither is being papered over:
 
 ### What it bought
 
-- [x] **Zero binary-conditional skips.** 242 PHPUnit tests, none of them needing a binary. The
+- [x] **Zero binary-conditional skips.** 258 PHPUnit tests, none of them needing a binary. The
   suite result no longer depends on which machine ran it, which is worth more than it
   sounds — the flattener's rasterise cases were green on the developer's laptop and
   skipped in CI for most of their life
@@ -1349,7 +1396,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 242 PHPUnit tests and 74 Jest tests, and **no test depends on an external binary**
+**Position:** 258 PHPUnit tests and 74 Jest tests, and **no test depends on an external binary**
 any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
 for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
 has 48 of them.
@@ -1447,7 +1494,7 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   node, and an unusable stored folder tag degrading
   instead of crashing
   - the **group** resolution case is absent because group resolution does not exist
-- [x] `PdfWatermarkerTest` (32) — text / image / combined overlays, multi-page, corrupt PDF, a
+- [x] `PdfWatermarkerTest` (35) — Arabic drawn as shaped glyphs, one embedded face for every watermark, the subset tag present, text / image / combined overlays, multi-page, corrupt PDF, a
   compressed-xref PDF 1.5 watermarked with no external binary, the fixture still structurally
   reproducing that case, encrypted PDFs refused cleanly with **both** a real and an empty user
   password (fixtures built with the renderer's own encryption, so no `exec()`), the rotation
@@ -1465,9 +1512,12 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
     replaced an existing table silently; a mutation removing the migration's `hasTable()`
     guard passed every test, because the recreated table happened to have the right columns.
     It now throws like Doctrine's `TableExistsException`, and that mutation fails
+- [x] `ShapedTextTest` (9) — the shaping transform: presentation forms, the lam-alef ligature,
+  visual reordering, Latin and Latin-1 left alone, and the bundled font inflating to a
+  FreeType-usable TrueType file
 - [x] `LegacyImagePathCleanupTest` (2) — which `image_path` rows the migration clears, and
   that no write is issued when every stored reference is valid
-- [x] `ImageWatermarkerTest` (26) — JPEG / PNG / WEBP output, opacity, rotation, **tiles never
+- [x] `ImageWatermarkerTest` (29) — JPEG / PNG / WEBP output, opacity, rotation, **tiles never
   overlapping at any rotation**, and the
   **engine-selection matrix**: GD chosen for PNG/JPEG/WebP even with Imagick installed, Imagick
   chosen for WebP when GD lacks libwebp and for anything when GD is absent, and each of the
@@ -1493,7 +1543,7 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
     now scales with type size, so bigger text arrives in fewer tiles and total ink is not
     monotonic. It asserts the longest unbroken run of ink instead — that the glyphs actually
     got bigger, which is what the setting controls
-- [x] `ApiControllerTokenTest` (8) — every token the settings form offers is accepted by
+- [x] `ApiControllerTokenTest` (9) — every token the settings form offers is accepted by
   `saveConfig`, both identity tokens work together in one template, and a near-miss token is
   rejected *by name*. This is a drift guard: the form and the server keep separate lists
 - [x] `UsernameTokenRewriteTest` (3) — which templates `Version1004Date20260731000000`

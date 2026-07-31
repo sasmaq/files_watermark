@@ -26,11 +26,11 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  * rotation sense (GD's `imagettftext()` measures counter-clockwise and Imagick's
  * `annotateImage()` clockwise, hence the negated angle), same 30%-width centred logo.
  *
- * One honest quality cliff remains, and it belongs to GD alone: with no TrueType font on the
- * host, {@see findSystemFont()} returns null and the text falls back to GD's built-in bitmap
- * font, which cannot rotate. That is a font problem rather than an engine one — bundling a
- * font is tracked in `doc/tasks.md` — so it deliberately does *not* switch engines. Engine
- * choice depends only on format support, which keeps it predictable.
+ * Both engines draw with the **bundled** face ({@see ShapedText::bundledFontPath()}), the same
+ * one the PDF renderer embeds, so output does not vary with the host's installed fonts and a
+ * JPEG carries the same letterforms as a PDF. The old GD bitmap-font fallback is gone with the
+ * system-font list that made it necessary; a missing bundled font is a broken install and is
+ * refused rather than drawn badly.
  */
 class ImageWatermarker {
 
@@ -147,8 +147,13 @@ class ImageWatermarker {
 			$fontSize = $config->getFontSize();
 			$rotation = $config->getRotation();
 
+			// Shaped here rather than trusted to the backend: ImageMagick only reorders and
+			// joins Arabic when it was built against Raqm/HarfBuzz, which no host can be
+			// required to have. Doing it in PHP is what makes the output the same everywhere.
+			$text = ShapedText::shape($text);
+
 			$draw = new \ImagickDraw();
-			$draw->setFont('DejaVu-Sans-Bold');
+			$draw->setFont($this->fontFor($text));
 			$draw->setFontSize($fontSize);
 			$draw->setFillColor(new \ImagickPixel($color));
 			$draw->setFillOpacity($alpha);
@@ -213,57 +218,38 @@ class ImageWatermarker {
 			$textColor = imagecolorallocatealpha($src, $color[0], $color[1], $color[2], $opacity);
 			$fontSize = $config->getFontSize();
 			$rotation = $config->getRotation();
-			$fontPath = $this->findSystemFont();
+			// FreeType draws code points in the order given and joins nothing, so Arabic
+			// has to arrive already shaped and already in visual order.
+			$text = ShapedText::shape($text);
+			$fontPath = $this->fontFor($text);
 
-			if ($fontPath !== null) {
-				// imagettfbbox measures the glyphs this font will actually draw, at angle 0
-				// so the lattice can do the rotating. Its eight values are the corners
-				// relative to the baseline origin, with y negative above the baseline.
-				$box = imagettfbbox($fontSize, 0, $fontPath, $text);
-				$left = min($box[0], $box[6]);
-				$right = max($box[2], $box[4]);
-				$top = min($box[5], $box[7]);
-				$bottom = max($box[1], $box[3]);
-				$textWidth = max(1.0, (float)($right - $left));
-				$lineHeight = max(1.0, (float)($bottom - $top));
-				// imagettftext anchors at the left end of the baseline, which is neither
-				// corner of that box; this is the step from the anchor to its centre.
-				$anchorToCentreX = ($left + $right) / 2;
-				$anchorToCentreY = ($top + $bottom) / 2;
+			// imagettfbbox measures the glyphs this font will actually draw, at angle 0
+			// so the lattice can do the rotating. Its eight values are the corners
+			// relative to the baseline origin, with y negative above the baseline.
+			$box = imagettfbbox($fontSize, 0, $fontPath, $text);
+			$left = min($box[0], $box[6]);
+			$right = max($box[2], $box[4]);
+			$top = min($box[5], $box[7]);
+			$bottom = max($box[1], $box[3]);
+			$textWidth = max(1.0, (float)($right - $left));
+			$lineHeight = max(1.0, (float)($bottom - $top));
+			// imagettftext anchors at the left end of the baseline, which is neither
+			// corner of that box; this is the step from the anchor to its centre.
+			$anchorToCentreX = ($left + $right) / 2;
+			$anchorToCentreY = ($top + $bottom) / 2;
 
-				foreach (TileLattice::positions($width, $height, $textWidth, $lineHeight, $rotation, $fontSize) as [$cx, $cy]) {
-					[$offsetX, $offsetY] = TileLattice::rotateOffset($anchorToCentreX, $anchorToCentreY, $rotation);
-					imagettftext(
-						$src,
-						$fontSize,
-						$rotation,
-						(int)round($cx - $offsetX),
-						(int)round($cy - $offsetY),
-						$textColor,
-						$fontPath,
-						$text,
-					);
-				}
-			} else {
-				// No TTF font available: fall back to built-in pixelated font. It cannot
-				// rotate, so the lattice is asked for an unrotated one — spacing a tilted
-				// pattern for text that will be drawn flat is how tiles end up on top of
-				// each other. imagestring's font ids only go up to 5.
-				$gdFontSize = max(1, min(5, intval($fontSize / 4)));
-				$textWidth = max(1.0, (float)(imagefontwidth($gdFontSize) * strlen($text)));
-				$lineHeight = max(1.0, (float)imagefontheight($gdFontSize));
-
-				foreach (TileLattice::positions($width, $height, $textWidth, $lineHeight, 0, $fontSize) as [$cx, $cy]) {
-					// imagestring anchors at the top-left corner, not the baseline.
-					imagestring(
-						$src,
-						$gdFontSize,
-						(int)round($cx - $textWidth / 2),
-						(int)round($cy - $lineHeight / 2),
-						$text,
-						$textColor,
-					);
-				}
+			foreach (TileLattice::positions($width, $height, $textWidth, $lineHeight, $rotation, $fontSize) as [$cx, $cy]) {
+				[$offsetX, $offsetY] = TileLattice::rotateOffset($anchorToCentreX, $anchorToCentreY, $rotation);
+				imagettftext(
+					$src,
+					$fontSize,
+					$rotation,
+					(int)round($cx - $offsetX),
+					(int)round($cy - $offsetY),
+					$textColor,
+					$fontPath,
+					$text,
+				);
 			}
 		}
 
@@ -299,25 +285,34 @@ class ImageWatermarker {
 		imagedestroy($src);
 	}
 
-	private function findSystemFont(): ?string {
-		$candidates = [
-			// Linux (most Nextcloud servers)
-			'/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-			'/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
-			'/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-			'/usr/share/fonts/liberation/LiberationSans-Bold.ttf',
-			// macOS (development environments)
-			'/System/Library/Fonts/Supplemental/Arial Bold.ttf',
-			'/System/Library/Fonts/Supplemental/Arial.ttf',
-			'/System/Library/Fonts/Geneva.ttf',
-			'/Library/Fonts/Arial.ttf',
-		];
-		foreach ($candidates as $path) {
-			if (file_exists($path)) {
-				return $path;
-			}
+	/**
+	 * The TrueType file every watermark is drawn with.
+	 *
+	 * **One face, whatever the text.** This used to walk a list of system fonts — DejaVu,
+	 * Liberation, macOS Arial — chosen by *name*, and a name cannot express "has the glyphs
+	 * this string needs": two of those three carry no Arabic at all, so the result depended
+	 * on what the host happened to have installed. The bundled face removes the host from
+	 * the question entirely and matches what the PDF renderer embeds, so a JPEG and a PDF of
+	 * the same file carry the same letterforms.
+	 *
+	 * **Refuses rather than drawing something wrong.** The font is committed to the
+	 * repository, so its absence means a broken install, not a routine condition — and every
+	 * alternative is worse than failing: GD's bitmap font would draw Arabic as mojibake, a
+	 * Latin TTF would draw a row of empty boxes. Both produce a *valid image file that no one
+	 * can read*, which is the outcome worth ruling out. Throwing puts it on the app's existing
+	 * honest-failure path: skipped with an audit row for the in-place triggers, denied for
+	 * `on_share`, a named error for an on-demand apply.
+	 */
+	private function fontFor(string $text): string {
+		$bundled = ShapedText::bundledFontPath();
+		if ($bundled === null) {
+			throw new \RuntimeException(
+				'Cannot draw this watermark: the bundled font (resources/fonts) could not be read. '
+				. 'Drawing with a substitute would produce an unreadable image rather than a missing one.',
+			);
 		}
-		return null;
+
+		return $bundled;
 	}
 
 	private function resolvePlaceholders(string $template, array $placeholders): string {

@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Service\ImageWatermarker;
+use OCA\FilesWatermark\Service\ShapedText;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -21,6 +22,9 @@ use PHPUnit\Framework\TestCase;
  * and would introduce noise unrelated to the watermark.
  */
 class ImageWatermarkerTest extends TestCase {
+
+	/** Reordering, medial forms and a lam-alef ligature in one word. See {@see ShapedText}. */
+	private const ARABIC_PROBE = 'الاختبار';
 
 	private ImageWatermarker $watermarker;
 	private string $tmpDir;
@@ -226,6 +230,99 @@ class ImageWatermarkerTest extends TestCase {
 			md5_file($tilt),
 			'Rotation 0 and 45 produced identical output',
 		);
+	}
+
+	/**
+	 * The renderer transforms Arabic before drawing it, rather than passing code points
+	 * straight to a backend that joins nothing.
+	 *
+	 * An image carries no text, so there is no glyph list to read back the way
+	 * {@see PdfWatermarkerTest::testArabicIsDrawnAsShapedGlyphs} reads one. The assertion
+	 * has to come from pixels, and it has to be one that *only* a shaping renderer can
+	 * satisfy — "the output changed" is not, because unshaped Arabic renders differently
+	 * too, just wrongly.
+	 *
+	 * The discriminator uses shaping's own non-idempotency. A second pass reads visual
+	 * order as logical and reverses it, and a third puts it back:
+	 *
+	 *     shape(x)  =  shape(shape(shape(x)))       but  x  ≠  shape(shape(x))
+	 *
+	 * So the raw text and its twice-shaped form are two **different** strings that shape to
+	 * the **same** glyphs. A renderer that shapes draws them identically; one that draws
+	 * what it is handed cannot. Verified by mutation: deleting the `ShapedText::shape()`
+	 * call from either engine path fails this.
+	 */
+	public function testArabicIsShapedBeforeItIsDrawn(): void {
+		if ($this->findSystemFont() === null && !class_exists('Imagick')) {
+			$this->markTestSkipped('No TrueType font available.');
+		}
+
+		$twiceShaped = ShapedText::shape(ShapedText::shape(self::ARABIC_PROBE));
+		$this->assertNotSame(self::ARABIC_PROBE, $twiceShaped, 'the two inputs must differ for this to prove anything');
+		$this->assertSame(ShapedText::shape(self::ARABIC_PROBE), ShapedText::shape($twiceShaped));
+
+		$base = $this->createImage('image/png', 'png', 500, 360);
+
+		$fromRaw = $this->tmpDir . '/ar_raw.png';
+		$fromTwiceShaped = $this->tmpDir . '/ar_twice.png';
+		$this->watermarker->apply($base, $fromRaw, $this->arabicConfig(self::ARABIC_PROBE), []);
+		$this->watermarker->apply($base, $fromTwiceShaped, $this->arabicConfig($twiceShaped), []);
+
+		$this->assertGreaterThan(0, $this->changedPixels($base, $fromRaw), 'nothing was drawn at all');
+		$this->assertSame(
+			md5_file($fromTwiceShaped),
+			md5_file($fromRaw),
+			'two inputs that shape identically rendered differently, so the shaping pass is not running',
+		);
+	}
+
+	/**
+	 * Arabic must not quietly fall back to a Latin font or the bitmap font, both of which
+	 * produce a valid image that no one can read. The bundled face is what gets used.
+	 */
+	public function testArabicDrawsWithTheBundledFont(): void {
+		$this->assertNotNull(ShapedText::bundledFontPath());
+
+		$base = $this->createImage('image/png', 'png', 500, 360);
+		$dest = $this->tmpDir . '/ar_font.png';
+		$this->watermarker->apply($base, $dest, $this->arabicConfig(self::ARABIC_PROBE), []);
+
+		$latin = $this->tmpDir . '/latin_font.png';
+		$this->watermarker->apply($base, $latin, $this->arabicConfig('Alice'), []);
+
+		$this->assertGreaterThan(0, $this->changedPixels($base, $dest));
+		$this->assertNotSame(md5_file($latin), md5_file($dest));
+	}
+
+	/**
+	 * The shaped form is narrower than the raw one — lam-alef fuses two letters into one
+	 * glyph and joined letters overlap where isolated ones do not. That difference is what
+	 * the tile lattice is spaced from, so measuring the unshaped string would leave gaps.
+	 */
+	public function testShapingChangesTheMeasuredWidth(): void {
+		$font = $this->findSystemFont();
+		if ($font === null) {
+			$this->markTestSkipped('No TrueType font available.');
+		}
+		$bundled = ShapedText::bundledFontPath();
+		$this->assertNotNull($bundled);
+
+		$rawBox = imagettfbbox(24, 0, $bundled, self::ARABIC_PROBE);
+		$shapedBox = imagettfbbox(24, 0, $bundled, ShapedText::shape(self::ARABIC_PROBE));
+		$this->assertNotFalse($rawBox);
+		$this->assertNotFalse($shapedBox);
+
+		$this->assertLessThan(
+			$rawBox[2] - $rawBox[0],
+			$shapedBox[2] - $shapedBox[0],
+			'shaped Arabic should be narrower than the same letters drawn in isolation',
+		);
+	}
+
+	private function arabicConfig(string $template): WatermarkConfig {
+		$config = $this->makeConfig('text', 80, 45, 24, '#000000');
+		$config->setTextTemplate($template);
+		return $config;
 	}
 
 	/*

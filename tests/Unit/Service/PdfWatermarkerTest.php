@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Service\PdfWatermarker;
+use OCA\FilesWatermark\Service\ShapedText;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -16,6 +17,12 @@ class PdfWatermarkerTest extends TestCase {
 	use CompressedXrefFixture;
 	use CroppedPageFixture;
 	use PdfFixtures;
+
+	/**
+	 * Reordering, medial forms and a lam-alef ligature in one word, so a shaper that only
+	 * half works cannot pass on it. Eight code points; seven glyphs once shaped.
+	 */
+	private const ARABIC_PROBE = 'الاختبار';
 
 	private PdfWatermarker $watermarker;
 	private string $tmpDir;
@@ -85,6 +92,145 @@ class PdfWatermarkerTest extends TestCase {
 			'offset, rotated 270' => [[300.0, 300.0, 612.0, 792.0], 270],
 			'origin, rotated 90' => [[0.0, 0.0, 612.0, 792.0], 90],
 		];
+	}
+
+	/**
+	 * Arabic reaches the page as shaped, reordered glyphs — asserted against the bytes the
+	 * PDF actually carries, not against the file being valid.
+	 *
+	 * A PDF full of `?` is a valid PDF of the right page count with a watermark on every
+	 * page, which is what this produced before the Amiri face was bundled: the standard-14
+	 * fonts are single-byte and every Arabic code point collapsed to a question mark.
+	 * Nothing short of reading the emitted text run can tell those two outcomes apart.
+	 */
+	public function testArabicIsDrawnAsShapedGlyphs(): void {
+		$source = $this->createSourcePdf(1);
+		$dest = $this->tmpDir . '/arabic.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate(self::ARABIC_PROBE);
+		$this->watermarker->apply($source, $dest, $config, []);
+
+		$drawn = $this->firstTextRunCodepoints($dest);
+
+		$this->assertSame(
+			$this->codepointsOf(ShapedText::shape(self::ARABIC_PROBE)),
+			$drawn,
+			'the PDF does not draw the shaped, reordered glyphs',
+		);
+		// Stated separately so a failure says which half broke.
+		$this->assertCount(7, $drawn, 'eight letters should shape into seven glyphs');
+		foreach ($drawn as $codepoint) {
+			$this->assertGreaterThanOrEqual(0xFE70, $codepoint);
+			$this->assertLessThanOrEqual(0xFEFF, $codepoint);
+		}
+	}
+
+	/**
+	 * **One face draws everything**, so a watermark looks the same whatever the text is.
+	 *
+	 * The predecessor kept Latin on standard-14 Helvetica and embedded a second face only
+	 * for Arabic, which made the typeface depend on whether someone's display name happened
+	 * to be Arabic. Asserted by rendering the two and comparing what the files carry: both
+	 * embed a font program, and neither falls back to a built-in.
+	 */
+	public function testEveryWatermarkUsesTheOneEmbeddedFace(): void {
+		$source = $this->createSourcePdf(1);
+
+		$paths = [];
+		foreach (['latin' => 'Alice - 2026-07-31', 'arabic' => self::ARABIC_PROBE] as $label => $template) {
+			$paths[$label] = $this->tmpDir . "/one_$label.pdf";
+			$config = $this->makeConfig('text');
+			$config->setTextTemplate($template);
+			$this->watermarker->apply($source, $paths[$label], $config, []);
+		}
+
+		foreach ($paths as $label => $path) {
+			$pdf = (string)file_get_contents($path);
+			$this->assertStringContainsString('/FontFile2', $pdf, "$label did not embed the face");
+			// The subset prefix ("AAAAAB+") varies, so match the family rather than the
+			// whole name. The source fixture draws its own text in Helvetica, which is why
+			// this looks for the watermark's face being present rather than Helvetica being
+			// absent — the imported page legitimately carries it.
+			$this->assertMatchesRegularExpression(
+				'#/BaseFont\s*/[A-Z]{6}\+IBMPlexSansArabic#',
+				$pdf,
+				"$label did not draw with the bundled face",
+			);
+			// Without this the watermark is unsearchable and unextractable, which would
+			// quietly break the app's "the text layer survives" promise.
+			$this->assertStringContainsString('/ToUnicode', $pdf, "$label has no ToUnicode map");
+		}
+	}
+
+	/**
+	 * Subsetting is what makes one-font-everywhere affordable: only the glyphs actually
+	 * drawn are embedded. Measured on this fixture, **31 KB subsetted against 125 KB whole**,
+	 * and the delivery triggers render per fetch rather than once.
+	 *
+	 * The definitive marker is the six-letter tag PDF requires on a subset font name
+	 * (`AAAAAB+IBMPlexSansArabic-Bold`); the size bound is a second, blunter check, set well
+	 * clear of both measurements so it discriminates rather than merely passes.
+	 */
+	public function testTheEmbeddedFaceIsSubsetted(): void {
+		$source = $this->createSourcePdf(1);
+		$dest = $this->tmpDir . '/subset.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate('Alice - 2026-07-31');
+		$this->watermarker->apply($source, $dest, $config, []);
+
+		$this->assertMatchesRegularExpression(
+			'#/BaseFont\s*/[A-Z]{6}\+IBMPlexSansArabic#',
+			(string)file_get_contents($dest),
+			'the font name carries no subset tag, so the whole face was embedded',
+		);
+		$this->assertLessThan(60_000, filesize($dest), 'the file is the size of a whole embedded face');
+	}
+
+	/**
+	 * The code points of the first text-showing run in the file.
+	 *
+	 * The embedded face is written with two-byte code units, so the operand of `Tj` is the
+	 * shaped text verbatim — which is what makes this assertable at all.
+	 *
+	 * @return list<int>
+	 */
+	private function firstTextRunCodepoints(string $path): array {
+		foreach ($this->inflatedStreams((string)file_get_contents($path)) as $stream) {
+			if (preg_match('/\((.+?)\)\s*Tj/s', $stream, $m) !== 1) {
+				continue;
+			}
+			$bytes = $m[1];
+			if (strlen($bytes) < 2 || strlen($bytes) % 2 !== 0) {
+				continue;
+			}
+			$codepoints = [];
+			foreach (str_split($bytes, 2) as $pair) {
+				$codepoints[] = (ord($pair[0]) << 8) | ord($pair[1]);
+			}
+			return $codepoints;
+		}
+		return [];
+	}
+
+	/**
+	 * `$text` as the embedded face writes it: two bytes per code unit.
+	 *
+	 * Every watermark now draws through an embedded Unicode font, so even pure ASCII no
+	 * longer appears as ASCII in the content stream — `Alice` is `\0A\0l\0i\0c\0e`.
+	 */
+	private function utf16be(string $text): string {
+		return (string)mb_convert_encoding($text, 'UTF-16BE', 'UTF-8');
+	}
+
+	/** @return list<int> */
+	private function codepointsOf(string $text): array {
+		$out = [];
+		foreach (preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $char) {
+			$out[] = mb_ord($char, 'UTF-8');
+		}
+		return $out;
 	}
 
 	public function testTextOverlayAppliedAcrossMultiplePages(): void {
@@ -266,7 +412,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->watermarker->apply($source, $dest, $config, []);
 
 		$content = $this->pageContent($dest);
-		$this->assertStringContainsString('Confidential', $content, 'watermark text missing from the page');
+		$this->assertStringContainsString($this->utf16be('Confidential'), $content, 'watermark text missing from the page');
 
 		// Six-operand `cm` matrices: [a b c d tx ty].
 		preg_match_all(
@@ -412,7 +558,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->assertFileExists($dest);
 		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
 		$this->assertStringContainsString(
-			'Alice',
+			$this->utf16be('Alice'),
 			$this->pageContent($dest),
 			'the watermark text never reached the page',
 		);

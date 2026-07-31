@@ -98,6 +98,23 @@ class ApiControllerTokenTest extends TestCase {
 		$this->assertSame('{displayname} ({username}) — {date}', $response->getData()['textTemplate']);
 	}
 
+	/**
+	 * An Arabic template has to survive the API unchanged, byte for byte.
+	 *
+	 * The token check runs a regex over the template, and a validator that was not
+	 * UTF-8-aware would either mangle the text or reject it outright — either way the
+	 * renderers would never see what the admin typed, and the fault would look like a
+	 * rendering bug rather than a validation one.
+	 */
+	public function testAnArabicTemplateRoundTripsUnchanged(): void {
+		$template = 'سري - {displayname} - {date}';
+
+		$response = $this->save($template);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame($template, $response->getData()['textTemplate']);
+	}
+
 	public function testUnknownTokenIsRejectedAndNamed(): void {
 		$this->configMapper->expects($this->never())->method('insert');
 

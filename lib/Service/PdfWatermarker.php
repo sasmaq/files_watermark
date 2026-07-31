@@ -40,8 +40,28 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  */
 class PdfWatermarker {
 
-	/** Matches the metrics committed in `resources/fonts`. */
-	private const FONT_FAMILY = 'helvetica';
+	/**
+	 * IBM Plex Sans Arabic Bold (SIL OFL), committed in `resources/fonts`.
+	 *
+	 * **One face draws every watermark**, Latin and Arabic alike, so the same configuration
+	 * produces the same typeface whatever the text happens to contain. The alternative — a
+	 * standard-14 font for Latin and an embedded one only when needed — kept Latin files
+	 * smaller but meant a watermark changed appearance depending on whether someone's
+	 * display name was Arabic, which is not a property anyone asked for.
+	 *
+	 * Chosen by measurement against ten OFL candidates. The binding constraint is not looks
+	 * but **Arabic Presentation Forms-B** (U+FE70–FEFF): the shaper substitutes into that
+	 * block, so a font that omits it draws nothing for shaped Arabic no matter how complete
+	 * its `U+0600` coverage looks. Most modern faces omit it, because they shape through
+	 * OpenType `GSUB` instead — Cairo, Tajawal, Almarai, Markazi Text, Readex Pro all fail
+	 * on it, and so do the SIL Naskh faces (Scheherazade New, Lateef, Harmattan), which miss
+	 * 64 forms apiece.
+	 *
+	 * Three candidates covered both scripts completely. IBM Plex Sans Arabic is the smallest
+	 * of them by font program — 103 KB against Noto Kufi Arabic's 210 KB and Noto Sans
+	 * Arabic's 445 KB — and it is a sans, which is the register a watermark wants.
+	 */
+	private const FONT_FAMILY = 'ibmplexsansarabic';
 	private const FONT_STYLE = 'B';
 
 	public function __construct() {
@@ -53,7 +73,20 @@ class PdfWatermarker {
 	public function apply(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
 		// Points, so user units and PDF units coincide and the page geometry read
 		// off the imported template needs no conversion.
-		$pdf = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath, $config)]);
+		// subsetfont: embed only the glyphs the watermark actually uses. A watermark draws
+		// the same short string over and over, so the subset is tiny — measured on an Arabic
+		// template, the output drops from 213 KB to 38 KB, and it renders *faster* (0.071s to
+		// 0.025s) because there is far less to write. The library's docblock warns the option
+		// is "computational and memory intensive"; that is not what happens here, and the
+		// delivery triggers render per fetch, so it is worth having measured.
+		//
+		// The documented trade-off is real but does not apply: a subsetted font cannot be used
+		// to *edit* the text later without the same font installed. Nobody edits a watermark.
+		$pdf = new Tcpdf(
+			'pt',
+			subsetfont: true,
+			fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath, $config)],
+		);
 		[$sourceId, $pageCount] = $this->openSource($pdf, $sourcePath);
 
 		for ($page = 1; $page <= $pageCount; $page++) {
