@@ -34,6 +34,19 @@ describe('AuditLog', () => {
 		expect(wrapper.text()).toContain('/b.png')
 	})
 
+	it('renders file paths left to right whatever the interface direction', async () => {
+		// A path is structurally LTR. Left to inherit an RTL document direction, its
+		// leading slash is a neutral at the start of the paragraph and is rendered at the
+		// far end, so `/Documents/تقرير.pdf` reads as though the file were named backwards.
+		axios.get.mockResolvedValue({
+			data: [{ ...SAMPLE[0], filePath: '/Documents/تقرير.pdf' }],
+		})
+		const wrapper = mount(AuditLog)
+		await flushPromises()
+
+		expect(wrapper.find('.file-path').attributes('dir')).toBe('ltr')
+	})
+
 	it('shows an empty-state row when there are no entries', async () => {
 		axios.get.mockResolvedValue({ data: [] })
 		const wrapper = mount(AuditLog)

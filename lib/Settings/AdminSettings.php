@@ -12,6 +12,9 @@ use OCP\Util;
 class AdminSettings implements ISettings {
 
 	public function getForm(): TemplateResponse {
+		// See LoadAdditionalScriptsListener: the settings page is Vue, and its strings only
+		// resolve if the app's translation bundle is on the page with it.
+		Util::addTranslations(Application::APP_ID);
 		Util::addScript(Application::APP_ID, 'admin-settings');
 		Util::addStyle(Application::APP_ID, 'admin-settings');
 		return new TemplateResponse(Application::APP_ID, 'admin', [], 'blank');

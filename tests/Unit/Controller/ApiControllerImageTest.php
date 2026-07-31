@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
@@ -21,6 +22,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 class ApiControllerImageTest extends TestCase {
+
+	use L10nMock;
 
 	private IRequest&MockObject $request;
 	private IUserSession&MockObject $userSession;
@@ -48,6 +51,7 @@ class ApiControllerImageTest extends TestCase {
 			$this->groupManager,
 			$this->imageStore,
 			$this->createMock(ISystemTagManager::class),
+			$this->l10n(),
 		);
 	}
 

@@ -8,7 +8,7 @@
 			</p>
 
 			<p v-if="estimatedSeconds" class="time-hint">
-				{{ t('files_watermark', 'Estimated processing time: ~{n} second(s) for large files.', { n: estimatedSeconds }) }}
+				{{ estimateHint }}
 			</p>
 
 			<NcNoteCard v-if="done" type="success">
@@ -43,7 +43,7 @@
 import { ref, computed } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
-import { t } from '@nextcloud/l10n'
+import { n, t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
@@ -67,6 +67,18 @@ const estimatedSeconds = computed(() => {
 	if (!props.fileSize || props.fileSize < 1024 * 1024) return null
 	return Math.max(1, Math.round(props.fileSize / 1024 / 1024))
 })
+
+// A real plural call rather than "second(s)". The parenthesised form is a workaround for
+// English having two forms and is unusable in Arabic, which has six and inflects the noun
+// differently in each — "ثانية واحدة", "ثانيتان", "3 ثوانٍ", "11 ثانية" are not one string
+// with a number swapped in. This is the app's only plural, and the `pluralForm` line in
+// l10n/ar.json is what makes it pick correctly.
+const estimateHint = computed(() => n(
+	'files_watermark',
+	'Estimated processing time: about %n second for large files.',
+	'Estimated processing time: about %n seconds for large files.',
+	estimatedSeconds.value ?? 0,
+))
 
 /**
  *

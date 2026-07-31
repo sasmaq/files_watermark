@@ -13,6 +13,7 @@ use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
 use OCP\Files\Folder;
@@ -26,6 +27,8 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
 class WatermarkServiceTest extends TestCase {
+
+	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
 	private WatermarkLogMapper&MockObject $logMapper;
@@ -64,6 +67,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->logger,
 			$this->originalStore,
 			$this->imageStore,
+			$this->l10n(),
 		);
 	}
 

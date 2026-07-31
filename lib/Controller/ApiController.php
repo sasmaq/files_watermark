@@ -16,6 +16,7 @@ use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
+use OCP\IL10N;
 use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagManager;
@@ -34,6 +35,7 @@ class ApiController extends Controller {
 		private IGroupManager $groupManager,
 		private WatermarkImageStore $imageStore,
 		private ISystemTagManager $tagManager,
+		private IL10N $l,
 	) {
 		parent::__construct($appName, $request);
 	}
@@ -81,21 +83,21 @@ class ApiController extends Controller {
 
 		if (!in_array($type, self::VALID_TYPES, true)) {
 			return new DataResponse(
-				['error' => "Invalid type '$type'. Allowed values: " . implode(', ', self::VALID_TYPES) . '.'],
+				['error' => $this->l->t('Invalid type "%1$s". Allowed values: %2$s.', [$type, implode(', ', self::VALID_TYPES)])],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}
 
 		if (!in_array($trigger, self::VALID_TRIGGERS, true)) {
 			return new DataResponse(
-				['error' => "Invalid trigger '$trigger'. Allowed values: " . implode(', ', self::VALID_TRIGGERS) . '.'],
+				['error' => $this->l->t('Invalid trigger "%1$s". Allowed values: %2$s.', [$trigger, implode(', ', self::VALID_TRIGGERS)])],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}
 
 		if (!preg_match('/^#[0-9a-fA-F]{6}$/', $color)) {
 			return new DataResponse(
-				['error' => "Invalid color '$color'. Must be a 6-digit hex value (e.g. #cccccc)."],
+				['error' => $this->l->t('Invalid color "%s". Must be a 6-digit hex value (e.g. #cccccc).', [$color])],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}
@@ -105,7 +107,7 @@ class ApiController extends Controller {
 		// composite an arbitrary server-readable image into its watermarks.
 		if ($imagePath !== null && $imagePath !== '' && !WatermarkImageStore::isReference($imagePath)) {
 			return new DataResponse(
-				['error' => 'Invalid watermark image. Upload an image instead of specifying a path.'],
+				['error' => $this->l->t('Invalid watermark image. Upload an image instead of specifying a path.')],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}
@@ -123,8 +125,10 @@ class ApiController extends Controller {
 			$unsupported = array_diff($requested, WatermarkService::SUPPORTED_ALL);
 			if ($requested === [] || $unsupported !== []) {
 				return new DataResponse(
-					['error' => 'Unsupported file type(s): ' . implode(', ', $unsupported ?: ['(none given)'])
-						. '. Supported types: ' . implode(', ', WatermarkService::SUPPORTED_ALL) . '.'],
+					['error' => $this->l->t('Unsupported file type(s): %1$s. Supported types: %2$s.', [
+						implode(', ', $unsupported ?: [$this->l->t('(none given)')]),
+						implode(', ', WatermarkService::SUPPORTED_ALL),
+					])],
 					Http::STATUS_BAD_REQUEST,
 				);
 			}
@@ -138,8 +142,10 @@ class ApiController extends Controller {
 		if ($folderTag !== null) {
 			if (!ctype_digit($folderTag)) {
 				return new DataResponse(
-					['error' => "'$folderTag' is not a system tag ID. Pick the tag from the list, "
-						. 'or leave the field blank to apply everywhere.'],
+					// One literal, deliberately long: a concatenation inside t() is a string
+					// the extractor sees only the first half of, so the translation would
+					// never match what is looked up at runtime.
+					['error' => $this->l->t('"%s" is not a system tag ID. Pick the tag from the list, or leave the field blank to apply everywhere.', [$folderTag])],
 					Http::STATUS_BAD_REQUEST,
 				);
 			}
@@ -148,7 +154,7 @@ class ApiController extends Controller {
 				$this->tagManager->getTagsByIds([$folderTag]);
 			} catch (TagNotFoundException|\InvalidArgumentException) {
 				return new DataResponse(
-					['error' => "System tag ID '$folderTag' does not exist on this server."],
+					['error' => $this->l->t('System tag ID "%s" does not exist on this server.', [$folderTag])],
 					Http::STATUS_BAD_REQUEST,
 				);
 			}
@@ -161,7 +167,7 @@ class ApiController extends Controller {
 				$allowed = implode(', ', array_map(fn ($t) => '{' . $t . '}', self::VALID_TOKENS));
 				$found = implode(', ', array_map(fn ($t) => '{' . $t . '}', $invalid));
 				return new DataResponse(
-					['error' => "Unknown template token(s): $found. Allowed tokens: $allowed."],
+					['error' => $this->l->t('Unknown template token(s): %1$s. Allowed tokens: %2$s.', [$found, $allowed])],
 					Http::STATUS_BAD_REQUEST,
 				);
 			}
@@ -180,7 +186,7 @@ class ApiController extends Controller {
 			try {
 				$config = $this->configMapper->findById($id);
 			} catch (DoesNotExistException) {
-				return new DataResponse(['error' => 'Config not found'], Http::STATUS_NOT_FOUND);
+				return new DataResponse(['error' => $this->l->t('Config not found')], Http::STATUS_NOT_FOUND);
 			}
 		} else {
 			$config = new WatermarkConfig();
@@ -221,20 +227,20 @@ class ApiController extends Controller {
 	public function uploadImage(): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null || !$this->groupManager->isAdmin($user->getUID())) {
-			return new DataResponse(['error' => 'Forbidden'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
 		}
 
 		$upload = $this->request->getUploadedFile('image');
 		if (!is_array($upload) || !isset($upload['tmp_name'], $upload['error'])) {
-			return new DataResponse(['error' => 'No image was uploaded.'], Http::STATUS_BAD_REQUEST);
+			return new DataResponse(['error' => $this->l->t('No image was uploaded.')], Http::STATUS_BAD_REQUEST);
 		}
 
 		if ($upload['error'] !== UPLOAD_ERR_OK) {
 			// Covers the PHP-level ceilings too (upload_max_filesize / post_max_size),
 			// which reject the request before our own size check ever sees the file.
 			$message = in_array($upload['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)
-				? 'The image is too large.'
-				: 'The image could not be uploaded.';
+				? $this->l->t('The image is too large.')
+				: $this->l->t('The image could not be uploaded.');
 			return new DataResponse(['error' => $message], Http::STATUS_BAD_REQUEST);
 		}
 
@@ -255,11 +261,11 @@ class ApiController extends Controller {
 		try {
 			$config = $this->configMapper->findById($id);
 		} catch (DoesNotExistException) {
-			return new DataResponse(['error' => 'Config not found'], Http::STATUS_NOT_FOUND);
+			return new DataResponse(['error' => $this->l->t('Config not found')], Http::STATUS_NOT_FOUND);
 		}
 
 		if (!$isAdmin && $config->getUserId() !== $currentUser?->getUID()) {
-			return new DataResponse(['error' => 'Forbidden'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
 		}
 
 		$this->configMapper->delete($config);
@@ -270,7 +276,7 @@ class ApiController extends Controller {
 	public function applyWatermark(string $path): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
-			return new DataResponse(['error' => 'Unauthenticated'], Http::STATUS_UNAUTHORIZED);
+			return new DataResponse(['error' => $this->l->t('Unauthenticated')], Http::STATUS_UNAUTHORIZED);
 		}
 
 		// Resolve the path through the user's root folder. Nextcloud normalizes
@@ -281,27 +287,27 @@ class ApiController extends Controller {
 		try {
 			$node = $userFolder->get($path);
 		} catch (\OCP\Files\NotFoundException) {
-			return new DataResponse(['error' => 'File not found'], Http::STATUS_NOT_FOUND);
+			return new DataResponse(['error' => $this->l->t('File not found')], Http::STATUS_NOT_FOUND);
 		}
 
 		if (!($node instanceof \OCP\Files\File)) {
-			return new DataResponse(['error' => 'Path is not a file'], Http::STATUS_BAD_REQUEST);
+			return new DataResponse(['error' => $this->l->t('Path is not a file')], Http::STATUS_BAD_REQUEST);
 		}
 
 		// The watermark is applied in place, so the acting user must be able to
 		// both read the original content and write the result back.
 		if (!$node->isReadable()) {
-			return new DataResponse(['error' => 'You do not have permission to read this file'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('You do not have permission to read this file')], Http::STATUS_FORBIDDEN);
 		}
 
 		if (!$node->isUpdateable()) {
-			return new DataResponse(['error' => 'You do not have permission to modify this file'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('You do not have permission to modify this file')], Http::STATUS_FORBIDDEN);
 		}
 
 		$mime = $node->getMimeType();
 		if (!in_array($mime, WatermarkService::SUPPORTED_ALL, true)) {
 			return new DataResponse(
-				['error' => "File type '$mime' is not supported. Supported types: " . implode(', ', WatermarkService::SUPPORTED_ALL) . '.'],
+				['error' => $this->l->t('File type "%1$s" is not supported. Supported types: %2$s.', [$mime, implode(', ', WatermarkService::SUPPORTED_ALL)])],
 				Http::STATUS_UNSUPPORTED_MEDIA_TYPE,
 			);
 		}
@@ -332,7 +338,7 @@ class ApiController extends Controller {
 	public function removeWatermark(string $path): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
-			return new DataResponse(['error' => 'Unauthenticated'], Http::STATUS_UNAUTHORIZED);
+			return new DataResponse(['error' => $this->l->t('Unauthenticated')], Http::STATUS_UNAUTHORIZED);
 		}
 
 		$userFolder = $this->rootFolder->getUserFolder($user->getUID());
@@ -340,21 +346,21 @@ class ApiController extends Controller {
 		try {
 			$node = $userFolder->get($path);
 		} catch (\OCP\Files\NotFoundException) {
-			return new DataResponse(['error' => 'File not found'], Http::STATUS_NOT_FOUND);
+			return new DataResponse(['error' => $this->l->t('File not found')], Http::STATUS_NOT_FOUND);
 		}
 
 		if (!($node instanceof \OCP\Files\File)) {
-			return new DataResponse(['error' => 'Path is not a file'], Http::STATUS_BAD_REQUEST);
+			return new DataResponse(['error' => $this->l->t('Path is not a file')], Http::STATUS_BAD_REQUEST);
 		}
 
 		// Restoring rewrites the file, so the same read + write permissions the apply
 		// path demands are required here.
 		if (!$node->isReadable()) {
-			return new DataResponse(['error' => 'You do not have permission to read this file'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('You do not have permission to read this file')], Http::STATUS_FORBIDDEN);
 		}
 
 		if (!$node->isUpdateable()) {
-			return new DataResponse(['error' => 'You do not have permission to modify this file'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('You do not have permission to modify this file')], Http::STATUS_FORBIDDEN);
 		}
 
 		try {
@@ -365,7 +371,7 @@ class ApiController extends Controller {
 
 		if (!$removed) {
 			return new DataResponse(
-				['error' => 'No preserved original is available for this file, so its watermark cannot be removed.'],
+				['error' => $this->l->t('No preserved original is available for this file, so its watermark cannot be removed.')],
 				Http::STATUS_UNPROCESSABLE_ENTITY,
 			);
 		}
@@ -385,7 +391,7 @@ class ApiController extends Controller {
 	public function getWatermarkedStatus(string $ids = ''): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
-			return new DataResponse(['error' => 'Unauthenticated'], Http::STATUS_UNAUTHORIZED);
+			return new DataResponse(['error' => $this->l->t('Unauthenticated')], Http::STATUS_UNAUTHORIZED);
 		}
 
 		$requested = array_filter(array_map('intval', explode(',', $ids)), fn (int $id) => $id > 0);
@@ -418,7 +424,7 @@ class ApiController extends Controller {
 		$isAdmin = $user && $this->groupManager->isAdmin($user->getUID());
 
 		if (!$isAdmin) {
-			return new DataResponse(['error' => 'Forbidden'], Http::STATUS_FORBIDDEN);
+			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
 		}
 
 		$entries = $this->logMapper->findAll($limit, $offset);

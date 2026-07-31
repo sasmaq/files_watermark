@@ -9,6 +9,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\File;
 use OCP\Files\Folder;
@@ -23,6 +24,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 class ApiControllerApplyWatermarkTest extends TestCase {
+
+	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
 	private WatermarkLogMapper&MockObject $logMapper;
@@ -51,6 +54,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
+			$this->l10n(),
 		);
 	}
 

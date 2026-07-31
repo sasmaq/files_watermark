@@ -12,6 +12,7 @@ use OCP\Files\File;
 use OCP\Files\FileInfo;
 use OCP\Files\IRootFolder;
 use OCP\Files\Storage\ISharedStorage;
+use OCP\IL10N;
 use OCP\IUser;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
@@ -41,6 +42,7 @@ class WatermarkService {
 		private LoggerInterface $logger,
 		private OriginalStore $originalStore,
 		private WatermarkImageStore $imageStore,
+		private IL10N $l,
 	) {
 	}
 
@@ -467,7 +469,7 @@ class WatermarkService {
 	private function assertMimeAllowed(string $mime, WatermarkConfig $config): void {
 		$allowed = $config->getAllowedMimeTypes();
 		if (!empty($allowed) && !in_array($mime, $allowed, true)) {
-			throw new \RuntimeException("MIME type '$mime' is not in the configured whitelist.");
+			throw new \RuntimeException($this->l->t('MIME type "%s" is not in the configured whitelist.', [$mime]));
 		}
 	}
 
@@ -501,7 +503,7 @@ class WatermarkService {
 				['app' => 'files_watermark', 'config' => $config->getId(), 'tag' => $tagId, 'exception' => $e],
 			);
 			throw new \RuntimeException(
-				"The configured system tag ('$tagId') does not exist on this server.",
+				$this->l->t('The configured system tag ("%s") does not exist on this server.', [$tagId]),
 				0,
 				$e,
 			);
@@ -509,7 +511,7 @@ class WatermarkService {
 
 		if (!in_array((string)$parent->getId(), $taggedFileIds, true)) {
 			throw new \RuntimeException(
-				"File's folder does not have the required system tag (id: $tagId)."
+				$this->l->t('This file\'s folder does not have the required system tag (id: %s).', [$tagId])
 			);
 		}
 	}
@@ -565,7 +567,7 @@ class WatermarkService {
 				'mime' => $mime,
 				'path' => $file?->getPath(),
 			]);
-			throw new \RuntimeException("Unsupported file type: $mime");
+			throw new \RuntimeException($this->l->t('Unsupported file type: %s', [$mime]));
 		}
 	}
 

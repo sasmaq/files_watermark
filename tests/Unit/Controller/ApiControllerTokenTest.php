@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
@@ -29,6 +30,8 @@ use PHPUnit\Framework\TestCase;
  * was added to the form, had `VALID_TOKENS` not been updated with it.
  */
 class ApiControllerTokenTest extends TestCase {
+
+	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
 	private ApiController $controller;
@@ -50,6 +53,7 @@ class ApiControllerTokenTest extends TestCase {
 			$groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
+			$this->l10n(),
 		);
 
 		$this->configMapper->method('insert')->willReturnCallback(

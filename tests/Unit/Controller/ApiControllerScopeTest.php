@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
@@ -29,6 +30,8 @@ use PHPUnit\Framework\TestCase;
  * id made every watermark request die on `Tag id must be integer`.
  */
 class ApiControllerScopeTest extends TestCase {
+
+	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
 	private IUserSession&MockObject $userSession;
@@ -54,6 +57,7 @@ class ApiControllerScopeTest extends TestCase {
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->tagManager,
+			$this->l10n(),
 		);
 
 		$this->configMapper->method('insert')->willReturnCallback(
@@ -147,7 +151,11 @@ class ApiControllerScopeTest extends TestCase {
 		$response = $this->save(folderTag: '4242');
 
 		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
-		$this->assertStringContainsString("'4242' does not exist", $response->getData()['error']);
+		// The id the admin picked has to survive into the message. It reaches it through a
+		// translation parameter now rather than string interpolation, which is exactly the
+		// substitution that can be dropped without the message looking wrong.
+		$this->assertStringContainsString('4242', $response->getData()['error']);
+		$this->assertStringContainsString('does not exist', $response->getData()['error']);
 	}
 
 	public function testExistingTagIdIsAccepted(): void {

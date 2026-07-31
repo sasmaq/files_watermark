@@ -37,7 +37,15 @@
 										<svg class="file-icon" viewBox="0 0 24 24" aria-hidden="true">
 											<path d="M13,9V3.5L18.5,9M6,2C4.89,2 4,2.89 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2H6Z" />
 										</svg>
-										<span class="file-path">{{ row.filePath }}</span>
+										<!--
+											A path is structurally left-to-right whatever the
+											interface language is. Left to inherit `dir`, the
+											leading slash of `/Documents/تقرير.pdf` is a neutral
+											at the start of an RTL paragraph and gets rendered at
+											the far end — the path reads as though it were named
+											backwards.
+										-->
+										<span class="file-path" dir="ltr">{{ row.filePath }}</span>
 									</span>
 								</td>
 								<td>
@@ -204,7 +212,9 @@ onMounted(fetchLog)
 	font-size: 14px;
 }
 .log-table thead th {
-	text-align: left;
+	/* `start`, not `left`: the header has to follow the reading direction, otherwise an
+	   RTL table has every heading pinned to the wrong end of its own column. */
+	text-align: start;
 	padding: 11px 16px;
 	font-size: 11px;
 	font-weight: 600;
@@ -214,6 +224,12 @@ onMounted(fetchLog)
 	background: var(--color-background-hover);
 	border-bottom: 1px solid var(--color-border);
 	white-space: nowrap;
+}
+/* Arabic is a joined script: letter-spacing breaks the joins apart, and there is no case
+   for text-transform to change. Both are undone rather than left to apply harmlessly. */
+[dir="rtl"] .log-table thead th {
+	text-transform: none;
+	letter-spacing: normal;
 }
 .log-table tbody td {
 	padding: 12px 16px;

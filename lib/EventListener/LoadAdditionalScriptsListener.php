@@ -42,6 +42,11 @@ class LoadAdditionalScriptsListener implements IEventListener {
 		$trigger = $this->watermarkService->resolveConfig($userId)->getTrigger();
 		$this->initialState->provideInitialState('effective-trigger', $trigger);
 
+		// Registered explicitly rather than left to whatever the server does on its own:
+		// without the app's `l10n/<lang>.js`, every `t('files_watermark', …)` in the file
+		// actions silently falls through to its English source, which looks exactly like a
+		// working translation to anything except a reader of the menu.
+		Util::addTranslations(Application::APP_ID);
 		Util::addScript(Application::APP_ID, 'files');
 		Util::addStyle(Application::APP_ID, 'files');
 	}

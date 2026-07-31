@@ -3,7 +3,12 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
     <id>files_watermark</id>
     <name>Files Watermark</name>
+    <!-- The apps list and the App Store read these three, and l10n/ does not cover them:
+         an app whose entire interface is translated still appears in the app list under
+         its English name unless the metadata is translated here as well. -->
+    <name lang="ar">العلامة المائية للملفات</name>
     <summary>Apply configurable watermarks to files stored in Nextcloud</summary>
+    <summary lang="ar">طبِّق علامات مائية قابلة للتخصيص على الملفات المخزَّنة في نكست كلاود</summary>
     <description><![CDATA[
 Protect your documents from unauthorized distribution by applying text or image watermarks to PDFs and images.
 
@@ -17,7 +22,21 @@ Features:
 - Admin-configurable global and per-group policies
 - Full audit log of every watermark event
     ]]></description>
-    <version>1.3.0</version>
+    <description lang="ar"><![CDATA[
+احمِ مستنداتك من التوزيع غير المصرَّح به بتطبيق علامات مائية نصية أو صورية على ملفات PDF والصور.
+
+المزايا:
+- علامات مائية نصية مع عناصر نائبة ديناميكية ({displayname}، {username}، {email}، {date}، {datetime}، {filename})
+- علامات مائية صورية (شعار فوق المحتوى)
+- علامات مائية تجمع بين النص والصورة
+- دعم كامل للعربية: تُشكَّل الحروف وتُرتَّب في العلامة المائية نفسها، بخط عربي مضمَّن في كل ملف
+- التطبيق عند الطلب من قائمة إجراءات الملف
+- التطبيق عند التنزيل (يبقى الملف الأصلي دون تغيير)
+- التطبيق عند المشاركة
+- سياسات عامة وسياسات لكل مجموعة يضبطها المدير
+- سجل تدقيق كامل لكل حدث علامة مائية
+    ]]></description>
+    <version>1.4.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">files_watermark contributors</author>
     <namespace>FilesWatermark</namespace>

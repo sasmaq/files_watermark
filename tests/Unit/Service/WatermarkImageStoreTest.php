@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Service\WatermarkImageStore;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\Files\AppData\IAppDataFactory;
 use OCP\Files\IAppData;
 use OCP\Files\NotFoundException;
@@ -15,6 +16,8 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
 class WatermarkImageStoreTest extends TestCase {
+
+	use L10nMock;
 
 	private IAppDataFactory&MockObject $appDataFactory;
 	private ISimpleFolder&MockObject $folder;
@@ -37,6 +40,7 @@ class WatermarkImageStoreTest extends TestCase {
 		$this->store = new WatermarkImageStore(
 			$this->appDataFactory,
 			$this->createMock(LoggerInterface::class),
+			$this->l10n(),
 		);
 	}
 

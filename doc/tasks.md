@@ -12,8 +12,8 @@ How to read it:
 - A claim marked done means it was *observed* working — by a test, or by driving a real
   instance. Where the evidence is manual, it says so.
 
-Verified against **Nextcloud 31.0.14.1**, app version **1.1.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-31, both green: **258 PHPUnit** tests and **74 Jest** tests, with
+Verified against **Nextcloud 31.0.14.1**, app version **1.4.0**, PHP 8.2 + 8.3.
+Suites re-run 2026-07-31, both green: **404 PHPUnit** tests and **85 Jest** tests, with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -37,13 +37,13 @@ has any — see [No external binaries](#no-external-binaries).
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | Settings, audit log, apply/remove actions and the watermarked badge all done | Group overrides |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [Arabic and RTL](#arabic-and-rtl-support) | **Watermark done** — shaped, reordered, one bundled face for both scripts. UI not started; no `l10n/` at all | `ar` translations, RTL CSS, `{date}` localisation |
+| [Arabic and RTL](#arabic-and-rtl-support) | **Both halves done** — watermark shaped and reordered; UI translated (130 strings), RTL-clean, preview direction pinned | `{date}` localisation, a real Arabic instance, a renderer bidi bug this surfaced |
 | [No external binaries](#no-external-binaries) | **Done.** No `exec()` anywhere; flattening removed with `pdftoppm`, decryption with `qpdf` | Release note for the dropped columns |
 | [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone from the tree | — |
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 258 PHPUnit + 74 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 404 PHPUnit + 85 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The three things standing between this and a 1.0 release are **Office support**, the
@@ -68,8 +68,10 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [x] [Arabic in the watermark](#watermark-rendering-arabic-in-the-output) — **done.** IBM Plex
   Sans Arabic Bold (OFL) draws every watermark, subsetted into each file; Arabic is shaped,
   reordered and ligated in both PDFs and images. `{date}` localisation is the one piece open
-- [ ] [Arabic in the Admin UI](#admin-ui-arabic-interface) — there is **no `l10n/` directory**,
-  so the app ships zero translations in any language, and no RTL work has been done
+- [x] [Arabic in the Admin UI](#admin-ui-arabic-interface) — **done.** `l10n/ar.json` +
+  `l10n/ar.js` carry all **130** strings, server messages included; the preview's base
+  direction is pinned to the text rather than the locale, and the app's own directional CSS
+  is gone. Driving the real runtime found a **bidi bug in the renderer** — see below
 
 ### Rewrites (done)
 
@@ -86,6 +88,10 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ### Correctness and robustness
 
+- [ ] [Latin words are reversed inside an RTL watermark](#open-bidi) — `سري - John Doe` is
+  drawn `Doe John - سري`. A UAX #9 rule N1 violation in `tc-lib-unicode`, found by comparing
+  the pinned preview against the shaper. It names the wrong person, which is the one thing a
+  watermark exists not to do
 - [x] [PDF 1.5+ with compressed xref](#open-1) — read natively by the renderer. No
   configuration, no external binary, no host-dependent behaviour
 - [ ] [Archive caps](#open-3) are class constants, not configuration
@@ -682,21 +688,25 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ## Arabic and RTL support
 
-**Position: the watermark half is done; the UI half is not started.** Arabic is shaped,
-reordered and drawn correctly in PDFs and images, with an OFL face bundled. Nothing in the
-app is translated, though — there is still no `l10n/` directory.
+**Position: both halves are done.** Arabic is shaped, reordered and drawn correctly in PDFs
+and images with an OFL face bundled, and the interface is translated, RTL-clean, and pinned to
+one preview direction. What is left is `{date}` localisation, a run on a real Arabic instance,
+and **a renderer bidi bug that only became visible once the two halves could be compared**.
 
-Two halves that share only the tokens they render, and they are worth keeping apart. The UI
-half is ordinary Nextcloud translation work with a known shape. The watermark half is a
+Two halves that share only the tokens they render, and they were worth keeping apart. The UI
+half was ordinary Nextcloud translation work with a known shape. The watermark half was a
 text-shaping problem that reaches into the font stack, and it is the one that can *look*
 finished while being wrong: Arabic drawn as disconnected left-to-right letters is still a
 valid PDF with a valid overlay, and every existing assertion would stay green.
 
-The order matters. **Do the watermark half first**, or at least decide it first, because the
+The order mattered, and doing the watermark half first paid off exactly as expected. The
 settings live preview is rendered by a browser — which shapes and reorders Arabic correctly —
-so shipping the UI translation first creates a preview that promises output the renderers
-cannot yet produce. That is the same trap as the rotation convention, where the preview is the
-contract and the renderer had to be made to match it.
+so shipping the UI translation first would have created a preview promising output the
+renderers could not produce. Having both, the preview could be pinned *against* the renderer's
+own rule rather than against the browser's default, and the one place where the two still
+disagree is now a recorded renderer bug rather than an unnoticed difference. That is the same
+trap as the rotation convention, where the preview is the contract and the renderer had to be
+made to match it.
 
 ### Watermark rendering (Arabic in the output) {#watermark-rendering-arabic-in-the-output}
 
@@ -726,9 +736,10 @@ Three blocking facts, each read off the current tree rather than assumed:
 
 ### Open {#open-arabic}
 
-**Position: the watermark half is done.** Arabic is shaped, reordered and drawn correctly in
-both PDFs and images, with a bundled OFL face. What is left here is the `{date}` locale
-question, and the [Admin UI](#admin-ui-arabic-interface) below is untouched.
+**Position: the watermark half is done**, and so is the [Admin UI](#admin-ui-arabic-interface)
+below. Arabic is shaped, reordered and drawn correctly in both PDFs and images, with a bundled
+OFL face. What is left here is the `{date}` locale question — plus the
+[bidi bug](#open-bidi) that comparing the two halves brought to light.
 
 - [x] **Shaping strategy decided, and it cost nothing: the library already shapes.** TCPDF
   did it (`utf8Bidi()`), and tc-lib-pdf is the same author's rewrite — the machinery sits in
@@ -831,50 +842,130 @@ question, and the [Admin UI](#admin-ui-arabic-interface) below is untouched.
     a date that renders differently depending on who fetched the file is harder to reason about
     in an audit
 - [ ] **Drive a real Arabic instance.** Everything above is asserted against generated
-  fixtures and rendered output read back byte by byte; none of it has been through the Files
+  fixtures and rendered output read back byte by byte, and the interface half against the real
+  `@nextcloud/l10n` runtime driven directly — but neither has been through the Files
   app with an Arabic display name and an Arabic template on a real server
 
 ### Admin UI (Arabic interface) {#admin-ui-arabic-interface}
 
-**There is no `l10n/` directory,** so the app ships zero translations in any language and every
-`t('files_watermark', …)` call falls through to its English source string. The calls themselves
-are already in place — `main-files.js` and all five components import `t` from
-`@nextcloud/l10n` — which is usually the part that is missing, so this is mostly extraction,
-translation and RTL rather than instrumentation.
+**Done.** `l10n/ar.json` and `l10n/ar.js` ship **130 strings** — every one the app asks for,
+server messages included — the interface no longer fights `dir="rtl"`, and the live preview's
+base direction is pinned to the rule the renderer uses rather than to the viewer's locale.
 
-- [ ] **Create `l10n/ar.json` and `l10n/ar.js`** in Nextcloud's format (a `translations` map
-  plus `pluralForm`). Arabic takes **six** plural forms; a wrong `pluralForm` string breaks
-  every plural call. There are **no `n()` calls in the tree today**, which is worth knowing
-  before someone adds the first one — the pagination copy in `AuditLog.vue` is the obvious
-  candidate
-- [ ] **Audit for unwrapped strings before translating anything**, since a missing `t()` cannot
-  be found from the translation file. Worth reading specifically: the `PLACEHOLDERS` example
-  values and `TYPE_OPTIONS` labels/descriptions in `WatermarkForm.vue`, `AuditLog.vue`'s column
-  headers and page-size options, and the trigger/type option labels
-- [ ] **Server-side strings are user-facing too.** `AdminSection` already takes `IL10N`, but
-  `ApiController`'s validation errors are displayed verbatim by the UI — the 400 that names an
-  unknown MIME type or a non-existent tag is interface text and is currently English-only
-- [ ] **Translate the `info.xml` metadata** — `<name lang="ar">`, `<summary lang="ar">`,
-  `<description lang="ar">`. The apps list and the App Store read these, and `l10n/` does not
-  cover them
-- [ ] **RTL layout: replace directional CSS with logical properties.** Nextcloud sets
-  `dir="rtl"` on the document for RTL languages, so the work is making the app's own styles stop
-  fighting it — `margin-inline-start`, `padding-inline`, `inset-inline-start`,
-  `text-align: start`. The `.vue` scoped blocks are the source; `css/` is webpack output and
-  must not be edited
-  - known offender: `text-align: left` on `AuditLog.vue`'s table cells
-- [ ] **The live preview needs a decision, and it is not a CSS one.** Browsers shape and reorder
-  Arabic in SVG `<text>`, so the preview will look *correct* the moment an admin types Arabic —
-  including before either renderer can match it. Set `direction` explicitly on the preview
-  rather than letting it inherit the UI language, so the preview means one thing regardless of
-  who is looking at it, and treat any preview/output disagreement as a renderer bug
-- [ ] **Re-check the rotation contract for RTL text.** The preview is the pinned contract
-  (`testPositiveRotationTiltsTheTextUphill`, and `patternTransform="rotate(-rotation)"` in the
-  form), and it was already the single most likely place to reintroduce the smear bug. Confirm
-  "uphill" still means the same thing in the output once the reading direction reverses
-- [ ] **Jest:** `WatermarkForm.spec.js` and `AdminSettings.spec.js` assert English strings, so
-  check whether they survive a loaded locale at all, and pin the preview's direction handling
-  once decided
+- [x] **`l10n/ar.json` + `l10n/ar.js`, generated from one table** so the two cannot disagree.
+  Nextcloud reads the JSON from PHP and the JS from the browser, and nothing in the platform
+  checks that they match — a string fixed in one and not the other gives a settings page whose
+  server errors and interface are in different languages
+- [x] **The audit for unwrapped strings found four**, all in `WatermarkForm.vue`: the
+  `PLACEHOLDERS` sample values, and `LOGO`, which went through `t()` on one branch and not the
+  other so the word changed when an admin uploaded a logo. `TYPE_OPTIONS`, `TRIGGER_OPTIONS`,
+  the MIME labels and `AuditLog.vue`'s headers were already wrapped
+  - **the samples are translated on purpose**, and it is the one entry here that is a decision
+    rather than a chore. `John Doe` in a Latin face tells an Arabic deployment nothing about
+    its own watermarks, so `ar` renders `صالح المقوشي` / `s.almuqwashi` / `مستند.pdf` — which puts
+    real Arabic through the preview's shaping and direction handling the moment the page opens
+  - the help text that names those samples now **takes them as parameters** instead of
+    repeating them, because a sentence quoting `(John Doe)` beside a chip tooltip reading
+    `صالح المقوشي` is two translations of one fact, drifting independently
+  - the `{displayname} - {date}` field placeholder went the other way: **un-wrapped**. The
+    tokens are identifiers the server matches literally, so a translated copy would offer an
+    admin a template that comes straight back as a 400. It reads from `DEFAULTS` now
+- [x] **Server-side strings translated at every boundary the UI shows verbatim** —
+  `ApiController` (21 messages), `WatermarkImageStore` (4), `WatermarkService` (4). Each took
+  an `IL10N`, and the interpolated variables became `%s` / `%1$s` parameters, which is the part
+  worth testing: `System tag ID "%s" does not exist` translated *without* its `%s` still reads
+  as a fluent Arabic sentence, one that has quietly dropped the only thing telling the admin
+  which tag is wrong
+  - `t()` is registered explicitly with `Util::addTranslations()` beside both `addScript()`
+    calls rather than left to whatever the server does implicitly. A missing bundle is not an
+    error — every string simply falls back to English, which looks exactly like a working
+    translation
+- [x] **`info.xml` metadata translated** (`<name>`, `<summary>`, `<description>`), since the
+  apps list and the App Store read those and `l10n/` does not cover them. Structure checked
+  against the published `info.xsd`: all three are `maxOccurs="unbounded"` with a unique `@lang`
+- [x] **The app's first `n()` call, and Arabic is why.** `Estimated processing time: ~{n}
+  second(s)` was an English-only shortcut: Arabic has six plural forms and inflects the noun
+  differently in each, so "ثانية واحدة" / "ثانيتين" / "3 ثوانٍ" are not one string with a
+  number swapped in
+  - **verified by driving `@nextcloud/l10n` itself**, not by reading the file: registered the
+    catalogue, called `setLanguage('ar')`, and checked all six forms select correctly at
+    n = 0, 1, 2, 3, 11, 47, 100. The library takes the Arabic rule from **its own table**, not
+    from the `pluralForm` line in the JSON — the line still has to be right, because the PHP
+    side does read it, but a file that looked correct could have been selected wrongly and
+    this is the only way to see which
+  - two of the six forms deliberately **omit `%n`**: Arabic's singular and dual carry the count
+    in the noun, so "نحو 2 ثانيتين" is a mistake rather than a translation. The catalogue test
+    encodes exactly that — forms may drop a placeholder the grammar supplies, never introduce
+    one the source cannot fill, and forms 3-5 must keep their count
+- [x] **RTL: the app's own directional CSS is gone.** `text-align: left` on the log headers
+  became `start`, and the status-toast keyframe — a `translateX(-4px)` a keyframe cannot express
+  logically — got a mirrored twin selected by `[dir="rtl"]`
+  - two rules that were *silently wrong rather than mirrored*: `letter-spacing` on the uppercase
+    labels pulls Arabic's joined letters apart, and `text-transform: uppercase` means nothing in
+    a script with no case. Both are undone under RTL instead of left to apply harmlessly
+  - **file paths are pinned `dir="ltr"`**, which is a bug fix, not styling: a path is
+    structurally LTR, and its leading slash is a neutral that an RTL paragraph renders at the
+    far end — `/Documents/تقرير.pdf` reads as though the file were named backwards
+- [x] **The preview's direction is decided by the text, never by the locale** — and the rule is
+  not a style choice, it is the shaper's. `Com\Tecnick\Unicode\Bidi` resolves the paragraph
+  direction from the first strong character of the string it is handed, so the preview computes
+  the same thing from the first strong character of the template
+  - letting it inherit the page's `dir` would make one stored template preview two different
+    ways depending on who opened settings, and only one of the two could be what the renderer
+    produces
+  - the page mock-up around it stays `dir="ltr"`: the faux content lines and the logo box are a
+    picture of a document, not interface text, and a mirrored page is not one any renderer emits
+- [x] **The rotation contract survives the reversal.** `patternTransform="rotate(-45)"` is
+  identical for a Latin and an Arabic template, asserted directly, and it should be: what
+  reverses is the glyph order *inside* the line, not the line the tiles are laid along
+- [x] **Two drift guards, both mutation-tested.** `L10nCatalogueTest` extracts every `t()` /
+  `n()` source string from `lib/` and `src/` the same way Nextcloud's own extractor does and
+  compares it with the catalogue in both directions — a missing translation is otherwise
+  invisible, because it falls back to English and looks like success
+  - it caught a bug in itself first: the test's app root resolved *through* `tests/`, so its
+    "skip test files" filter matched the whole source tree and it compared the catalogue against
+    an empty list. It passed. The reverse check — stale translations no source asks for — is
+    what failed and exposed it, which is the argument for having both directions
+  - a `t()` built by **string concatenation is invisible to every extractor**, including
+    Nextcloud's, so the one place doing it (the system-tag message) was joined into a single
+    literal. Nothing in the tooling would have reported the missing translation
+- [x] **Version bumped to 1.4.0.** No migration needs it, unlike the previous two bumps —
+  Nextcloud cache-busts an app's JS, CSS and translation bundles by app version, so without it
+  an upgraded instance can keep serving the pre-translation bundle it already cached
+- [x] **Jest: 85 tests, up from 74.** The existing English assertions survive unchanged — the
+  test mock returns source strings — and the new ones pin the preview direction (six cases,
+  including that it ignores `dir="rtl"` on the document), the LTR file path, and the plural
+
+### Found while doing this: the renderer reverses Latin words in an RTL line {#open-bidi}
+
+Comparing the preview against the shaper — the thing the pinned direction makes possible — turned
+up a real bug in `tc-lib-unicode`'s Bidi implementation, in the app's dependency rather than in
+its own code.
+
+**In a right-to-left paragraph, each space-separated Latin word is placed as its own run, so a
+multi-word Latin name comes out backwards.** Measured through `ShapedText::shape()`:
+
+| Template | Drawn as | Correct? |
+| --- | --- | --- |
+| `سري - John Doe` | `Doe John - ﻱﺮﺳ` | **no** — the name is reversed |
+| `سري John` | `John ﻱﺮﺳ` | yes |
+| `John سري Doe` | `John ﻱﺮﺳ Doe` | yes (LTR base) |
+| `John Doe - سري` | `John Doe - ﻱﺮﺳ` | yes (LTR base) |
+
+Per UAX #9 rule N1 a neutral between two same-direction characters takes that direction, so the
+space inside `John Doe` is L and the name is one run. The library resolves it to the paragraph
+direction instead, splitting the name in two and ordering the halves right to left.
+
+- [ ] **It bites exactly the default template with an Arabic prefix** — `سري - {displayname}`
+  with a two-word display name — which is a plausible thing for an Arabic deployment to
+  configure, and the watermark then names the person backwards. A watermark exists to identify
+  someone, so this is not cosmetic
+- [ ] The browser gets it right, so **the preview and the output now disagree** for this one
+  shape. That is by design of the pinning: the preview is the contract, and a disagreement is a
+  renderer bug rather than something to paper over by making the preview wrong too
+- [ ] Untouched here deliberately: the fix is in a vendored dependency, and this task was the
+  interface. Worth an upstream report, with a pre-pass in `ShapedText` (bidi-run detection
+  before handing the string over) as the local option if upstream is slow
 
 ---
 
@@ -1396,7 +1487,7 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 258 PHPUnit tests and 74 Jest tests, and **no test depends on an external binary**
+**Position:** 404 PHPUnit tests and 85 Jest tests, and **no test depends on an external binary**
 any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
 for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
 has 48 of them.
@@ -1414,9 +1505,12 @@ has 48 of them.
 - [ ] `WatermarkOnUploadJobTest` — an unknown user and a deleted file must be skipped rather
   than fatal, and the acting user must reach `watermarkInPlace()`
 - [ ] `OfficeWatermarkerTest`, `MetadataWatermarkerTest` — pending those services
-- [ ] **Arabic text cases in `PdfWatermarkerTest` and `ImageWatermarkerTest`**, asserting glyph
-  order and shaping rather than "a valid file came out" — the whole failure mode here is output
-  that every current assertion accepts. See [Arabic and RTL support](#open-arabic)
+- [x] **Arabic text cases in `PdfWatermarkerTest` and `ImageWatermarkerTest`** — done with the
+  watermark half, asserting glyph order and shaping rather than "a valid file came out", which
+  is the failure mode every other assertion accepts. See [Arabic and RTL support](#open-arabic)
+- [ ] **No Jest coverage of a *loaded* Arabic locale.** The mock returns source strings, so the
+  suite proves the calls are wired, never that the catalogue renders — that gap is covered
+  instead by `L10nCatalogueTest` and by driving `@nextcloud/l10n` directly
 - [ ] `WatermarkConfigMapperTest` — mapper finders and insert/update (see
   [Data model](#open-data))
 

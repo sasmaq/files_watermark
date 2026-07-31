@@ -88,6 +88,79 @@ describe('WatermarkForm', () => {
 		})
 	})
 
+	// The preview is the contract the renderers have to match, so what decides its base
+	// direction is a behaviour and not a detail. The rule is the shaper's own: the
+	// direction comes from the *text*, never from the interface language.
+	//
+	// This matters because the browser is a competent bidi engine and the renderers are
+	// not obviously so — an Arabic template looks right in the preview the moment it is
+	// typed, whether or not anything downstream can reproduce it.
+	describe('preview direction', () => {
+		const previewText = (wrapper) => wrapper.find('.wm-preview__svg text')
+
+		afterEach(() => {
+			document.documentElement.removeAttribute('dir')
+		})
+
+		it('draws a Latin template left to right', () => {
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: 'Confidential' } })
+			expect(previewText(wrapper).attributes('direction')).toBe('ltr')
+		})
+
+		it('draws an Arabic template right to left', () => {
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: 'سري' } })
+			expect(previewText(wrapper).attributes('direction')).toBe('rtl')
+		})
+
+		it('takes the direction from the first strong character, as the shaper does', () => {
+			// Com\Tecnick\Unicode\Bidi resolves the paragraph direction from the first
+			// strong character, so a template opening in Latin is an LTR paragraph however
+			// much Arabic follows it — and the preview has to agree, or it shows an
+			// admin a different arrangement from the one that gets stamped into the file.
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: 'Confidential سري' } })
+			expect(previewText(wrapper).attributes('direction')).toBe('ltr')
+		})
+
+		it('ignores digits and punctuation, which are not strong characters', () => {
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '2026-07-31 — سري' } })
+			expect(previewText(wrapper).attributes('direction')).toBe('rtl')
+		})
+
+		it('does not follow the interface language', () => {
+			// The whole point of pinning it. An Arabic-speaking admin and an English-speaking
+			// one have to be shown the same picture of the same stored template, because
+			// only one of the two can be what the renderer produces.
+			document.documentElement.setAttribute('dir', 'rtl')
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: 'Confidential' } })
+
+			expect(previewText(wrapper).attributes('direction')).toBe('ltr')
+		})
+
+		it('keeps the page mock-up itself left to right', () => {
+			// The faux document lines and the logo box are a picture of a page, not
+			// interface text; flipping them under an RTL interface would show a mirrored
+			// document that no renderer produces.
+			document.documentElement.setAttribute('dir', 'rtl')
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: 'سري' } })
+
+			expect(wrapper.find('.wm-preview__svg').attributes('dir')).toBe('ltr')
+		})
+
+		// The rotation convention is pinned on the server by
+		// testPositiveRotationTiltsTheTextUphill, and the preview's
+		// patternTransform="rotate(-rotation)" is the other half of that contract. It is
+		// the single most likely place to reintroduce the illegible-watermark bug, so:
+		// reversing the reading direction must not touch the geometry. It is the glyph
+		// order inside the line that reverses, not the line the tiles are laid along.
+		it('lays the tile lattice at the same angle whatever the script', () => {
+			const angleFor = (textTemplate) => mountForm({ modelValue: { type: 'text', rotation: 45, textTemplate } })
+				.find('pattern').attributes('patternTransform')
+
+			expect(angleFor('سري')).toBe(angleFor('Confidential'))
+			expect(angleFor('سري')).toBe('rotate(-45)')
+		})
+	})
+
 	describe('watermark image upload', () => {
 		it('offers a file picker instead of a path field', () => {
 			const wrapper = mountForm({ modelValue: { type: 'image' } })

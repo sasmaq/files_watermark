@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Service;
 use OCP\Files\AppData\IAppDataFactory;
 use OCP\Files\NotFoundException;
 use OCP\Files\SimpleFS\ISimpleFolder;
+use OCP\IL10N;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -46,6 +47,7 @@ class WatermarkImageStore {
 	public function __construct(
 		private IAppDataFactory $appDataFactory,
 		private LoggerInterface $logger,
+		private IL10N $l,
 	) {
 	}
 
@@ -71,26 +73,26 @@ class WatermarkImageStore {
 	public function store(string $tmpPath): string {
 		$size = @filesize($tmpPath);
 		if ($size === false || $size === 0) {
-			throw new \RuntimeException('The uploaded image could not be read.');
+			throw new \RuntimeException($this->l->t('The uploaded image could not be read.'));
 		}
 		if ($size > self::MAX_BYTES) {
 			$max = (int)(self::MAX_BYTES / 1024 / 1024);
-			throw new \RuntimeException("The image is too large. Maximum size is {$max} MB.");
+			throw new \RuntimeException($this->l->t('The image is too large. Maximum size is %d MB.', [$max]));
 		}
 
 		$info = @getimagesize($tmpPath);
 		if ($info === false || !isset(self::ALLOWED[$info[2]])) {
-			throw new \RuntimeException('The image must be a PNG or JPEG file.');
+			throw new \RuntimeException($this->l->t('The image must be a PNG or JPEG file.'));
 		}
 
 		$content = @file_get_contents($tmpPath);
 		if ($content === false) {
-			throw new \RuntimeException('The uploaded image could not be read.');
+			throw new \RuntimeException($this->l->t('The uploaded image could not be read.'));
 		}
 
 		$folder = $this->folder(true);
 		if ($folder === null) {
-			throw new \RuntimeException('The watermark image could not be stored.');
+			throw new \RuntimeException($this->l->t('The watermark image could not be stored.'));
 		}
 
 		// Opaque name: nothing the client sent reaches the filesystem.
@@ -100,7 +102,7 @@ class WatermarkImageStore {
 			$folder->newFile($name, $content);
 		} catch (\Throwable $e) {
 			$this->logger->error('files_watermark: could not store watermark image', ['exception' => $e]);
-			throw new \RuntimeException('The watermark image could not be stored.');
+			throw new \RuntimeException($this->l->t('The watermark image could not be stored.'));
 		}
 
 		return $name;

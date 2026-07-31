@@ -44,11 +44,18 @@
 						{{ t('files_watermark', 'Type the text to stamp. Insert a placeholder to fill in details automatically.') }}
 					</p>
 					<p class="wm-card__desc">
-						{{ t('files_watermark', '{displayname} is the name shown in Nextcloud (John Doe); {username} is the account name used to sign in (john.doe). Display names can change and are not unique — use the account name when the watermark has to identify exactly one account.') }}
+						{{ identityHelp }}
 					</p>
+					<!--
+						The placeholder is the shipped default, not a translatable string:
+						the tokens are identifiers the server matches literally, so a
+						translated copy of them would offer an admin a template that comes
+						straight back as a 400. Reading it from DEFAULTS also keeps the hint
+						honest when the default changes.
+					-->
 					<NcTextField v-model="form.textTemplate"
 						:label="t('files_watermark', 'Watermark text')"
-						:placeholder="t('files_watermark', '{displayname} - {date}')" />
+						:placeholder="DEFAULTS.textTemplate" />
 					<div class="wm-chips">
 						<span class="wm-chips__hint">{{ t('files_watermark', 'Insert:') }}</span>
 						<button v-for="ph in PLACEHOLDERS"
@@ -235,7 +242,17 @@
 				<div class="wm-preview__sticky">
 					<span class="wm-preview__label">{{ t('files_watermark', 'Live preview') }}</span>
 					<div class="wm-preview__page">
-						<svg class="wm-preview__svg" :viewBox="`0 0 ${PV_W} ${PV_H}`" xmlns="http://www.w3.org/2000/svg">
+						<!--
+							`dir="ltr"` pins the page mock-up itself: it is a picture of a
+							document, not a block of interface text, so its faux content lines
+							and its logo box must not flip when the settings page is rendered
+							RTL. The watermark text inside sets its own direction from the
+							template — see `previewDirection`.
+						-->
+						<svg class="wm-preview__svg"
+							dir="ltr"
+							:viewBox="`0 0 ${PV_W} ${PV_H}`"
+							xmlns="http://www.w3.org/2000/svg">
 							<defs>
 								<pattern id="wm-text-pattern"
 									patternUnits="userSpaceOnUse"
@@ -246,6 +263,7 @@
 										:y="tile.h / 2"
 										text-anchor="middle"
 										dominant-baseline="middle"
+										:direction="previewDirection"
 										:font-size="previewFont"
 										font-weight="700"
 										font-family="Arial, Helvetica, sans-serif"
@@ -472,14 +490,29 @@ const TRIGGER_OPTIONS = [
 // The two identity samples are deliberately unalike, because they are what tells an admin
 // which token they want: the account name is the login/uid, the display name is the
 // human-readable one that a person reading the watermark will recognise.
+//
+// They are translated, not fixed: the preview exists to show an admin what their own
+// watermarks will look like, and "John Doe" in a Latin face tells an Arabic deployment
+// nothing about how its own display names will render. A translated sample puts real
+// Arabic through the preview's shaping and direction handling on first load.
 const SAMPLE = {
-	username: 'john.doe',
-	displayname: 'John Doe',
-	email: 'john.doe@example.com',
+	username: t('files_watermark', 'john.doe'),
+	displayname: t('files_watermark', 'John Doe'),
+	email: t('files_watermark', 'john.doe@example.com'),
 	date: new Date().toISOString().slice(0, 10),
 	datetime: new Date().toISOString().slice(0, 19).replace('T', ' '),
-	filename: 'document.pdf',
+	filename: t('files_watermark', 'document.pdf'),
 }
+
+// The help text names the two samples, so it takes them as parameters rather than
+// repeating them. Spelled out in the copy they would be a second place to translate and
+// a second place to drift, and an admin comparing the sentence against the chip tooltips
+// would be shown two different example names for the same token.
+const identityHelp = t(
+	'files_watermark',
+	'{displayname} is the name shown in Nextcloud ({sampleDisplayname}); {username} is the account name used to sign in ({sampleUsername}). Display names can change and are not unique — use the account name when the watermark has to identify exactly one account.',
+	{ sampleDisplayname: SAMPLE.displayname, sampleUsername: SAMPLE.username },
+)
 
 const PLACEHOLDERS = [
 	{ token: '{displayname}', label: t('files_watermark', 'Display name'), example: SAMPLE.displayname },
@@ -496,6 +529,30 @@ const previewText = computed(() => {
 })
 
 const displayText = computed(() => previewText.value || `${SAMPLE.displayname} - ${SAMPLE.date}`)
+
+// Scripts whose letters are strong right-to-left. Enough to decide a base direction; the
+// list is the RTL scripts a watermark template is plausibly written in.
+const RTL_SCRIPT = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]/u
+
+/**
+ * The base direction to draw the preview text in, decided by the *text itself* — its first
+ * strong character — and never by the UI language.
+ *
+ * That rule is not a style choice: it is what the server-side shaper does. `Com\Tecnick\
+ * Unicode\Bidi` resolves the paragraph direction from the first strong character of the
+ * string it is handed, so an Arabic template is reordered right-to-left whatever locale the
+ * admin who saved it was using. Letting the SVG inherit `dir` from the page would make the
+ * preview say two different things about one stored template depending on who opened the
+ * settings — and only one of them could match the file that comes out.
+ * @param {string} text - the text about to be drawn
+ * @return {string} 'rtl' or 'ltr'
+ */
+function baseDirection(text) {
+	const firstLetter = (text ?? '').match(/\p{L}/u)
+	return firstLetter && RTL_SCRIPT.test(firstLetter[0]) ? 'rtl' : 'ltr'
+}
+
+const previewDirection = computed(() => baseDirection(displayText.value))
 
 // Kept in step with WatermarkImageStore::MAX_BYTES and its allowed types. Checking here
 // too only saves the user a round-trip — the server re-validates from the file's actual
@@ -639,8 +696,10 @@ const logo = computed(() => {
 })
 
 // The stored value is an opaque reference now, not a filename, so there is nothing
-// human-readable to show — the preview box just marks where the logo sits.
-const logoLabel = computed(() => (form.imagePath ? t('files_watermark', 'LOGO') : 'LOGO'))
+// human-readable to show — the preview box just marks where the logo sits. One
+// translated label either way: the two branches used to differ only in that one of them
+// went through t(), so an Arabic admin saw the word change when they uploaded a file.
+const logoLabel = t('files_watermark', 'LOGO')
 
 const contentLines = [
 	{ y: 74, w: 232 }, { y: 106, w: 210 }, { y: 138, w: 244 },
@@ -951,6 +1010,13 @@ const contentLines = [
     letter-spacing: 0.04em;
     color: var(--color-text-maxcontrast);
 }
+/* Arabic letters join, and letter-spacing pulls the joins apart — the word comes out as
+   disconnected characters. Neither does uppercasing mean anything in a script with no
+   case, so both are dropped rather than kept and ignored. */
+[dir="rtl"] .wm-preview__label {
+    text-transform: none;
+    letter-spacing: normal;
+}
 .wm-preview__page {
     aspect-ratio: 3 / 4;
     width: 100%;
@@ -999,9 +1065,19 @@ const contentLines = [
 .wm-status--error {
     color: var(--color-error, #c7361f);
 }
+/* The status slides in from the side the text starts on, so it reads as arriving rather
+   than as being pushed backwards. That side is mirrored under RTL — a keyframe cannot
+   take a logical property, so the direction is chosen by a second animation. */
 @keyframes wm-status-in {
     from { opacity: 0; transform: translateX(-4px); }
     to { opacity: 1; transform: none; }
+}
+@keyframes wm-status-in-rtl {
+    from { opacity: 0; transform: translateX(4px); }
+    to { opacity: 1; transform: none; }
+}
+[dir="rtl"] .wm-status {
+    animation-name: wm-status-in-rtl;
 }
 @media (prefers-reduced-motion: reduce) {
     .wm-status { animation: none; }
