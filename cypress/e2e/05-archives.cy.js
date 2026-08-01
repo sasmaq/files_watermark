@@ -196,6 +196,65 @@ describe('Archive (ZIP) downloads', () => {
 			})
 		})
 
+		/**
+		 * The archive's audit granularity, decided and pinned: **one `watermark_log` row
+		 * per watermarked member**, written per fetch.
+		 *
+		 * A row per archive was the alternative and is strictly less useful — it could say
+		 * that someone downloaded an archive but not which documents were in it, which is
+		 * the question the audit trail exists to answer. Rows are keyed by file id, which
+		 * is also what the Files-list indicator and the double-burn guard read.
+		 *
+		 * The cost is real and deliberate: delivery triggers render per fetch, so a second
+		 * download of the same folder writes the same rows again. That is asserted rather
+		 * than glossed over — it is the same behaviour a single-file `on_download` has, so
+		 * the archive path is not a special case, and the volume is bounded by the archive
+		 * caps (200 members by default, `archive_max_members`).
+		 */
+		it('writes one audit row per watermarked member, per fetch', () => {
+			// Rows are identified by **id**, not counted. The log endpoint returns the
+			// newest N, which on an instance the suite has been run against a few times
+			// is a sliding window: three new rows push three old ones out of view, so a
+			// difference in length measures nothing.
+			const rowsForThisFolder = () =>
+				cy.wmApi('GET', '/api/v1/log?limit=500').then((response) =>
+					response.body.filter((entry) => String(entry.filePath).includes(`/${folder}/`)))
+
+			const fetchRecipientArchive = () =>
+				cy.task('nc:get', {
+					url: `/remote.php/dav/files/${recipientUid}/${folder}?accept=zip`,
+					user: recipient.user,
+					password: recipient.password,
+					headers: zipHeaders,
+				}).its('status').should('eq', 200)
+
+			const addedSince = (seen) => (rows) =>
+				rows
+					.filter((entry) => !seen.has(entry.id))
+					.map((entry) => `${entry.trigger} ${entry.filePath.split('/').pop()}`)
+					.sort()
+
+			// Three PDFs in the folder; notes.md is not a watermarkable type and must
+			// leave no row behind, or the log would claim a watermark that is not in the
+			// file.
+			const expected = ['on_share one.pdf', 'on_share single.pdf', 'on_share two.pdf']
+
+			rowsForThisFolder().then((before) => {
+				const seen = new Set(before.map((entry) => entry.id))
+
+				fetchRecipientArchive()
+				rowsForThisFolder().then(addedSince(seen)).should('deep.eq', expected)
+
+				// And again: rendering per fetch means logging per fetch.
+				rowsForThisFolder().then((afterFirst) => {
+					const seenNow = new Set(afterFirst.map((entry) => entry.id))
+
+					fetchRecipientArchive()
+					rowsForThisFolder().then(addedSince(seenNow)).should('deep.eq', expected)
+				})
+			})
+		})
+
 		it('watermarks a public-link folder download', () => {
 			// The trailing slash is required: the public DAV server's base URI *is*
 			// `/public.php/dav/files/<token>/`, and a request without it is rejected

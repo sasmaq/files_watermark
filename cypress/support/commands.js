@@ -183,7 +183,26 @@ Cypress.Commands.add('wmShare', ({ path, shareWith, shareType = 0, permissions =
 			permissions: String(permissions),
 		},
 	}).then((response) => {
-		expect(response.json?.ocs?.meta?.statuscode, `share ${path}`).to.be.oneOf([100, 200])
+		// Core rate-limits share creation at 20 per 10 minutes per user, and a suite that
+		// rebuilds its fixtures every run legitimately looks like abuse: two full runs
+		// inside the window exhaust the budget. The 429 body is empty, so without this
+		// the failure reads "expected undefined to be one of [100, 200]" and points at
+		// nothing.
+		if (response.status === 429) {
+			throw new Error(
+				`share ${path} was rate-limited (HTTP 429). Core allows 20 shares per 10 minutes `
+				+ 'per user. On a test instance, turn the limiter off:\n'
+				+ '  occ config:system:set ratelimit.protection.enabled --value false --type boolean',
+			)
+		}
+
+		// The HTTP status and the body go into the message for every other failure: an OCS
+		// error that is not JSON says nothing on its own.
+		expect(
+			response.json?.ocs?.meta?.statuscode,
+			`share ${path} — HTTP ${response.status}, body: ${response.text.slice(0, 300)}`,
+		).to.be.oneOf([100, 200])
+
 		return response.json.ocs.data
 	})
 })

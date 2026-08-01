@@ -13,8 +13,8 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.5.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-08-01, all three green: **426 PHPUnit** tests, **85 Jest** tests and
-**53 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
+Suites re-run 2026-08-01, all three green: **427 PHPUnit** tests, **85 Jest** tests and
+**55 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -44,7 +44,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 426 PHPUnit + 85 Jest + 53 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
+| [Testing](#testing) | 427 PHPUnit + 85 Jest + 55 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -404,7 +404,7 @@ share, and public-link access. This is where every delivery-time bug has been fo
 
 ### Open {#open-3}
 
-- [ ] **Tar archives are broken in core.** `Accept: application/x-tar` yields a truncated
+- [x] **Tar archives are broken in core.** `Accept: application/x-tar` yields a truncated
   archive, and it reproduces identically on the untouched core path, so it is not caused by
   this app. Browsers request zip. Worth an upstream report
 - [x] **Archive caps are configurable** — `occ config:app:set files_watermark
@@ -432,8 +432,31 @@ share, and public-link access. This is where every delivery-time bug has been fo
     `06-archive-caps.cy.js` sets it with a real `occ config:app:set` against a
     three-member folder (far under the default), watches the same fetch go 200 → 403 → 200
     as the value is set and deleted, and is the only test in either suite that can see that
-- [ ] Decide the audit granularity for archives: currently one `watermark_log` row per
-  watermarked member. Confirm that is wanted for large archives, or batch it
+- [x] **Audit granularity for archives decided: one `watermark_log` row per watermarked
+  member, per fetch.** Confirmed as wanted rather than changed, and now pinned by tests so it
+  is not quietly batched by whoever next reads the pre-render loop
+  - **a row per archive would answer the wrong question.** "bob downloaded an archive at
+    14:02" cannot say which documents were in it, and tracing a leaked document back to the
+    person who received it is the one thing this app exists to do. Rows are keyed by file id
+    for the same reason the indicator and the double-burn guard read them that way; an
+    archive-level row would need a null or synthetic file id and would break both
+  - **the per-fetch cost is real and deliberate.** Delivery triggers render per fetch, so a
+    second download of the same folder writes the same rows again. That is not an archive
+    quirk — a single-file `on_download` logs per fetch too — and batching only the archive
+    path would make it *less* informative than the single-file path it mirrors
+  - **what makes it safe to confirm now is the cap.** Write amplification is bounded by
+    [`archive_max_members`](#open-3) (200 by default), so one request cannot write an
+    unbounded number of rows. That was an open question when the caps were class constants
+  - pinned twice: `testEachWatermarkedMemberIsRenderedOnceAndSkippedMembersNotAtAll` (one
+    render — therefore one row — per member, and none for a member the policy skips), and
+    end to end in `05-archives.cy.js`, which reads the real audit table and asserts exactly
+    three rows naming the three PDFs, none for the unwatermarkable `notes.md`, and three more
+    on a second fetch
+- [ ] **Log growth has no answer yet**, and it is the honest consequence of the decision
+  above rather than an argument against it: nothing prunes `watermark_log`, so an instance
+  with `on_share` on a busy folder accumulates a row per member per fetch forever. What that
+  wants is a retention policy — an `occ` prune command, or an age cap — not a coarser record
+  of who received what
 - [ ] Extend `DownloadController` (`/api/v1/download`) to accept a folder path, or document
   that it stays single-file only (it currently answers "Path is not a file")
 - [ ] **Public file-drop uploads** have no session to attribute a watermark to, so neither the
@@ -1615,10 +1638,10 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 426 PHPUnit tests, 85 Jest tests and 53 Cypress tests, and **no test depends on
+**Position:** 427 PHPUnit tests, 85 Jest tests and 55 Cypress tests, and **no test depends on
 an external binary** any more. Two image cases still depend on the host's own PHP build (WebP,
 and a TrueType font for rotation). The DAV layer, which used to be the blind spot every
-delivery bug hid in, now has 60 unit tests — and, as of this version, an end-to-end suite that
+delivery bug hid in, now has 61 unit tests — and, as of this version, an end-to-end suite that
 fetches the same files through the same servers a browser does.
 
 ### Open {#open-testing}
@@ -1646,7 +1669,7 @@ fetches the same files through the same servers a browser does.
 
 ### DAV plugin test harness
 
-`lib/Dav/` has 60 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
+`lib/Dav/` has 61 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
 every delivery-time bug found so far lived in exactly that untested layer, and each was caught
 only by driving a real instance by hand:
 
@@ -1691,8 +1714,9 @@ only by driving a real instance by hand:
     - `OC\Streamer` records its calls to a static log, because `ZipInterceptorPlugin`
       constructs it directly and it cannot be injected as a mock. That log is what makes the
       archive's *shape* — member set, names, sizes, bytes — assertable
-- [x] `ZipInterceptorPluginTest` (30) — **regression: gate per member, never per container**;
-  a configured cap moving the ceiling in both directions;
+- [x] `ZipInterceptorPluginTest` (31) — **regression: gate per member, never per container**;
+  a configured cap moving the ceiling in both directions; one render — and so one audit
+  row — per watermarked member;
   archive naming and root path for whole-folder vs selection; `files=` + `X-NC-Files` parsing;
   `BeforeZipCreatedEvent` veto honoured; over-cap → 403 under `on_share` but plain archive
   under `on_download`, for both the byte cap and the member cap; defer to core when nothing was
@@ -1881,10 +1905,21 @@ cannot make (the Arabic UI at `dir="rtl"`).
 
 ### Integration / E2E (Cypress)
 
-**52 tests across 10 specs**, run against a real Nextcloud 31 from `docker-compose.yml`, plus
+**54 tests across 10 specs**, run against a real Nextcloud 31 from `docker-compose.yml`, plus
 one pending test that records the [bidi bug](#open-bidi). `npm run test:e2e`; the whole run is
-about **70 seconds**. Setup, layout and the reasoning behind each probe are in
+about **80 seconds**. Setup, layout and the reasoning behind each probe are in
 [`cypress/README.md`](../cypress/README.md).
+
+**The test instance needs its rate limiter turned off**, which is a setup step rather than a
+detail: core allows **20 shares per 10 minutes per user** (`#[UserRateLimit]` on
+`ShareAPIController::createShare`), and a suite that rebuilds its users, folders and shares on
+every run legitimately looks like abuse — two runs inside that window exhaust the budget and
+the share specs fail in their setup with an empty **429**. `occ config:system:set
+ratelimit.protection.enabled --value false --type boolean`, in `cypress/README.md` and in the
+CI workflow. Two things learned the hard way and worth keeping: the toggle only stops new
+attempts being *recorded*, so an existing backlog still has to expire on its own; and the
+harness now names the limit and the fix in the failure, because a 429 from OCS has an empty
+body and read as "expected undefined to be one of [100, 200]".
 
 **The rule the suite is built around: every scenario is judged on the bytes that come back.**
 Not on a spinner stopping, not on a toast, and not on the file having changed. That last one
@@ -1925,7 +1960,9 @@ Delivered:
   servers, an unsupported member travelling through untouched, the owner's own archive left
   clean under `on_share`, and the regression that matters most: **"download selected" on a
   received single-file share**, where the container is the recipient's own home and the old
-  gate shipped clean originals
+  gate shipped clean originals. Also the audit granularity, read off the real table: one row
+  per watermarked member, none for the unwatermarkable one, and the same rows again on a
+  second fetch
 - [x] **Archive caps** (`06-archive-caps.cy.js`) — 201 members: `on_share` denies with 403,
   `on_download` degrades to core's plain archive. Either half alone is satisfied by a bug.
   Plus the one assertion no unit test can make: a cap **set with a real `occ` command** on a
@@ -1957,6 +1994,12 @@ Two decisions worth recording, because both cost time to arrive at:
   32-bit central-directory fields are the `0xFFFF…` sentinels and the real values live in the
   ZIP64 records. The first version of the reader followed a sentinel as an offset and seeked to
   byte 4294967295
+- **the audit log endpoint is a sliding window, so rows are identified and never counted.**
+  `GET /api/v1/log?limit=N` returns the newest N: on an instance the suite has run against a
+  few times, three new rows push three old ones out of view, and a difference in length
+  measures nothing. The audit-granularity test compares row **ids** against a set taken
+  before the fetch. It passed on a fresh table and failed once the table grew, which is the
+  kind of test that is worse than none
 
 Open:
 

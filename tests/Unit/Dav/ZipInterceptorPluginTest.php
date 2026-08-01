@@ -229,6 +229,39 @@ class ZipInterceptorPluginTest extends TestCase {
 		];
 	}
 
+	/**
+	 * One render per watermarked member, and none for a member the policy skips.
+	 *
+	 * Each render is what writes an audit row, so this is where the archive's audit
+	 * granularity is decided: a `watermark_log` row per *member*, not per archive. That
+	 * is the intended behaviour — an entry that recorded only "an archive was
+	 * downloaded" could not answer which documents were in it, which is the question a
+	 * watermark exists to answer — so it is pinned here rather than left to whoever next
+	 * reads the loop and thinks to batch it.
+	 */
+	public function testEachWatermarkedMemberIsRenderedOnceAndSkippedMembersNotAtAll(): void {
+		$first = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$second = $this->file(2, '/bob/files/Shared/b.pdf', 'b.pdf');
+		$skipped = $this->file(3, '/bob/files/Shared/c.pdf', 'c.pdf');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$first, $second, $skipped]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')
+			->willReturnCallback(static fn ($node) => $node->getId() === 3 ? null : 'on_share');
+
+		$rendered = [];
+		$this->watermarkService->expects($this->exactly(2))
+			->method('watermarkForDownload')
+			->willReturnCallback(function ($file) use (&$rendered) {
+				$rendered[] = $file->getId();
+				return $this->renderedCopy();
+			});
+
+		$this->plugin()->httpGet($this->zipRequest(), new Response());
+
+		$this->assertSame([1, 2], $rendered, 'the wrong members were rendered');
+	}
+
 	// ---------------------------------------------------------------------
 	// Archive shape
 	// ---------------------------------------------------------------------

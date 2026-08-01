@@ -17,6 +17,15 @@ docker compose up -d
 # wait for the first-run install (~30-60s), then:
 docker compose exec -u www-data nextcloud php occ app:enable files_watermark
 
+# Core allows 20 shares per 10 minutes per user. This suite rebuilds its users, folders
+# and shares on every run, so two runs inside that window exhaust the budget and the
+# share specs fail in their setup with an empty HTTP 429. Turn the limiter off — on a
+# throwaway test instance only:
+docker compose exec -u www-data nextcloud php occ \
+  config:system:set ratelimit.protection.enabled --value false --type boolean
+# It stops new attempts being *recorded*; entries already counted still expire on their
+# own, so if you set it after being throttled, the backlog takes up to 10 minutes to clear.
+
 npm run test:e2e        # headless
 npm run test:e2e:open   # interactive
 ```
