@@ -33,6 +33,11 @@ Thumbs.db
 # PHP Unit
 .phpunit.cache
 
+# Cypress run artifacts (the suite itself lives in cypress/)
+/cypress/screenshots/
+/cypress/videos/
+/cypress/downloads/
+
 # PHP-CS-Fixer
 .php-cs-fixer.cache
 

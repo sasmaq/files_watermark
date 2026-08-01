@@ -174,5 +174,45 @@ pipeline {
 				}
 			}
 		}
+
+		// Mirrors .github/workflows/e2e.yml. Deliberately *not* inside a container
+		// agent and not in the parallel block above: it stands up a real Nextcloud
+		// with `docker compose`, bind-mounting the workspace into the container, so
+		// it needs the agent's own Docker rather than Docker inside a Docker agent —
+		// a bind mount from within a container agent would resolve against the host
+		// filesystem and mount the wrong (or an empty) directory.
+		//
+		// The agent therefore needs php + composer, node + npm, and docker compose on
+		// PATH, and port 8080 free while it runs.
+		stage('E2E (Cypress)') {
+			agent {
+				label 'docker'
+			}
+			steps {
+				sh 'composer install --no-dev --prefer-dist --no-progress --no-interaction'
+				sh 'npm ci'
+				sh 'npm run build'
+				sh 'docker compose up -d'
+				sh '''
+					for attempt in $(seq 1 60); do
+						if curl -sf http://localhost:8080/status.php | grep -q '"installed":true'; then
+							exit 0
+						fi
+						sleep 5
+					done
+					echo "Nextcloud did not finish installing"
+					docker compose logs --tail=100
+					exit 1
+				'''
+				sh 'docker compose exec -T -u www-data nextcloud php occ app:enable files_watermark'
+				sh 'npm run test:e2e'
+			}
+			post {
+				always {
+					archiveArtifacts artifacts: 'cypress/screenshots/**', allowEmptyArchive: true
+					sh 'docker compose down -v || true'
+				}
+			}
+		}
 	}
 }

@@ -13,7 +13,8 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.5.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-07-31, both green: **408 PHPUnit** tests and **85 Jest** tests, with
+Suites re-run 2026-08-01, all three green: **408 PHPUnit** tests, **85 Jest** tests and
+**52 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -43,13 +44,14 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 408 PHPUnit + 85 Jest, no binary-conditional skips | Cypress E2E, the full trigger matrix, static analysis |
+| [Testing](#testing) | 408 PHPUnit + 85 Jest + 52 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
-The three things standing between this and a 1.0 release are **Office support**, the
-**Cypress E2E suite**, and **release packaging**. Everything else open is a refinement — the
+The two things standing between this and a 1.0 release are **Office support** and
+**release packaging**. Everything else open is a refinement — the
 [PDF stack migration](#pdf-stack-migration-to-tc-lib-pdf), which was the one large piece of
-scheduled rework, is complete.
+scheduled rework, is complete, and so is the [Cypress E2E
+suite](#integration--e2e-cypress), which was the other.
 
 ---
 
@@ -104,9 +106,12 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 
 ### Test and CI gaps
 
-- [ ] [Cypress E2E](#integration--e2e-cypress) — nothing automated end to end
-- [ ] [The trigger × access matrix](#manual-verification-matrix) is only partly driven; every
-  cell of it has historically caught a real bug
+- [x] [Cypress E2E](#integration--e2e-cypress) — **built.** 52 tests across 10 specs, run
+  against a real Nextcloud 31, each judged on the bytes that come back rather than on the UI
+  saying it worked
+- [ ] [The trigger × access matrix](#manual-verification-matrix) — `on_share` is now driven
+  automatically through all six cells; the other three modes still are not. Every cell of it
+  has historically caught a real bug
 - [ ] [`ZipInterceptorPlugin::streamNode` drift](#open-testing) against core, re-checked by hand
   on every Nextcloud upgrade
 - [ ] [Psalm / PHPStan](#open-testing) — nothing type-checks the DAV stubs against core
@@ -416,7 +421,12 @@ share, and public-link access. This is where every delivery-time bug has been fo
 - [ ] Unit tests still missing for three archive behaviours: that the handler claims only
   `Directory` + archive-accepting GETs, that tar member size is the watermarked length, and
   that over-cap `on_share` denies while over-cap `on_download` defers to core
-- [ ] Automate the archive E2E scenarios that are currently manual
+  - the over-cap pair is now covered **end to end** instead (`06-archive-caps.cy.js` builds a
+    201-member folder and fetches it under both triggers), which is arguably where it belongs:
+    the interesting half is what the two modes do differently at delivery time. The unit-level
+    gap stands for the other two
+- [x] **Archive scenarios automated** — folder and multi-select ZIPs, on both DAV servers,
+  with every member unpacked and probed. See [Integration / E2E](#integration--e2e-cypress)
 
 ### Triggers
 
@@ -1563,15 +1573,17 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 408 PHPUnit tests and 85 Jest tests, and **no test depends on an external binary**
-any more. Two image cases still depend on the host's own PHP build (WebP, and a TrueType font
-for rotation). The DAV layer, which used to be the blind spot every delivery bug hid in, now
-has 48 of them.
+**Position:** 408 PHPUnit tests, 85 Jest tests and 52 Cypress tests, and **no test depends on
+an external binary** any more. Two image cases still depend on the host's own PHP build (WebP,
+and a TrueType font for rotation). The DAV layer, which used to be the blind spot every
+delivery bug hid in, now has 48 unit tests — and, as of this version, an end-to-end suite that
+fetches the same files through the same servers a browser does.
 
 ### Open {#open-testing}
 
-- [ ] **Cypress E2E — nothing is automated end to end.** The scenarios are listed under
-  [Integration / E2E](#integration--e2e-cypress) and are all currently driven by hand
+- [x] **Cypress E2E — built and green.** See
+  [Integration / E2E](#integration--e2e-cypress) for what it covers and what it deliberately
+  does not
 - [ ] `ZipInterceptorPlugin::streamNode` duplicates core's, and the stubs cannot catch it
   drifting from `ZipFolderPlugin`. Re-diff against core on every Nextcloud upgrade
 - [ ] Psalm or PHPStan: neither `php -l` nor php-cs-fixer does any type analysis, so the DAV
@@ -1761,23 +1773,36 @@ Scenarios driven by hand against `docker-compose.s3.yml`, to be re-run before a 
 ideally promoted to E2E — each one has caught a real bug. Cross-check results against the
 *clean* original's checksum, not just file size.
 
+Several of these have since been promoted, and are marked with the spec that took them over.
+What is left by hand is either S3-specific, blocked on a feature, or a judgement a machine
+cannot make (the Arabic UI at `dir="rtl"`).
+
 - [ ] **Trigger × access matrix.** For each of `on_demand` / `on_upload` / `on_download` /
   `on_share`: owner direct fetch, owner ZIP, recipient direct fetch, recipient ZIP,
   public-link fetch, public-link ZIP. Expected: `on_share` watermarks for everyone *except*
   the owner; `on_download` for everyone including the owner; the in-place triggers watermark
   the stored bytes so every path carries it and no interceptor engages
-  - **partially done** — `on_share` has been driven through all six cells; the other three
-    modes only through owner direct/ZIP and recipient ZIP. The remaining cells are the work
-    here, and the full grid is what belongs in E2E
-- [ ] **Tar archives** (`Accept: application/x-tar`) — broken in core itself; recheck
+  - **`on_share` is now automated through all six cells** (`04-on-share.cy.js`,
+    `05-archives.cy.js`), which is the mode where the cells differ from each other and where
+    every delivery bug so far has lived
+  - `on_download` is automated for owner direct, owner ZIP and a multi-file selection; its
+    recipient and public-link cells are not, because the interceptor takes the same path
+    there as `on_share` — a reason to expect them to pass, not evidence that they do
+  - the in-place triggers are automated for owner direct only. What they need from the other
+    cells is the *negative*: that no interceptor engages, since the watermark is already in
+    the stored bytes
+- [ ] **Tar archives** (`Accept: application/x-tar`) — broken in core itself; recheck. The E2E
+  suite asks for zip throughout for that reason; automating tar would pin core's bug
 - [ ] **Public file-drop upload** — watermarked by neither path; decide whether to cover it
-- [ ] **Large-file / many-member archive** — cross the caps and confirm `on_share` denies while
-  `on_download` degrades
+- [x] **Large-file / many-member archive** — `06-archive-caps.cy.js` builds a 201-member folder
+  and crosses `MAX_MEMBERS`: `on_share` answers 403, `on_download` degrades to core's plain
+  archive with its members clean
 - [ ] **Encrypted / password-protected PDF** through every trigger
-- [ ] **An Arabic watermark template, looked at.** Render PDF and image output with an Arabic
-  `text_template` and read the result: letters joined, right-to-left order, lam-alef ligature
-  formed, and the tile spacing not blown out by a mis-measured shaped width. Also with an
-  Arabic display name in `{username}`, and mixed Arabic + `{date}` in one template
+- [x] **An Arabic watermark template, read off the file** — `07-arabic.cy.js` asserts on the
+  delivered PDF's own glyph codes: every Arabic code unit in Presentation Forms-B, no raw
+  U+0600-block code point, and `الاختبار` arriving as **seven** glyphs rather than eight
+  because lam-alef ligates. Mixed Arabic + `{date}` covered; an Arabic *display name* is not,
+  since that needs a second account whose name the watermark then renders
 - [ ] **The admin UI under an Arabic locale** — settings page, audit log and the live preview at
   `dir="rtl"`, with the preview's text matching the rendered output rather than only looking
   plausible
@@ -1799,17 +1824,87 @@ ideally promoted to E2E — each one has caught a real bug. Cross-check results 
 
 ### Integration / E2E (Cypress)
 
-None of this exists yet.
+**52 tests across 10 specs**, run against a real Nextcloud 31 from `docker-compose.yml`, plus
+one pending test that records the [bidi bug](#open-bidi). `npm run test:e2e`; the whole run is
+about **70 seconds**. Setup, layout and the reasoning behind each probe are in
+[`cypress/README.md`](../cypress/README.md).
 
-- [ ] Upload PDF / image / Office → on-upload watermark applied **without waiting for cron**
-- [ ] On-demand apply via the file action, then Remove Watermark restores the original
-- [ ] Share a file → the recipient's download is watermarked, the owner's is not
-- [ ] The same for a public link, including the share page's inline preview
-- [ ] Folder and multi-select ZIP download → every supported member watermarked
-- [ ] Download via `/api/v1/download` → original untouched
-- [ ] The full flow on an S3-backed instance
-- [ ] Configure an Arabic template, apply on demand, and assert on the delivered file's text —
-  the one cell of the Arabic work that is worth automating rather than eyeballing
+**The rule the suite is built around: every scenario is judged on the bytes that come back.**
+Not on a spinner stopping, not on a toast, and not on the file having changed. That last one
+matters most — a watermarked file differs from its source in a hundred ways that have nothing
+to do with a watermark being drawn, so "the download differs from the upload" passes just as
+readily against a re-encode that drew nothing. Concretely:
+
+- **PDFs** are read for `/BaseFont /XXXXXX+IBMPlexSansArabic`. Every watermark this app draws
+  uses the bundled subsetted face, and nothing else puts it in a file, so its presence *is* the
+  watermark and its absence is a clean original. The same probe reads `/FontFile2`,
+  `/ToUnicode` and the page count, which is how "the text layer survives" stays asserted
+- **images** are decoded to pixels. Fixtures are a flat white field, `inkRatio` is the fraction
+  of pixels that are no longer that colour, and the clean control upload has to measure **zero**
+- **archives** are unpacked and probed member by member. This is not optional: the
+  container-gate bug produced a *valid* archive of *valid* files, every one of them the clean
+  original
+- **byte-identical** is used where it is the actual contract — the restored original after a
+  remove, and the stored file after an `on_download` fetch
+
+Delivered:
+
+- [x] **On demand** (`01-on-demand.cy.js`) — clean before, stamped after, `nc:is-watermarked`
+  over DAV, the already-watermarked skip, remove restoring a **byte-identical** original, the
+  second remove answering 422, and both the apply and the undo present in the audit log
+- [x] **On upload without waiting for cron** (`02-on-upload.cy.js`) — the assertion is made
+  immediately after the upload response, with no cron run in between, because a suite that ran
+  the job worker first would pass against the bug this covers. Both shapes: a plain PUT, and a
+  **chunked upload** that lands as a MOVE and never PUTs its final path
+- [x] **On download** (`03-on-download.cy.js`) — the owner's own fetch watermarked, two fetches
+  both watermarked (a burn would have been caught by the already-watermarked guard), the stored
+  bytes byte-identical afterwards, and `/api/v1/download` streaming a copy while leaving the
+  file alone
+- [x] **On share** (`04-on-share.cy.js`) — the recipient's download watermarked and the
+  **owner's not**, the public link through `public.php/dav`, the share page's own
+  `/s/<token>/download` (a 303 onto that endpoint, followed rather than assumed), previews
+  denied to both the recipient and the link visitor, and the owner's own previews still working
+- [x] **Archives** (`05-archives.cy.js`) — whole-folder and `files=` selections on both DAV
+  servers, an unsupported member travelling through untouched, the owner's own archive left
+  clean under `on_share`, and the regression that matters most: **"download selected" on a
+  received single-file share**, where the container is the recipient's own home and the old
+  gate shipped clean originals
+- [x] **Archive caps** (`06-archive-caps.cy.js`) — 201 members: `on_share` denies with 403,
+  `on_download` degrades to core's plain archive. Either half alone is satisfied by a bug
+- [x] **Arabic** (`07-arabic.cy.js`) — presentation forms, no raw Arabic code points, and the
+  lam-alef ligature counted in the delivered file's own glyph codes
+- [x] **Images** (`08-images.cy.js`) — ink drawn and tiled across the canvas, size preserved,
+  the blank original restored byte for byte, and a JPEG that comes back a JPEG of the same
+  dimensions
+- [x] **Admin settings page** (`09-admin-settings.cy.js`) — the Vue app mounts into the
+  server-rendered section, a saved policy survives a reload, the preview renders the template
+  rather than the raw token, and **what the form displays is what the API stored** — the one
+  failure neither side can see alone
+- [x] **File actions** (`10-files-app.cy.js`) — Apply from the row menu through the modal, the
+  badge appearing without a folder reload, the two actions mirroring so a row never offers
+  both, Remove restoring the original, and both actions disappearing when the effective trigger
+  is not `on_demand`
+
+Two decisions worth recording, because both cost time to arrive at:
+
+- **the transport is split, and it has to be.** `cy.request` serialises a body as UTF-8, so a
+  PDF uploaded through it arrives corrupt and every assertion afterwards is about the
+  corruption. Anything carrying file bytes goes through Node tasks. The app's own `/api/v1/*`
+  endpoints go the other way — through the browser session — because none of them carries
+  `#[NoCSRFRequired]`, so a basic-auth call gets HTTP 412. That is the app being right, and it
+  means the suite drives config, apply and remove exactly as the settings page does
+- **`\OC\Streamer` writes ZIP64.** A streamed archive cannot know its sizes up front, so the
+  32-bit central-directory fields are the `0xFFFF…` sentinels and the real values live in the
+  ZIP64 records. The first version of the reader followed a sentinel as an offset and seeked to
+  byte 4294967295
+
+Open:
+
+- [ ] **The full flow on an S3-backed instance.** The suite is storage-agnostic and would run
+  against `docker-compose.s3.yml` unchanged — nothing in it touches the local filesystem — but
+  nothing wires that up, in CI or by hand
+- [ ] **Office documents**, pending the renderer
+- [ ] **`{date}` under a non-English locale**, which is the open half of the Arabic work
 
 ### Linting and CI
 
@@ -1831,7 +1926,20 @@ None of this exists yet.
   (ESLint, Node 20), Jest on **Node 20 and 22**, and a `npm run build` webpack job. The build
   job is the one that matters beyond the suites: `js/` is committed, so a build that fails in
   CI while the checked-in bundle still works is the drift this catches
-- [x] `Jenkinsfile` mirrors the GitHub workflow for the internal CI
+- [x] **E2E CI** — `.github/workflows/e2e.yml` builds both halves on the runner (`composer
+  install --no-dev`, `npm ci && npm run build`), brings up `docker-compose.yml`, waits for the
+  first-run install, enables the app and runs the suite. Failure screenshots are uploaded and
+  the instance's own log is dumped, because a UI spec that fails in CI leaves nothing else
+  behind
+  - `--no-dev` is not just for speed: the dev tree is what shadowed core's Sabre once, and CI
+    should install what a release installs
+  - `npm run lint` now covers `cypress/` as well as `src/`, so the harness is held to the same
+    standard as the app
+- [x] `Jenkinsfile` mirrors the GitHub workflow for the internal CI, including the E2E stage
+  - the E2E stage is the one that **cannot** run on a container agent: it bind-mounts the
+    workspace into the Nextcloud container, and a bind mount issued from inside a Docker agent
+    resolves against the *host* path, mounting the wrong directory. It runs on the agent
+    itself and needs php, node and `docker compose` on PATH
 
 ---
 

@@ -116,6 +116,11 @@ files_watermark/
 │   └── fileAction.js
 ├── js/               # Compiled frontend assets (generated)
 ├── templates/        # PHP templates
+├── tests/            # PHPUnit suites (Unit/, plus the DAV stubs)
+├── cypress/          # End-to-end suite (see cypress/README.md)
+│   ├── e2e/          # One spec per trigger / surface
+│   ├── support/      # Login, policy, upload/download commands
+│   └── tasks/        # Node side: binary-safe HTTP, PDF/image/zip probes
 └── doc/
     └── sdd.md        # Software Development Document
 ```
@@ -174,6 +179,20 @@ Lint:
 ```bash
 npm run lint
 ```
+
+### Tests
+
+```bash
+vendor/bin/phpunit      # PHP unit tests
+npm test                # Jest, for the Vue components and the Files-app integration
+npm run test:e2e        # Cypress, against a running instance (see below)
+```
+
+The end-to-end suite drives the Docker instance described under
+[Docker (local test environment)](#docker-local-test-environment) — start it and enable the app
+first, then `npm run test:e2e`. It judges each scenario on the delivered file's bytes rather
+than on the UI: what it covers, and how it tells a watermarked file from a clean one, is in
+[`cypress/README.md`](cypress/README.md).
 
 ## API Endpoints
 

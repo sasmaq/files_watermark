@@ -1,0 +1,84 @@
+name: E2E
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  cypress:
+    runs-on: ubuntu-latest
+    name: Cypress (Nextcloud 31)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The container runs the *compiled* app off the bind mount, so both builds
+      # have to happen on the runner before Nextcloud starts. `--no-dev` because
+      # the dev tree is what shadowed core's Sabre once — see the autoloader note
+      # in doc/tasks.md.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: bcmath
+          coverage: none
+
+      - name: Install PHP dependencies
+        run: composer install --no-dev --prefer-dist --no-progress --no-interaction
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build the frontend
+        run: npm run build
+
+      - name: Start Nextcloud
+        run: docker compose up -d
+
+      - name: Wait for the first-run install
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -sf http://localhost:8080/status.php | grep -q '"installed":true'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Nextcloud did not finish installing"
+          docker compose logs --tail=100
+          exit 1
+
+      - name: Enable the app
+        run: docker compose exec -T -u www-data nextcloud php occ app:enable files_watermark
+
+      - name: Run the E2E suite
+        run: npm run test:e2e
+
+      # Screenshots are only written for failures, and they are the only record of
+      # what a UI spec saw.
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+          if-no-files-found: ignore
+
+      - name: Nextcloud log
+        if: failure()
+        run: docker compose exec -T nextcloud tail -n 200 /var/www/html/data/nextcloud.log || true
