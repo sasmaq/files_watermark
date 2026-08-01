@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Dav;
 use OC\Streamer;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\Node as DavNode;
+use OCA\FilesWatermark\Service\ArchiveLimits;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\Files\Events\BeforeZipCreatedEvent;
@@ -40,22 +41,14 @@ use Sabre\HTTP\ResponseInterface;
  *
  * `on_share` must never leak a clean original, so members are rendered *before* any bytes
  * go out: a failed render can then abort with a real 403 instead of a truncated archive.
- * That costs a bounded amount of temp disk, which is what {@see MAX_MEMBERS} and
- * {@see MAX_BYTES} cap. `on_download` keeps its best-effort contract and degrades to core's
- * plain archive when the caps are exceeded.
+ * That costs a bounded amount of temp disk, which is what {@see ArchiveLimits} caps —
+ * defaults an admin can raise or lower per host. `on_download` keeps its best-effort
+ * contract and degrades to core's plain archive when the caps are exceeded.
  *
  * Registered on both DAV servers, with $publicContext set on the public one — see
  * {@see DownloadInterceptorPlugin} for why that flag is needed.
  */
 class ZipInterceptorPlugin extends ServerPlugin {
-
-	/**
-	 * Ceilings on the pre-render pass. A folder download can hold arbitrarily many files,
-	 * and each watermarked member costs one temp copy plus a full render; without a cap a
-	 * single request could exhaust CPU and the temp filesystem.
-	 */
-	private const MAX_MEMBERS = 200;
-	private const MAX_BYTES = 268435456; // 256 MiB of source content
 
 	private ?Server $server = null;
 	private bool $handled = false;
@@ -68,6 +61,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		private IDateTimeZone $dateTimeZone,
 		private IEventDispatcher $eventDispatcher,
 		private LoggerInterface $logger,
+		private ArchiveLimits $limits,
 		private bool $publicContext = false,
 	) {
 	}
@@ -294,6 +288,12 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		$count = 0;
 		$bytes = 0;
 
+		// Read once per request, not once per member: the ceilings must not move
+		// underneath a walk that is already half-rendered, and a misconfigured value
+		// should warn once rather than once per file.
+		$maxMembers = $this->limits->maxMembers();
+		$maxBytes = $this->limits->maxBytes();
+
 		foreach ($this->flatten($content) as $file) {
 			$trigger = $this->watermarkService->deliveryTriggerFor($file, $this->publicContext);
 			if ($trigger === null || !$this->watermarkService->isSupported($file->getMimeType())) {
@@ -303,7 +303,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 			$count++;
 			$bytes += max(0, $file->getSize());
-			if ($count > self::MAX_MEMBERS || $bytes > self::MAX_BYTES) {
+			if ($count > $maxMembers || $bytes > $maxBytes) {
 				if ($trigger === 'on_share') {
 					throw new WatermarkRequiredException($file->getPath());
 				}

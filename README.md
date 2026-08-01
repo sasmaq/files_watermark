@@ -194,6 +194,32 @@ first, then `npm run test:e2e`. It judges each scenario on the delivered file's 
 than on the UI: what it covers, and how it tells a watermarked file from a clean one, is in
 [`cypress/README.md`](cypress/README.md).
 
+## Server settings (`occ`)
+
+The watermark itself is configured in the admin UI. These two are host tuning rather than
+policy — they bound what one folder download may cost, and they change nothing about the
+watermark that comes out, so they live in the app config instead of on the form:
+
+| Key | Default | What it bounds |
+| --- | --- | --- |
+| `archive_max_members` | `200` | Files rendered for a single folder / multi-select download |
+| `archive_max_bytes` | `268435456` (256 MiB) | Source bytes rendered for one such download |
+
+```bash
+occ config:app:set files_watermark archive_max_members --value 500
+occ config:app:set files_watermark archive_max_bytes   --value 1073741824
+occ config:app:delete files_watermark archive_max_members   # back to the default
+```
+
+An archive is rendered member by member **before** any bytes are sent — that is what lets a
+share that must be watermarked fail with a clean 403 instead of a truncated download — so
+these bound the temp disk and CPU one request can use. Past the cap, `on_share` denies and
+`on_download` falls back to a plain unwatermarked archive.
+
+Raise them if large folder downloads are being denied or served unwatermarked and the server
+has the temp space; lower them on a small host. There is no unlimited setting: a value below
+`1` is refused and the default used, with a warning in the log.
+
 ## API Endpoints
 
 | Method | Path | Description |

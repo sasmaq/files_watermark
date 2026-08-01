@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\EventListener;
 
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
+use OCA\FilesWatermark\Service\ArchiveLimits;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\EventDispatcher\Event;
@@ -66,6 +67,7 @@ class SabrePublicPluginAddListener implements IEventListener {
 			$this->container->get(IDateTimeZone::class),
 			$this->container->get(IEventDispatcher::class),
 			$this->container->get(LoggerInterface::class),
+			$this->container->get(ArchiveLimits::class),
 			true,
 		));
 	}

@@ -13,8 +13,8 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.5.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-08-01, all three green: **417 PHPUnit** tests, **85 Jest** tests and
-**52 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
+Suites re-run 2026-08-01, all three green: **426 PHPUnit** tests, **85 Jest** tests and
+**53 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -35,7 +35,7 @@ has any — see [No external binaries](#no-external-binaries).
 | --- | --- | --- |
 | [1. Renderers](#1-renderers-goal-1) | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started; flattening removed | Office pipeline, encrypted PDFs |
 | [2. Watermark content](#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
-| [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path | Config-driven caps, tar (core bug) |
+| [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path; caps are `occ` settings | Tar (core bug), file-drop uploads |
 | [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | **Complete.** Settings, audit log, apply/remove actions and the watermarked badge all done; group *and* per-user overrides removed — one server-wide policy | — |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
 | [Arabic and RTL](#arabic-and-rtl-support) | **Both halves done** — watermark shaped and reordered; UI translated (130 strings), RTL-clean, preview direction pinned | `{date}` localisation, a real Arabic instance, a renderer bidi bug this surfaced |
@@ -44,7 +44,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 417 PHPUnit + 85 Jest + 52 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
+| [Testing](#testing) | 426 PHPUnit + 85 Jest + 53 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -407,7 +407,31 @@ share, and public-link access. This is where every delivery-time bug has been fo
 - [ ] **Tar archives are broken in core.** `Accept: application/x-tar` yields a truncated
   archive, and it reproduces identically on the untouched core path, so it is not caused by
   this app. Browsers request zip. Worth an upstream report
-- [ ] Make `MAX_MEMBERS` / `MAX_BYTES` configurable rather than class constants
+- [x] **Archive caps are configurable** — `occ config:app:set files_watermark
+  archive_max_members` / `archive_max_bytes`, defaults unchanged at 200 / 256 MiB. The two
+  constants moved into `ArchiveLimits`, which the plugin reads **once per request** rather
+  than per member: a ceiling must not move underneath a walk that is already half-rendered,
+  and a bad value should warn once, not once per file
+  - **app config rather than the policy table, deliberately.** These are host tuning — sized
+    by the temp filesystem and how long a request may take — and they change nothing about the
+    watermark that comes out. Putting them on the policy would have meant either two more
+    fields on a form about appearance, or two more columns with no way to set them. The
+    second is exactly what [group and per-user overrides](#open-4) turned out to be, and it is
+    the mistake this app has already had to migrate its way out of twice
+  - **there is no "unlimited".** A value below 1 is refused and the default used, with a
+    warning. The cap is not a preference: it is the bound that keeps the fail-closed
+    pre-render from filling the temp filesystem, and `0` reads far too much like "off" for a
+    setting that would let one folder download fill a disk
+  - every read degrades to the default rather than throwing, including a value an admin
+    stored with `--type=string`. This runs on the delivery path, and a typo in an `occ`
+    command becoming an HTTP 500 on every folder download is the shape of bug this app
+    shipped once already, from a mistyped system tag
+  - **the key names are pinned end to end.** The unit tests stub `IAppConfig`, so they prove
+    the plugin honours whatever `ArchiveLimits` returns and prove nothing about the key an
+    admin types — a rename on either side would leave them green and the setting inert.
+    `06-archive-caps.cy.js` sets it with a real `occ config:app:set` against a
+    three-member folder (far under the default), watches the same fetch go 200 → 403 → 200
+    as the value is set and deleted, and is the only test in either suite that can see that
 - [ ] Decide the audit granularity for archives: currently one `watermark_log` row per
   watermarked member. Confirm that is wanted for large archives, or batch it
 - [ ] Extend `DownloadController` (`/api/v1/download`) to accept a folder path, or document
@@ -1591,10 +1615,10 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 417 PHPUnit tests, 85 Jest tests and 52 Cypress tests, and **no test depends on
+**Position:** 426 PHPUnit tests, 85 Jest tests and 53 Cypress tests, and **no test depends on
 an external binary** any more. Two image cases still depend on the host's own PHP build (WebP,
 and a TrueType font for rotation). The DAV layer, which used to be the blind spot every
-delivery bug hid in, now has 57 unit tests — and, as of this version, an end-to-end suite that
+delivery bug hid in, now has 60 unit tests — and, as of this version, an end-to-end suite that
 fetches the same files through the same servers a browser does.
 
 ### Open {#open-testing}
@@ -1622,7 +1646,7 @@ fetches the same files through the same servers a browser does.
 
 ### DAV plugin test harness
 
-`lib/Dav/` has 57 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
+`lib/Dav/` has 60 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
 every delivery-time bug found so far lived in exactly that untested layer, and each was caught
 only by driving a real instance by hand:
 
@@ -1667,7 +1691,8 @@ only by driving a real instance by hand:
     - `OC\Streamer` records its calls to a static log, because `ZipInterceptorPlugin`
       constructs it directly and it cannot be injected as a mock. That log is what makes the
       archive's *shape* — member set, names, sizes, bytes — assertable
-- [x] `ZipInterceptorPluginTest` (27) — **regression: gate per member, never per container**;
+- [x] `ZipInterceptorPluginTest` (30) — **regression: gate per member, never per container**;
+  a configured cap moving the ceiling in both directions;
   archive naming and root path for whole-folder vs selection; `files=` + `X-NC-Files` parsing;
   `BeforeZipCreatedEvent` veto honoured; over-cap → 403 under `on_share` but plain archive
   under `on_download`, for both the byte cap and the member cap; defer to core when nothing was
@@ -1727,6 +1752,15 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   FreeType-usable TrueType file
 - [x] `LegacyImagePathCleanupTest` (2) — which `image_path` rows the migration clears, and
   that no write is issued when every stored reference is valid
+- [x] `ArchiveLimitsTest` (6) — the shipped defaults when nothing is configured, a configured
+  value used, the keys read under the app's own id, a value below 1 refused with a warning,
+  and a value stored with the wrong type degrading to the default instead of throwing on the
+  delivery path
+  - the caps were mutation-tested against the plugin, and **one of the new tests failed the
+    check**: the lowered-byte-cap case passed with the configured value ignored, because with
+    no render stubbed the plugin was deferring to core for having nothing to substitute rather
+    than for being over the cap. It now stubs the render and asserts the control — same folder,
+    default cap, archive claimed — which is the version the mutation kills
 - [x] `ImageWatermarkerTest` (29) — JPEG / PNG / WEBP output, opacity, rotation, **tiles never
   overlapping at any rotation**, and the
   **engine-selection matrix**: GD chosen for PNG/JPEG/WebP even with Imagick installed, Imagick
@@ -1893,7 +1927,10 @@ Delivered:
   received single-file share**, where the container is the recipient's own home and the old
   gate shipped clean originals
 - [x] **Archive caps** (`06-archive-caps.cy.js`) — 201 members: `on_share` denies with 403,
-  `on_download` degrades to core's plain archive. Either half alone is satisfied by a bug
+  `on_download` degrades to core's plain archive. Either half alone is satisfied by a bug.
+  Plus the one assertion no unit test can make: a cap **set with a real `occ` command** on a
+  three-member folder, watched 200 → 403 → 200 as the value is set and deleted, which is what
+  pins the key name an admin types to the key the code reads
 - [x] **Arabic** (`07-arabic.cy.js`) — presentation forms, no raw Arabic code points, and the
   lam-alef ligature counted in the delivered file's own glyph codes
 - [x] **Images** (`08-images.cy.js`) — ink drawn and tiled across the canvas, size preserved,

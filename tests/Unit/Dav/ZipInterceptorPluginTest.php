@@ -8,11 +8,13 @@ use OC\Streamer;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
+use OCA\FilesWatermark\Service\ArchiveLimits;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\Files\Events\BeforeZipCreatedEvent;
 use OCP\Files\File;
 use OCP\Files\Folder;
+use OCP\IAppConfig;
 use OCP\IDateTimeZone;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -63,16 +65,34 @@ class ZipInterceptorPluginTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function plugin(bool $publicContext = false): ZipInterceptorPlugin {
+	private function plugin(bool $publicContext = false, ?ArchiveLimits $limits = null): ZipInterceptorPlugin {
 		$plugin = new ZipInterceptorPlugin(
 			$this->watermarkService,
 			$this->createMock(IDateTimeZone::class),
 			$this->eventDispatcher,
 			$this->createMock(LoggerInterface::class),
+			$limits ?? $this->limits(),
 			$publicContext,
 		);
 		$plugin->initialize($this->server);
 		return $plugin;
+	}
+
+	/**
+	 * A real {@see ArchiveLimits} over a stubbed app config, so the caps the plugin sees
+	 * are the ones an `occ config:app:set` would produce rather than a mocked answer.
+	 */
+	private function limits(?int $maxMembers = null, ?int $maxBytes = null): ArchiveLimits {
+		$stored = array_filter([
+			ArchiveLimits::KEY_MAX_MEMBERS => $maxMembers,
+			ArchiveLimits::KEY_MAX_BYTES => $maxBytes,
+		], static fn (?int $value): bool => $value !== null);
+
+		$appConfig = $this->createMock(IAppConfig::class);
+		$appConfig->method('getValueInt')
+			->willReturnCallback(static fn (string $app, string $key, int $default): int => $stored[$key] ?? $default);
+
+		return new ArchiveLimits($appConfig, $this->createMock(LoggerInterface::class));
 	}
 
 	private function file(
@@ -383,6 +403,7 @@ class ZipInterceptorPluginTest extends TestCase {
 			$this->createMock(IDateTimeZone::class),
 			$this->eventDispatcher,
 			$this->createMock(LoggerInterface::class),
+			$this->limits(),
 		);
 		$plugin->initialize($this->server);
 
@@ -423,6 +444,76 @@ class ZipInterceptorPluginTest extends TestCase {
 	// ---------------------------------------------------------------------
 	// Caps
 	// ---------------------------------------------------------------------
+
+	/**
+	 * The caps are configuration, so the tests below fix them by hand — but that is only
+	 * worth anything if a *configured* value actually moves the ceiling. Both directions
+	 * are asserted, because a plugin that ignored the config and kept its old constants
+	 * would still pass every default-valued test in this file.
+	 */
+	public function testALoweredMemberCapDeniesAnArchiveTheDefaultWouldAllow(): void {
+		$children = [
+			$this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf', size: 1),
+			$this->file(2, '/bob/files/Shared/b.pdf', 'b.pdf', size: 1),
+			$this->file(3, '/bob/files/Shared/c.pdf', 'c.pdf', size: 1),
+		];
+		$folder = $this->folder('/bob/files/Shared', 'Shared', $children);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(fn () => $this->renderedCopy());
+
+		// Three members, and the host allows two.
+		$this->expectException(Forbidden::class);
+		$this->plugin(limits: $this->limits(maxMembers: 2))
+			->httpGet($this->zipRequest(), new Response());
+	}
+
+	public function testARaisedMemberCapAllowsAnArchiveTheDefaultWouldRefuse(): void {
+		$children = [];
+		for ($i = 1; $i <= 201; $i++) {
+			$children[] = $this->file($i, "/bob/files/Shared/f$i.pdf", "f$i.pdf", size: 1);
+		}
+		$folder = $this->folder('/bob/files/Shared', 'Shared', $children);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(fn () => $this->renderedCopy());
+
+		// 201 members is a 403 at the default of 200 — see the test below.
+		$handled = $this->plugin(limits: $this->limits(maxMembers: 250))
+			->httpGet($this->zipRequest(), new Response());
+
+		$this->assertFalse($handled, 'the raised cap was ignored');
+		$this->assertCount(201, Streamer::members());
+	}
+
+	public function testALoweredByteCapDegradesUnderOnDownload(): void {
+		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf', size: 1024);
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_download');
+		// Stubbed deliberately: without a render to hand back, the plugin would defer to
+		// core for having nothing to substitute, and this test would pass at any cap.
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(fn () => $this->renderedCopy());
+
+		// 1 KiB is nowhere near the 256 MiB default, so this can only degrade if the
+		// configured ceiling is the one being read.
+		$this->assertTrue(
+			$this->plugin(limits: $this->limits(maxBytes: 512))->httpGet($this->zipRequest(), new Response()),
+			'the lowered byte cap was ignored',
+		);
+		$this->assertSame([], Streamer::members());
+
+		// The control: the same folder at the default cap is claimed and rebuilt.
+		Streamer::reset();
+		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
+		$this->assertCount(1, Streamer::members());
+	}
 
 	public function testExceedingTheByteCapDeniesUnderOnShare(): void {
 		// One member over MAX_BYTES (256 MiB) is enough to trip the cap.

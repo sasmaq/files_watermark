@@ -22,7 +22,9 @@ npm run test:e2e:open   # interactive
 ```
 
 `NC_URL`, `NC_ADMIN` and `NC_ADMIN_PASSWORD` override the target (`http://localhost:8080`,
-`admin`, `admin`).
+`admin`, `admin`). `NC_OCC` overrides how `occ` is invoked — it defaults to
+`docker compose exec -T -u www-data nextcloud php occ`, so a run against a real host wants
+something like `NC_OCC="sudo -u www-data php /var/www/nextcloud/occ"`.
 
 Re-running is safe: every spec recreates its own folder, users and shares, and puts
 the server-wide policy back to `on_demand` when it finishes.
@@ -42,7 +44,7 @@ effect — a suite re-run inside that window is testing the code you just replac
 | `03-on-download` | per-fetch rendering for the owner, stored bytes untouched, `/api/v1/download` |
 | `04-on-share` | recipient vs owner, public DAV, the share page's download link, preview blocking |
 | `05-archives` | folder and multi-select ZIPs on both DAV servers, unsupported members, the received single-file share |
-| `06-archive-caps` | over-cap `on_share` denies, over-cap `on_download` degrades |
+| `06-archive-caps` | over-cap `on_share` denies, over-cap `on_download` degrades, and a cap set with a real `occ` command |
 | `07-arabic` | shaping and the lam-alef ligature, read off the delivered PDF |
 | `08-images` | ink on the canvas, size preserved, JPEG round trip |
 | `09-admin-settings` | the settings page mounts, persists, and previews what it saves |
