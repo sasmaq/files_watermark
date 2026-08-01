@@ -18,6 +18,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Sabre\DAV\Exception\Forbidden;
+use Sabre\DAV\Exception\NotFound;
 use Sabre\DAV\Server;
 use Sabre\DAV\Tree;
 use Sabre\HTTP\Request;
@@ -162,19 +163,50 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->assertSame('MY-ORIGINAL', $members['/Shared/mine.pdf']['contents']);
 	}
 
-	public function testSubstitutedMemberReportsTheWatermarkedSize(): void {
-		// Tar writes the size up front, so a stale original size corrupts the archive.
-		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf', 'ORIGINAL', size: 8);
-		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
+	/**
+	 * Every member's declared size must be the size of the bytes that member actually
+	 * carries — the watermarked length for a substituted member, its own for one
+	 * streamed untouched.
+	 *
+	 * **Tar is the case this exists for**, and it is why the archive type is a
+	 * parameter rather than always zip: `TarStreamer` writes the size into the member
+	 * header *before* the bytes, so a stale original size produces an archive that is
+	 * structurally corrupt from that member onwards. `ZipStreamer` derives the size
+	 * while streaming and would forgive the same mistake, so a zip-only test proves
+	 * nothing about the format that cannot forgive it.
+	 *
+	 * @dataProvider archiveTypeProvider
+	 */
+	public function testEachMemberDeclaresTheSizeOfTheBytesItCarries(string $accept, bool $preferTar): void {
+		$substituted = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf', 'ORIGINAL', size: 8);
+		$untouched = $this->file(2, '/bob/files/Shared/b.pdf', 'b.pdf', 'PLAIN-ORIGINAL', size: 14);
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$substituted, $untouched]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->watermarkService->method('deliveryTriggerFor')
+			->willReturnCallback(static fn ($node) => $node->getId() === 1 ? 'on_share' : null);
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturn($this->renderedCopy('WATERMARKED'));
 
-		$this->plugin()->httpGet($this->zipRequest(), new Response());
+		$request = $this->zipRequest();
+		$request->setHeader('Accept', $accept);
+		$this->plugin()->httpGet($request, new Response());
 
-		$this->assertSame(strlen('WATERMARKED'), Streamer::members()['/Shared/a.pdf']['size']);
+		$this->assertSame($preferTar, Streamer::$constructed[0]['preferTar'], 'wrong archive format');
+
+		$members = Streamer::members();
+		$this->assertSame(strlen('WATERMARKED'), $members['/Shared/a.pdf']['size']);
+		// The other half, and the one a "always report filesize(tmp)" bug would break:
+		// a member nobody rendered keeps its own size, not the last temp copy's.
+		$this->assertSame(14, $members['/Shared/b.pdf']['size']);
+	}
+
+	/** @return array<string, array{string, bool}> */
+	public static function archiveTypeProvider(): array {
+		return [
+			'zip' => ['application/zip', false],
+			'tar' => ['application/x-tar', true],
+		];
 	}
 
 	// ---------------------------------------------------------------------
@@ -255,12 +287,77 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->assertFalse($this->plugin()->httpGet($request, new Response()));
 	}
 
-	public function testNonArchiveRequestIsLeftToCore(): void {
-		$folder = $this->folder('/bob/files/Shared', 'Shared', []);
-		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+	// ---------------------------------------------------------------------
+	// What the handler claims. It sits on `method:GET` ahead of core, so every
+	// GET on the server passes through it, and anything it claims by mistake is
+	// a request core never gets to answer.
+	// ---------------------------------------------------------------------
 
-		// A plain GET on a directory is not an archive request.
-		$this->assertTrue($this->plugin()->httpGet(new Request('GET', '/files/bob/Shared'), new Response()));
+	/**
+	 * Only an archive-accepting GET is claimed — and the negative rows are set up
+	 * with a member that *would* be substituted, so "not claimed" cannot pass merely
+	 * because there was no work to do.
+	 *
+	 * @dataProvider acceptProvider
+	 */
+	public function testOnlyArchiveAcceptingGetsAreClaimed(?string $accept, ?bool $preferTar): void {
+		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
+
+		$request = new Request('GET', '/files/bob/Shared');
+		if ($accept !== null) {
+			$request->setHeader('Accept', $accept);
+		}
+
+		$handled = $this->plugin()->httpGet($request, new Response()) === false;
+
+		$this->assertSame($preferTar !== null, $handled, 'the request was claimed by the wrong plugin');
+		if ($preferTar === null) {
+			$this->assertSame([], Streamer::$constructed, 'an archive was built for a non-archive request');
+			return;
+		}
+		$this->assertSame($preferTar, Streamer::$constructed[0]['preferTar']);
+	}
+
+	/** @return array<string, array{?string, ?bool}> */
+	public static function acceptProvider(): array {
+		return [
+			// The shorthands are what core's own `?accept=` links carry.
+			'zip' => ['application/zip', false],
+			'zip shorthand' => ['zip', false],
+			'tar' => ['application/x-tar', true],
+			'tar shorthand' => ['tar', true],
+			// A browser opening the folder, and a client that states nothing at all.
+			'a page load' => ['text/html,application/xhtml+xml', null],
+			'no Accept header' => [null, null],
+		];
+	}
+
+	/**
+	 * A GET on a *file* belongs to `DownloadInterceptorPlugin`. Claiming it here would
+	 * hand every single-file download to the archive builder.
+	 */
+	public function testSingleFileGetIsLeftToCore(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->createMock(DavFile::class));
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+
+		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
+		$this->assertSame([], Streamer::$constructed);
+	}
+
+	/**
+	 * An unresolvable path is core's 404 to produce. Running ahead of it means this
+	 * plugin sees requests for paths that do not exist.
+	 */
+	public function testAnUnresolvablePathIsLeftToCore(): void {
+		$this->tree->method('getNodeForPath')->willThrowException(new NotFound());
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+
+		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
 	}
 
 	public function testMalformedMemberFilterIsLeftToCore(): void {
@@ -350,6 +447,39 @@ class ZipInterceptorPluginTest extends TestCase {
 		// Best-effort trigger: hand back to core rather than failing the download.
 		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
 		$this->assertSame([], Streamer::members());
+	}
+
+	/**
+	 * The member cap needs its own degradation test, and not because it is symmetrical
+	 * with the byte cap — because it is not reached the same way. The byte cap trips on
+	 * `getSize()` before anything is rendered; the member cap trips **mid-render**, with
+	 * temp copies already on disk. Falling back to core there has to clean them up, or a
+	 * best-effort download leaves 200 plaintext copies of user content in the temp dir.
+	 */
+	public function testExceedingTheMemberCapDegradesAndCleansUpUnderOnDownload(): void {
+		$children = [];
+		for ($i = 1; $i <= 201; $i++) {
+			$children[] = $this->file($i, "/bob/files/Shared/f$i.pdf", "f$i.pdf", size: 1);
+		}
+		$folder = $this->folder('/bob/files/Shared', 'Shared', $children);
+
+		$rendered = [];
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_download');
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(function () use (&$rendered) {
+				$path = $this->renderedCopy();
+				$rendered[] = $path;
+				return $path;
+			});
+
+		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
+		$this->assertSame([], Streamer::members(), 'a partial archive was streamed');
+
+		$this->assertNotEmpty($rendered, 'nothing was rendered, so the cap was hit too early to prove anything');
+		foreach ($rendered as $path) {
+			$this->assertFileDoesNotExist($path, 'a temp copy outlived the abandoned render');
+		}
 	}
 
 	public function testExceedingTheMemberCapDeniesUnderOnShare(): void {

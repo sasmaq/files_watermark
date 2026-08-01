@@ -13,7 +13,7 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.5.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-08-01, all three green: **408 PHPUnit** tests, **85 Jest** tests and
+Suites re-run 2026-08-01, all three green: **417 PHPUnit** tests, **85 Jest** tests and
 **52 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
@@ -44,7 +44,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 408 PHPUnit + 85 Jest + 52 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
+| [Testing](#testing) | 417 PHPUnit + 85 Jest + 52 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -418,13 +418,31 @@ share, and public-link access. This is where every delivery-time bug has been fo
   whether to attribute the burn to the **share owner** (the only identity available at drop
   time, and the one the identity tokens would then render), or to leave file-drop out of scope and
   say so in the README. Doing neither is what makes it a gap
-- [ ] Unit tests still missing for three archive behaviours: that the handler claims only
-  `Directory` + archive-accepting GETs, that tar member size is the watermarked length, and
-  that over-cap `on_share` denies while over-cap `on_download` defers to core
-  - the over-cap pair is now covered **end to end** instead (`06-archive-caps.cy.js` builds a
-    201-member folder and fetches it under both triggers), which is arguably where it belongs:
-    the interesting half is what the two modes do differently at delivery time. The unit-level
-    gap stands for the other two
+- [x] **The three missing archive unit tests are written** — and one of the three turned out
+  to be half-written already, which is why the item is worth reading rather than ticking:
+  - **the handler claims only `Directory` + archive-accepting GETs.** It sits on `method:GET`
+    ahead of core, so *every* GET on the server passes through it and anything it claims by
+    mistake is a request core never gets to answer. Now driven by a provider: `application/zip`
+    and `application/x-tar` claimed along with core's own `zip` / `tar` shorthands, a browser
+    page load and a header-less GET not — each negative row set up with a member that **would**
+    have been substituted, so "not claimed" cannot pass merely because there was no work to do.
+    Plus a GET on a *file* (that is `DownloadInterceptorPlugin`'s) and an unresolvable path
+    (that is core's 404), both left alone
+  - **tar member size.** A test of this name existed and drove **zip**, which is the one format
+    that cannot fail it: `ZipStreamer` derives the size while streaming, `TarStreamer` writes it
+    into the member header before the bytes. It is now parameterised over both, and asserts the
+    other half too — that a member nobody rendered declares *its own* size rather than the last
+    temp copy's
+  - **over-cap `on_share` denies / `on_download` defers.** Already covered for the byte cap in
+    both directions, and for the member cap under `on_share`. What was genuinely missing was
+    the member cap **degrading**, and it is not symmetrical with the byte cap: the byte cap
+    trips on `getSize()` before anything is rendered, the member cap trips *mid-render* with
+    temp copies already on disk. The test asserts they are cleaned up, since otherwise a
+    best-effort download leaves 200 plaintext copies of user content in the temp dir
+  - all six are **mutation-tested**: dropping the `DavDirectory` guard, dropping the
+    archive-type guard, declaring the original size for a substituted member, declaring a temp
+    size for an untouched one, skipping the cleanup on the degrade path, and always building a
+    zip each fail exactly the rows that name them
 - [x] **Archive scenarios automated** — folder and multi-select ZIPs, on both DAV servers,
   with every member unpacked and probed. See [Integration / E2E](#integration--e2e-cypress)
 
@@ -1573,10 +1591,10 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 408 PHPUnit tests, 85 Jest tests and 52 Cypress tests, and **no test depends on
+**Position:** 417 PHPUnit tests, 85 Jest tests and 52 Cypress tests, and **no test depends on
 an external binary** any more. Two image cases still depend on the host's own PHP build (WebP,
 and a TrueType font for rotation). The DAV layer, which used to be the blind spot every
-delivery bug hid in, now has 48 unit tests — and, as of this version, an end-to-end suite that
+delivery bug hid in, now has 57 unit tests — and, as of this version, an end-to-end suite that
 fetches the same files through the same servers a browser does.
 
 ### Open {#open-testing}
@@ -1604,7 +1622,7 @@ fetches the same files through the same servers a browser does.
 
 ### DAV plugin test harness
 
-`lib/Dav/` has 48 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
+`lib/Dav/` has 57 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
 every delivery-time bug found so far lived in exactly that untested layer, and each was caught
 only by driving a real instance by hand:
 
@@ -1649,12 +1667,17 @@ only by driving a real instance by hand:
     - `OC\Streamer` records its calls to a static log, because `ZipInterceptorPlugin`
       constructs it directly and it cannot be injected as a mock. That log is what makes the
       archive's *shape* — member set, names, sizes, bytes — assertable
-- [x] `ZipInterceptorPluginTest` (18) — **regression: gate per member, never per container**;
+- [x] `ZipInterceptorPluginTest` (27) — **regression: gate per member, never per container**;
   archive naming and root path for whole-folder vs selection; `files=` + `X-NC-Files` parsing;
   `BeforeZipCreatedEvent` veto honoured; over-cap → 403 under `on_share` but plain archive
-  under `on_download`; defer to core when nothing was substituted
+  under `on_download`, for both the byte cap and the member cap; defer to core when nothing was
+  substituted; **what the handler claims** (archive-accepting GETs on a `Directory`, and
+  nothing else); and each member declaring the size of the bytes it actually carries, asserted
+  under tar as well as zip
   - the per-member gate was **mutation-tested**: reinstating the old container gate makes the
-    regression test fail, so the guard is real rather than merely green
+    regression test fail, so the guard is real rather than merely green. So were the six
+    behaviours added later — see the archive-unit-test note under
+    [Delivery and triggers](#open-3)
 - [x] `UploadWatermarkPluginTest` (12) — **regression: `afterMethod:MOVE` is hooked**, since
   chunked uploads never PUT their final path and a PUT-only hook silently skips every large
   file; job removed only on success and left queued on failure; no session, wrong trigger,
