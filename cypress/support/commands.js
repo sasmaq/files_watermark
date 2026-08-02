@@ -82,6 +82,9 @@ Cypress.Commands.add('wmSetPolicy', (policy = {}) => {
 			rotation: 45,
 			mimeTypes: null,
 			folderTag: null,
+			// Sent explicitly, matching the shipped default. A spec that wants delivery
+			// rows has to ask for them, exactly as an admin does.
+			logDelivery: false,
 			...policy,
 		})
 	})

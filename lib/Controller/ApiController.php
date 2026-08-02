@@ -91,6 +91,7 @@ class ApiController extends Controller {
 		string $trigger = 'on_demand',
 		?string $mimeTypes = null,
 		?string $folderTag = null,
+		bool $logDelivery = false,
 		?int $id = null,
 	): DataResponse {
 
@@ -214,6 +215,10 @@ class ApiController extends Controller {
 		$config->setTrigger($trigger);
 		$config->setMimeTypes($mimeTypes);
 		$config->setFolderTag($folderTag);
+		// Delivery triggers render per fetch, so recording them is opt-in — see the
+		// column's own note in Version1007Date20260801120000. Nothing to validate: it is
+		// a boolean, and the in-place rows it does not govern are written regardless.
+		$config->setLogDelivery($logDelivery);
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));
 
 		if ($id !== null) {

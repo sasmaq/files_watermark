@@ -194,6 +194,32 @@ first, then `npm run test:e2e`. It judges each scenario on the delivered file's 
 than on the UI: what it covers, and how it tells a watermarked file from a clean one, is in
 [`cypress/README.md`](cypress/README.md).
 
+## The activity log
+
+Every watermark **applied to or removed from a file** is recorded, always. Those entries are
+not only history: they are how the Files list knows to show the "watermarked" badge, and how
+the app avoids stamping a file twice.
+
+**Downloads are not recorded unless you ask for them.** `on_download` and `on_share` render a
+watermarked copy on *every fetch*, so recording them writes one entry per file per download —
+including every file inside a downloaded folder — and nothing expires on its own. Turn it on
+under **Settings → Administration → Watermark → When to apply** with *"Record every download
+in the activity log"*; the option appears only for those two triggers, since it does nothing
+for the others.
+
+### Pruning old entries
+
+```bash
+occ files_watermark:prune-log                  # older than 90 days
+occ files_watermark:prune-log --days 30        # older than 30 days
+occ files_watermark:prune-log --all            # every download entry, any age
+occ files_watermark:prune-log --all --dry-run  # what would go, and nothing else
+```
+
+It removes **download entries only** — there is no option to take the apply/remove entries,
+because those are what the watermarked badge is drawn from. Retention shortens the history of
+who downloaded what; it never makes the app forget that a file is already watermarked.
+
 ## Server settings (`occ`)
 
 The watermark itself is configured in the admin UI. These two are host tuning rather than

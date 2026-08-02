@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Migration;
 use OCA\FilesWatermark\Migration\Version1003Date20260730120000;
 use OCA\FilesWatermark\Migration\Version1005Date20260731140000;
 use OCA\FilesWatermark\Migration\Version1006Date20260731160000;
+use OCA\FilesWatermark\Migration\Version1007Date20260801120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -43,7 +44,23 @@ use PHPUnit\Framework\TestCase;
  */
 class SchemaConvergenceTest extends TestCase {
 
+	/**
+	 * Ordered, because that is what a fresh install produces and what an upgraded one has
+	 * to match: `log_delivery` is last because 1007 appends it to a table the earlier
+	 * steps already built.
+	 */
 	private const EXPECTED_CONFIG_COLUMNS = [
+		'id', 'type', 'text_template', 'image_path', 'position',
+		'opacity', 'font_size', 'color', 'rotation', 'trigger', 'mime_types', 'folder_tag',
+		'created_at', 'updated_at', 'log_delivery',
+	];
+
+	/**
+	 * What the pre-1007 states are seeded with — every expected column *except* the one
+	 * 1007 adds. Seeding `log_delivery` too would let its `hasColumn` guard skip the
+	 * `addColumn` on all three upgrade paths, which is precisely the branch under test.
+	 */
+	private const PRE_1007_CONFIG_COLUMNS = [
 		'id', 'type', 'text_template', 'image_path', 'position',
 		'opacity', 'font_size', 'color', 'rotation', 'trigger', 'mime_types', 'folder_tag',
 		'created_at', 'updated_at',
@@ -191,7 +208,7 @@ class SchemaConvergenceTest extends TestCase {
 	/** @param list<string> $flattenColumns */
 	private function preCreateTables(FakeSchema $schema, array $flattenColumns): void {
 		$config = $schema->createTable('watermark_config');
-		foreach (self::EXPECTED_CONFIG_COLUMNS as $column) {
+		foreach (self::PRE_1007_CONFIG_COLUMNS as $column) {
 			$config->addColumn($column, 'string');
 		}
 		foreach (self::DROPPED_CONFIG_COLUMNS as $column) {
@@ -224,6 +241,9 @@ class SchemaConvergenceTest extends TestCase {
 		$migration1006 = new Version1006Date20260731160000($this->stubConnection());
 		$migration1006->preSchemaChange($output, $closure, []);
 		$migration1006->changeSchema($output, $closure, []);
+
+		(new Version1007Date20260801120000())
+			->changeSchema($output, $closure, []);
 	}
 
 	/**

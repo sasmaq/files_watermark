@@ -13,8 +13,8 @@ How to read it:
   instance. Where the evidence is manual, it says so.
 
 Verified against **Nextcloud 31.0.14.1**, app version **1.5.0**, PHP 8.2 + 8.3.
-Suites re-run 2026-08-01, all three green: **427 PHPUnit** tests, **85 Jest** tests and
-**55 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
+Suites re-run 2026-08-01, all three green: **448 PHPUnit** tests, **91 Jest** tests and
+**63 Cypress** end-to-end tests (one pending, for the [bidi bug](#open-bidi)), with
 **no skips** on the local host. Local run was PHP 8.2; 8.3 is covered by CI only.
 
 One qualification the earlier "zero skips on every host" glossed over, and which widened when
@@ -36,7 +36,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [1. Renderers](#1-renderers-goal-1) | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started; flattening removed | Office pipeline, encrypted PDFs |
 | [2. Watermark content](#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
 | [3. Delivery and triggers](#3-delivery-and-triggers-goal-3) | All four triggers work, single-file and archive, on every access path; caps are `occ` settings | Tar (core bug), file-drop uploads |
-| [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | **Complete.** Settings, audit log, apply/remove actions and the watermarked badge all done; group *and* per-user overrides removed — one server-wide policy | — |
+| [4. Admin UI and file actions](#4-admin-ui-and-file-actions-goal-4) | **Complete.** Settings, audit log, apply/remove actions and the watermarked badge all done; delivery audit is opt-in with an `occ` prune | — |
 | [5. Storage backends](#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
 | [Arabic and RTL](#arabic-and-rtl-support) | **Both halves done** — watermark shaped and reordered; UI translated (130 strings), RTL-clean, preview direction pinned | `{date}` localisation, a real Arabic instance, a renderer bidi bug this surfaced |
 | [No external binaries](#no-external-binaries) | **Done.** No `exec()` anywhere; flattening removed with `pdftoppm`, decryption with `qpdf` | Release note for the dropped columns |
@@ -44,7 +44,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 427 PHPUnit + 85 Jest + 55 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
+| [Testing](#testing) | 448 PHPUnit + 91 Jest + 63 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -114,7 +114,7 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
   has historically caught a real bug
 - [ ] [`ZipInterceptorPlugin::streamNode` drift](#open-testing) against core, re-checked by hand
   on every Nextcloud upgrade
-- [ ] [Psalm / PHPStan](#open-testing) — nothing type-checks the DAV stubs against core
+- [ ] [Psalm](#open-testing) — nothing type-checks the DAV stubs against core
 
 ### Documentation and release
 
@@ -452,11 +452,59 @@ share, and public-link access. This is where every delivery-time bug has been fo
     end to end in `05-archives.cy.js`, which reads the real audit table and asserts exactly
     three rows naming the three PDFs, none for the unwatermarkable `notes.md`, and three more
     on a second fetch
-- [ ] **Log growth has no answer yet**, and it is the honest consequence of the decision
-  above rather than an argument against it: nothing prunes `watermark_log`, so an instance
-  with `on_share` on a busy folder accumulates a row per member per fetch forever. What that
-  wants is a retention policy — an `occ` prune command, or an age cap — not a coarser record
-  of who received what
+- [x] **Log growth answered, in the two places it had to be**: delivery rows are now written
+  only when the policy asks for them, and `occ files_watermark:prune-log` deals with what is
+  already there. Neither changes the granularity decision above — a recorded delivery is still
+  one row per member
+  - **the switch covers the delivery rows only, and that is the whole design.** The in-place
+    rows (`on_demand`, `on_upload`, `removed`) are not history an admin may decline to keep:
+    `findWatermarkedFileIds()` reads them to draw the badge and to stop a second burn on a
+    file that already carries one. A switch that reached them would silently un-badge every
+    file and let watermarks stack. `WatermarkLogMapper::NON_DESTRUCTIVE_TRIGGERS` is the one
+    list that decides all three questions — which rows flag a file, which are optional, and
+    which the prune command takes by default — because they are the same question asked three
+    times
+  - **it is off by default, including on upgrade**, which is a real behaviour change for an
+    instance already running a delivery trigger: downloads stop being recorded until an admin
+    ticks the box. Defaulting existing rows to *on* would have left every current install with
+    the unbounded growth this release exists to fix, and the box is one click away
+  - `Version1007Date20260801120000` adds `log_delivery`; the app version is **1.6.0**, without
+    which the migration would not run. `SchemaConvergenceTest` gained the step and — the part
+    that matters — its pre-1007 seed now omits the column, so the upgrade paths actually
+    execute the `addColumn` instead of skipping it on `hasColumn`. Both mutations (dropping
+    the guard, and the step doing nothing) fail it
+  - **the prune command cannot reach the in-place rows at all** — not by default, but by
+    construction: `deleteBefore()` takes no parameter for it and always emits the trigger
+    clause. An earlier draft had an `--include-applied` flag whose help text warned you not
+    to use it, which is a flag that should not exist; **retention shortens the history of who
+    downloaded what, it never makes the app forget that a file is watermarked.** `--days`
+    refuses anything that is not a positive whole number: coercing `--days=abc` to 0 would
+    make a typo the most destructive form of the command
+  - the form offers the switch **only for `on_download` / `on_share`**, since it does nothing
+    for the others — offering it there would promise something the server will not do
+  - end-to-end (`11-prune-log.cy.js`) because two things have no other witness: that the
+    command is **registered** at all (it reaches `occ` through `<commands>` in `info.xml`,
+    which no unit test reads — an unlisted class is a command that does not exist, with its
+    unit tests still green), and that its `WHERE` clauses match the right rows in a real
+    database. The last test asks for the removed flag and expects the command to **refuse**,
+    with the apply row and `nc:is-watermarked` both intact afterwards — a guarantee is worth
+    more when something tries to break it
+- [x] **Two audit rows per download — fixed, and it was two full renders as well.** Reported
+  as a doubled log entry; the log was the symptom
+  - the Files app downloads by sending **HEAD then GET**, and Sabre serves a HEAD by cloning
+    the request as a GET and re-dispatching it (`CorePlugin::httpHead`). Both arrived at the
+    interceptors as ordinary downloads, so one click rendered the whole watermarked file
+    twice and recorded it twice
+  - `X-Sabre-Original-Method: HEAD` is the marker Sabre leaves on the clone, and the only
+    thing that tells the two apart. Both interceptors now defer those to core
+  - **the log was the cheap half of the bug.** A HEAD carries no body, so the render was pure
+    waste — and on a folder, a HEAD would have built the entire archive. Skipping the render
+    is the fix; not logging it would have left the cost in place and still passed a "one row"
+    test, which is why the E2E asserts a HEAD **on its own** adds nothing
+  - deferring also makes the headers consistent: PROPFIND already reports the stored file's
+    size rather than the watermarked copy's, so a HEAD that answered with the render's length
+    was the odd one out
+  - measured before and after by driving the real Files UI: **2 rows → 1**
 - [ ] Extend `DownloadController` (`/api/v1/download`) to accept a folder path, or document
   that it stays single-file only (it currently answers "Path is not a file")
 - [ ] **Public file-drop uploads** have no session to attribute a watermark to, so neither the
@@ -1638,10 +1686,10 @@ read, and one SDD type is still missing.
 
 ## Testing
 
-**Position:** 427 PHPUnit tests, 85 Jest tests and 55 Cypress tests, and **no test depends on
+**Position:** 448 PHPUnit tests, 91 Jest tests and 63 Cypress tests, and **no test depends on
 an external binary** any more. Two image cases still depend on the host's own PHP build (WebP,
 and a TrueType font for rotation). The DAV layer, which used to be the blind spot every
-delivery bug hid in, now has 61 unit tests — and, as of this version, an end-to-end suite that
+delivery bug hid in, now has 64 unit tests — and, as of this version, an end-to-end suite that
 fetches the same files through the same servers a browser does.
 
 ### Open {#open-testing}
@@ -1669,7 +1717,7 @@ fetches the same files through the same servers a browser does.
 
 ### DAV plugin test harness
 
-`lib/Dav/` has 61 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
+`lib/Dav/` has 64 unit tests under `tests/Unit/Dav/`. This was the priority gap, because
 every delivery-time bug found so far lived in exactly that untested layer, and each was caught
 only by driving a real instance by hand:
 
@@ -1714,9 +1762,10 @@ only by driving a real instance by hand:
     - `OC\Streamer` records its calls to a static log, because `ZipInterceptorPlugin`
       constructs it directly and it cannot be injected as a mock. That log is what makes the
       archive's *shape* — member set, names, sizes, bytes — assertable
-- [x] `ZipInterceptorPluginTest` (31) — **regression: gate per member, never per container**;
+- [x] `ZipInterceptorPluginTest` (32) — **regression: gate per member, never per container**;
   a configured cap moving the ceiling in both directions; one render — and so one audit
-  row — per watermarked member;
+  row — per watermarked member; a Sabre HEAD sub-request left to core rather than building the
+  whole archive for a bodiless response;
   archive naming and root path for whole-folder vs selection; `files=` + `X-NC-Files` parsing;
   `BeforeZipCreatedEvent` veto honoured; over-cap → 403 under `on_share` but plain archive
   under `on_download`, for both the byte cap and the member cap; defer to core when nothing was
@@ -1731,9 +1780,10 @@ only by driving a real instance by hand:
   chunked uploads never PUT their final path and a PUT-only hook silently skips every large
   file; job removed only on success and left queued on failure; no session, wrong trigger,
   unsupported MIME and unresolvable config all no-op
-- [x] `DownloadInterceptorPluginTest` (9) — `on_download` streams a copy; `on_share` denies
+- [x] `DownloadInterceptorPluginTest` (11) — `on_download` streams a copy; `on_share` denies
   (403) when a render fails rather than serving the original; owner fetch untouched;
-  `$publicContext` forces share treatment; hooks `method:GET` and never `beforeMethod:GET`
+  `$publicContext` forces share treatment; hooks `method:GET` and never `beforeMethod:GET`;
+  and **a Sabre HEAD sub-request left to core**, with a real GET as the control
 - [x] `PropFindPluginTest` (9) — `is-watermarked` for file nodes only; a folder listing costs a
   constant two queries rather than one per child
 
@@ -1826,8 +1876,14 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   `ApiControllerWatermarkedStatusTest` (5), `ApiControllerImageTest` (9)
 - [x] `NodeWrittenListenerTest` (9) — queues the job rather than watermarking inline, trigger
   gating, no-session and already-watermarked skips, `suppressFor()` re-entrancy
-- [x] `WatermarkLogMapperTest` (4) — batched lookup, distinct ids, a removal cancelling an
-  earlier apply, apply → removed → apply counting as watermarked again
+- [x] `WatermarkLogMapperTest` (8) — batched lookup, distinct ids, a removal cancelling an
+  earlier apply, apply → removed → apply counting as watermarked again, and the prune pair's
+  `WHERE` clauses: cutoff and delivery-only by default, the trigger clause *absent* when in-place
+  rows are included, and no restriction at all for "everything"
+- [x] `PruneLogTest` (11) — the retention default, `--days` moving the cutoff, `--all` dropping
+  the age filter, `--dry-run` counting without deleting, and a `--days` that is not a positive
+  whole number **refused** rather than coerced to 0, which would make a typo the most
+  destructive form of the command
 - [x] `WatermarkImageStoreTest` (8), `DownloadControllerTest` (4),
   `BeforePreviewFetchedListenerTest` (4), `WatermarkConfigMapperTest` (4, entity only)
   - no `ShareCreatedListenerTest`: on-share is delivery-time, so it is covered by
@@ -1835,12 +1891,16 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
 
 ### Frontend (Jest)
 
-- [x] `WatermarkForm.spec.js` (35) — the two identity placeholders: both offered, each
+- [x] `WatermarkForm.spec.js` (41) — the two identity placeholders: both offered, each
   labelled with what it resolves to, previewing as *different* values, and the display name as
   the default. Then image upload validation and server rejection, the
   flattening block's presence, absence and DPI reveal, and the "Where to apply" controls:
   exactly the supported types offered, a stored filter reflected, the selection written back in
   canonical order, the tag picker used instead of a typed id, and the corrected help text
+  - the delivery-audit switch is covered as a **gating** question, not just a field: offered
+    for `on_download` / `on_share`, **absent** for the in-place triggers (whose rows are not
+    optional), off by default, a stored value reflected, and present in the payload the server
+    is asked to save
 - [x] `main-files.spec.js` (38) — action gating, badge decoration and recycling, apply/remove
   mirroring, `unmarkWatermarked`, explicit-0 vs missing property
 - [x] `AuditLog.spec.js` (5), `AdminSettings.spec.js` (4)
@@ -1905,7 +1965,7 @@ cannot make (the Arabic UI at `dir="rtl"`).
 
 ### Integration / E2E (Cypress)
 
-**54 tests across 10 specs**, run against a real Nextcloud 31 from `docker-compose.yml`, plus
+**62 tests across 11 specs**, run against a real Nextcloud 31 from `docker-compose.yml`, plus
 one pending test that records the [bidi bug](#open-bidi). `npm run test:e2e`; the whole run is
 about **80 seconds**. Setup, layout and the reasoning behind each probe are in
 [`cypress/README.md`](../cypress/README.md).
@@ -1973,6 +2033,10 @@ Delivered:
 - [x] **Images** (`08-images.cy.js`) — ink drawn and tiled across the canvas, size preserved,
   the blank original restored byte for byte, and a JPEG that comes back a JPEG of the same
   dimensions
+- [x] **Prune command** (`11-prune-log.cy.js`) — registered with `occ` at all (a `<commands>`
+  entry no unit test reads), delivery rows deleted while the apply row and its badge survive,
+  `--dry-run` deleting nothing, the 90-day default matching nothing seconds old, and
+  the removed `--include-applied` flag being **refused** rather than silently ignored
 - [x] **Admin settings page** (`09-admin-settings.cy.js`) — the Vue app mounts into the
   server-rendered section, a saved policy survives a reload, the preview renders the template
   rather than the raw token, and **what the form displays is what the API stored** — the one
@@ -1994,6 +2058,14 @@ Two decisions worth recording, because both cost time to arrive at:
   32-bit central-directory fields are the `0xFFFF…` sentinels and the real values live in the
   ZIP64 records. The first version of the reader followed a sentinel as an offset and seeked to
   byte 4294967295
+- **the log table accumulates across runs, so nothing asserts on its absolute contents.**
+  Two versions of the same mistake were shipped and caught here: a count difference against a
+  `?limit=N` window (three new rows push three old ones out of view, so the difference
+  measures nothing), and a filter by *file path* in a spec whose fixtures are recreated with
+  the same names every run (which matched every previous run's rows too). Rows are matched by
+  **id** — the log row's own for "what did this fetch add", the file's for "which rows belong
+  to this fixture". Both versions passed on a fresh instance and failed once the table grew,
+  which is the kind of test that is worse than none
 - **the audit log endpoint is a sliding window, so rows are identified and never counted.**
   `GET /api/v1/log?limit=N` returns the newest N: on an instance the suite has run against a
   few times, three new rows push three old ones out of view, and a difference in length

@@ -35,7 +35,7 @@ Features:
 - سياسة عامة يضبطها المدير وتسري على الخادم كله
 - سجل تدقيق كامل لكل حدث علامة مائية
     ]]></description>
-    <version>1.5.0</version>
+    <version>1.6.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>
@@ -48,6 +48,10 @@ Features:
         <lib>bcmath</lib>
         <nextcloud min-version="31" max-version="31"/>
     </dependencies>
+    <commands>
+        <!-- occ files_watermark:prune-log — retention for the audit table. -->
+        <command>OCA\FilesWatermark\Command\PruneLog</command>
+    </commands>
     <settings>
         <admin>OCA\FilesWatermark\Settings\AdminSettings</admin>
         <admin-section>OCA\FilesWatermark\Settings\AdminSection</admin-section>

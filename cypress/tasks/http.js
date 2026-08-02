@@ -65,9 +65,10 @@ async function raw({ url, method = 'GET', auth, headers = {}, body, follow = fal
 /**
  * GET any absolute or root-relative URL. Used for public links and archive URLs.
  */
-const httpGet = ({ url, user, password, headers, follow }) =>
+const httpGet = ({ url, user, password, headers, follow, method = 'GET' }) =>
 	raw({
 		url: url.startsWith('http') ? url : BASE + url,
+		method,
 		auth: user ? { user, password } : undefined,
 		headers,
 		follow,

@@ -211,7 +211,43 @@ describe('Archive (ZIP) downloads', () => {
 		 * the archive path is not a special case, and the volume is bounded by the archive
 		 * caps (200 members by default, `archive_max_members`).
 		 */
+		it('records nothing for a delivery unless the policy asks for it', () => {
+			// The shipped default. Delivery triggers render per fetch, so recording them
+			// is what grows the log without bound — an archive of 200 members downloaded
+			// twice a day is 400 rows a day, forever.
+			cy.wmSetPolicy({ trigger: 'on_share', logDelivery: false })
+
+			cy.wmApi('GET', '/api/v1/log?limit=500').then((before) => {
+				const seen = new Set(before.body.map((entry) => entry.id))
+
+				cy.task('nc:get', {
+					url: `/remote.php/dav/files/${recipientUid}/${folder}?accept=zip`,
+					user: recipient.user,
+					password: recipient.password,
+					headers: zipHeaders,
+				}).then((response) => {
+					// The watermark still happens — the switch governs the record, never
+					// the file.
+					expect(response.status).to.eq(200)
+					probeArchive(response.base64).then((members) => {
+						Object.entries(members)
+							.filter(([name]) => name.endsWith('.pdf'))
+							.forEach(([name, pdf]) => {
+								expect(pdf.watermarked, `${name} was not watermarked`).to.be.true
+							})
+					})
+				})
+
+				cy.wmApi('GET', '/api/v1/log?limit=500').then((after) => {
+					const added = after.body.filter((entry) => !seen.has(entry.id))
+					expect(added, 'a delivery was recorded with logging off').to.be.empty
+				})
+			})
+		})
+
 		it('writes one audit row per watermarked member, per fetch', () => {
+			cy.wmSetPolicy({ trigger: 'on_share', logDelivery: true })
+
 			// Rows are identified by **id**, not counted. The log endpoint returns the
 			// newest N, which on an instance the suite has been run against a few times
 			// is a sliding window: three new rows push three old ones out of view, so a

@@ -67,6 +67,10 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			return true;
 		}
 
+		if ($this->isHeadRequest($request)) {
+			return true;
+		}
+
 		try {
 			$node = $this->server->tree->getNodeForPath($request->getPath());
 		} catch (NotFound) {
@@ -118,6 +122,24 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		$response->setBody($stream);
 
 		return false;
+	}
+
+	/**
+	 * Whether this `method:GET` is really Sabre serving a **HEAD**.
+	 *
+	 * Sabre implements HEAD by cloning the request, setting its method to GET and
+	 * re-dispatching it (`CorePlugin::httpHead`), so a HEAD arrives here indistinguishable
+	 * from a download except for the marker it leaves behind. The Files app's download
+	 * sends HEAD before GET, so without this every download rendered the whole watermarked
+	 * file **twice** and wrote **two** audit rows for one download.
+	 *
+	 * Deferring to core also makes the headers consistent with the rest of the app:
+	 * PROPFIND already reports the stored file's size, never the watermarked copy's, so a
+	 * HEAD that answered with the render's length was the odd one out — and paid a full
+	 * render for a response with no body.
+	 */
+	private function isHeadRequest(RequestInterface $request): bool {
+		return $request->getHeader('X-Sabre-Original-Method') === 'HEAD';
 	}
 
 	private function cleanup(string $tmpPath): void {

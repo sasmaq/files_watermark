@@ -31,6 +31,8 @@ use OCP\AppFramework\Db\Entity;
  * @method void setMimeTypes(?string $mimeTypes)
  * @method string|null getFolderTag()
  * @method void setFolderTag(?string $folderTag)
+ * @method bool getLogDelivery()
+ * @method void setLogDelivery(bool $logDelivery)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -51,6 +53,14 @@ class WatermarkConfig extends Entity {
 	protected ?string $mimeTypes = null;
 	/** Nextcloud system-tag ID for per-folder targeting; null means global */
 	protected ?string $folderTag = null;
+	/**
+	 * Whether to write an audit row for every *delivery* — `on_download` / `on_share`,
+	 * which render per fetch. Off by default: those rows are the ones that grow without
+	 * bound (a row per member of every archive, every time it is downloaded), and they
+	 * are pure audit. The in-place events are recorded regardless of this: they are not
+	 * history, they are how the app knows a file's stored bytes carry a watermark.
+	 */
+	protected bool $logDelivery = false;
 	protected string $createdAt = '';
 	protected string $updatedAt = '';
 
@@ -58,6 +68,7 @@ class WatermarkConfig extends Entity {
 		$this->addType('opacity', 'integer');
 		$this->addType('fontSize', 'integer');
 		$this->addType('rotation', 'integer');
+		$this->addType('logDelivery', 'boolean');
 	}
 
 	/** Returns the allowed MIME types as an array, or all supported types if not set. */
@@ -82,6 +93,7 @@ class WatermarkConfig extends Entity {
 			'trigger' => $this->trigger,
 			'mimeTypes' => $this->mimeTypes,
 			'folderTag' => $this->folderTag,
+			'logDelivery' => $this->logDelivery,
 			'createdAt' => $this->createdAt,
 			'updatedAt' => $this->updatedAt,
 		];

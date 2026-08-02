@@ -70,6 +70,44 @@ describe('On-download watermarking', () => {
 		cy.wmDownload(file).should('eq', original)
 	})
 
+	/**
+	 * One download, one row — the regression that reported itself as "the log adds two
+	 * entries per download".
+	 *
+	 * The Files app's download sends **HEAD then GET**, and Sabre serves a HEAD by
+	 * cloning the request as a GET and re-dispatching it, so both arrived at the
+	 * interceptor as downloads: the whole watermarked file was rendered twice and
+	 * recorded twice for one click. The HEAD is asserted on its own as well, because the
+	 * expensive half is the render, and a fix that only skipped the *logging* would leave
+	 * that in place and pass a "one row" test.
+	 */
+	it('renders and records once per download, not once per HEAD as well', () => {
+		cy.wmSetPolicy({ trigger: 'on_download', logDelivery: true })
+
+		const head = () => cy.task('nc:get', {
+			url: `/remote.php/dav/files/${Cypress.env('ncUser')}/${file}`,
+			method: 'HEAD',
+			user: Cypress.env('ncUser'),
+			password: Cypress.env('ncPassword'),
+		}).its('status').should('eq', 200)
+
+		const rowsAddedBy = (action) =>
+			cy.wmApi('GET', '/api/v1/log?limit=500').then((before) => {
+				const seen = new Set(before.body.map((entry) => entry.id))
+				action()
+				return cy.wmApi('GET', '/api/v1/log?limit=500')
+					.then((after) => after.body.filter((entry) => !seen.has(entry.id)))
+			})
+
+		rowsAddedBy(head).should('be.empty')
+		rowsAddedBy(() => {
+			head()
+			cy.wmDownload(file)
+		}).should('have.length', 1)
+
+		cy.wmSetPolicy({ trigger: 'on_download', logDelivery: false })
+	})
+
 	it('answers a folder path with an error rather than an archive', () => {
 		cy.wmToken().then((token) => {
 			cy.request({

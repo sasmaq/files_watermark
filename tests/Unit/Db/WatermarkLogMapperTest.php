@@ -130,4 +130,92 @@ class WatermarkLogMapperTest extends TestCase {
 
 		$this->assertSame([7], $this->mapper->findWatermarkedFileIds([7]));
 	}
+
+	// ---------------------------------------------------------------------
+	// Pruning
+	// ---------------------------------------------------------------------
+
+	/**
+	 * A query-builder mock for the prune pair, recording the `WHERE` clauses it is given.
+	 *
+	 * The clauses are what the tests assert on, because the destructive mistake here is
+	 * not a wrong row count — it is a `DELETE` that reaches rows it was never meant to.
+	 *
+	 * @param array<string, string> $clauses filled in with the clauses applied
+	 */
+	private function mockPruneQuery(array &$clauses, int $result): IQueryBuilder&MockObject {
+		$expr = $this->createMock(IExpressionBuilder::class);
+		$expr->method('lt')->willReturnCallback(
+			static fn (string $column, string $param): string => "$column < $param",
+		);
+		$expr->method('in')->willReturnCallback(
+			static fn (string $column, string $param): string => "$column IN $param",
+		);
+
+		$qb = $this->createMock(IQueryBuilder::class);
+		$qb->method('expr')->willReturn($expr);
+		$qb->method('select')->willReturnSelf();
+		$qb->method('from')->willReturnSelf();
+		$qb->method('delete')->willReturnSelf();
+		$qb->method('func')->willReturn($this->createMock(\OCP\DB\QueryBuilder\IFunctionBuilder::class));
+		$qb->method('createNamedParameter')->willReturnCallback(
+			static function ($value, $type = IQueryBuilder::PARAM_STR): string {
+				return is_array($value) ? '(:triggers)' : ':' . (string)$value;
+			},
+		);
+		$qb->method('andWhere')->willReturnCallback(function (string $clause) use (&$clauses, $qb) {
+			$clauses[] = $clause;
+			return $qb;
+		});
+		$qb->method('executeStatement')->willReturn($result);
+
+		$this->db->method('getQueryBuilder')->willReturn($qb);
+
+		return $qb;
+	}
+
+	public function testDeleteBeforeRestrictsToTheCutoffAndToDeliveryRows(): void {
+		$clauses = [];
+		$this->mockPruneQuery($clauses, 42);
+
+		$this->assertSame(42, $this->mapper->deleteBefore('2026-05-03 12:00:00'));
+		$this->assertSame([
+			'created_at < :2026-05-03 12:00:00',
+			'trigger IN (:triggers)',
+		], $clauses);
+	}
+
+	public function testANullCutoffMeansEveryAgeRatherThanNoRows(): void {
+		$clauses = [];
+		$this->mockPruneQuery($clauses, 900);
+
+		$this->assertSame(900, $this->mapper->deleteBefore(null));
+		// Still restricted by trigger: "every age" is not "every row".
+		$this->assertSame(['trigger IN (:triggers)'], $clauses);
+	}
+
+	/**
+	 * The in-place rows cannot be deleted from here **at all** — no parameter, no default
+	 * to get wrong. They are what the Files-list badge and the double-burn guard read, so
+	 * a caller that could reach them could make the app forget a file it has stamped.
+	 */
+	public function testTheTriggerRestrictionIsNotOptional(): void {
+		$this->assertSame(
+			1,
+			(new \ReflectionMethod($this->mapper, 'deleteBefore'))->getNumberOfParameters(),
+			'deleteBefore grew a parameter — the only one it may take is the cutoff',
+		);
+		$this->assertSame(
+			1,
+			(new \ReflectionMethod($this->mapper, 'countBefore'))->getNumberOfParameters(),
+		);
+
+		// And the clause is emitted whatever the cutoff.
+		foreach (['2026-05-03 12:00:00', null] as $cutoff) {
+			$clauses = [];
+			$this->mockPruneQuery($clauses, 1);
+			$this->mapper->deleteBefore($cutoff);
+			$this->assertContains('trigger IN (:triggers)', $clauses);
+		}
+	}
 }

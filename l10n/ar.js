@@ -34,6 +34,8 @@ OC.L10N.register(
     "Rotation" : "الدوران",
     "When to apply" : "متى تُطبَّق",
     "Choose the moment the watermark is stamped." : "اختر اللحظة التي تُختم فيها العلامة المائية.",
+    "Record every download in the activity log" : "سجِّل كل عملية تنزيل في سجل النشاط",
+    "Off by default: these triggers watermark on every fetch, so this writes one entry per file per download — including every file inside a downloaded folder. Applying or removing a watermark is always recorded." : "معطَّل افتراضيًا: هذه المشغّلات تضع العلامة المائية عند كل عملية جلب، لذا يكتب هذا الخيار مدخلًا لكل ملف في كل عملية تنزيل — بما في ذلك كل ملف داخل مجلد يجري تنزيله. أما تطبيق العلامة المائية أو إزالتها فيُسجَّل دائمًا.",
     "Where to apply" : "أين تُطبَّق",
     "Narrow the policy, or leave everything untouched to cover every supported file." : "ضيِّق نطاق السياسة، أو اترك الحقول كما هي لتشمل كل ملف مدعوم.",
     "Limit to file types" : "الاقتصار على أنواع ملفات",

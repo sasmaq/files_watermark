@@ -316,6 +316,59 @@ describe('WatermarkForm', () => {
 		})
 	})
 
+	describe('delivery audit switch', () => {
+		/**
+		 * The "record every download" checkbox, or null when it is not offered.
+		 * @param {object} wrapper - the mounted wrapper
+		 * @return {object|null} the input wrapper
+		 */
+		function auditBox(wrapper) {
+			const box = wrapper.find('.wm-audit input')
+			return box.exists() ? box : null
+		}
+
+		it('is offered for the triggers that render per fetch', () => {
+			for (const trigger of ['on_download', 'on_share']) {
+				expect(auditBox(mountForm({ modelValue: { trigger } }))).not.toBeNull()
+			}
+		})
+
+		it('is hidden for the in-place triggers, which are always recorded', () => {
+			// Those rows are not optional history — the Files-list badge and the guard
+			// against a second burn read them — so offering a switch would promise
+			// something the server will not do.
+			for (const trigger of ['on_demand', 'on_upload']) {
+				expect(auditBox(mountForm({ modelValue: { trigger } }))).toBeNull()
+			}
+		})
+
+		it('defaults to off, matching the column default', () => {
+			const wrapper = mountForm({ modelValue: { trigger: 'on_download' } })
+			expect(auditBox(wrapper).element.checked).toBe(false)
+			expect(wrapper.vm.form.logDelivery).toBe(false)
+		})
+
+		it('reflects a stored value', () => {
+			const wrapper = mountForm({ modelValue: { trigger: 'on_share', logDelivery: true } })
+			expect(auditBox(wrapper).element.checked).toBe(true)
+		})
+
+		it('writes the change back to the form', async () => {
+			const wrapper = mountForm({ modelValue: { trigger: 'on_download' } })
+			await auditBox(wrapper).setValue(true)
+			expect(wrapper.vm.form.logDelivery).toBe(true)
+		})
+
+		it('is included in the payload the server is asked to save', async () => {
+			const wrapper = mountForm({ modelValue: { trigger: 'on_download' } })
+			await auditBox(wrapper).setValue(true)
+			await wrapper.find('.wm-save').trigger('click')
+
+			const [payload] = wrapper.emitted('save')[0]
+			expect(payload.logDelivery).toBe(true)
+		})
+	})
+
 	it('emits save event with form data when save button clicked', async () => {
 		const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '{username}' } })
 		await wrapper.find('.wm-save').trigger('click')

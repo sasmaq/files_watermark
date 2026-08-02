@@ -158,6 +158,38 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->assertFalse($this->plugin(publicContext: true)->httpGet($this->request(), new Response()));
 	}
 
+	/**
+	 * The bug this guard exists for: the Files app's download sends **HEAD then GET**, and
+	 * Sabre serves a HEAD by cloning the request as a GET and re-dispatching it. Both
+	 * arrived here as downloads, so one click rendered the whole watermarked file twice
+	 * and wrote two audit rows.
+	 *
+	 * `X-Sabre-Original-Method` is the marker Sabre leaves on the clone, and the only
+	 * thing that distinguishes the two.
+	 */
+	public function testASabreHeadSubRequestIsLeftToCore(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
+		// Not merely "no row": no render either. A HEAD has no body, so rendering for one
+		// is pure waste — and it is the expensive half.
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+
+		$request = $this->request();
+		$request->setHeader('X-Sabre-Original-Method', 'HEAD');
+
+		$this->assertTrue($this->plugin()->httpGet($request, new Response()));
+	}
+
+	public function testARealGetIsStillHandled(): void {
+		// The control for the guard above: without the marker, nothing changes.
+		$davFile = $this->davFile();
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->willReturn($this->renderedCopy());
+
+		$this->assertFalse($this->plugin()->httpGet($this->request(), new Response()));
+	}
+
 	public function testMissingNodeIsLeftToCore(): void {
 		$this->tree->method('getNodeForPath')->willThrowException(new NotFound());
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');

@@ -471,6 +471,9 @@ class WatermarkServiceTest extends TestCase {
 		$config->setColor('#cccccc');
 		$config->setRotation(45);
 		$config->setTrigger('on_download');
+		// Delivery audit rows are opt-in; these cases assert one is written, so the
+		// policy has to ask for it. The default-off behaviour is covered separately.
+		$config->setLogDelivery(true);
 
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')->willReturn('alice');
@@ -503,6 +506,73 @@ class WatermarkServiceTest extends TestCase {
 			unlink($tmpPath);
 			@rmdir(dirname($tmpPath));
 		}
+	}
+
+	/**
+	 * Delivery audit is **off unless the policy asks for it**, and the render happens
+	 * either way — the switch governs the record, never the watermark.
+	 *
+	 * This is the growth control: `on_download` and `on_share` render per fetch, so they
+	 * logged per fetch, one row per watermarked member of every archive every time
+	 * anyone downloaded it, with nothing pruning the table.
+	 */
+	public function testDeliveryIsNotAuditedUnlessThePolicyAsksForIt(): void {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{username}');
+		$config->setTrigger('on_download');
+		// Not set: the default is what is under test.
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$user->method('getDisplayName')->willReturn('Alice');
+		$this->userSession->method('getUser')->willReturn($user);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getName')->willReturn('doc.pdf');
+		$file->method('getId')->willReturn(7);
+		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
+		$file->method('getContent')->willReturn('%PDF-fake');
+
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->logMapper->expects($this->never())->method('insertLog');
+
+		$tmpPath = $this->service->watermarkForDownload($file);
+
+		$this->assertNotNull($tmpPath, 'the download was not watermarked');
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	/**
+	 * The in-place rows are **not** covered by that switch, and must not be.
+	 *
+	 * They are not history an admin may decline to keep: `findWatermarkedFileIds()` reads
+	 * them to draw the Files-list badge and to stop a second burn on a file that already
+	 * carries one. Extending the switch to cover them would silently un-badge every file
+	 * and let watermarks stack.
+	 */
+	public function testInPlaceIsAuditedEvenWithDeliveryAuditOff(): void {
+		[$file, $config] = $this->inPlaceFixture();
+		$this->assertFalse($config->getLogDelivery(), 'the fixture is meant to have it off');
+
+		$this->imageWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, 'watermarked-bytes');
+			});
+
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('alice', 11, '/alice/files/photo.png', 'on_upload', null)
+			->willReturn(new WatermarkLog());
+
+		$this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config));
 	}
 
 	public function testWatermarkForDownloadDegradesToNullOnRenderFailure(): void {
@@ -617,6 +687,9 @@ class WatermarkServiceTest extends TestCase {
 		$config->setColor('#cccccc');
 		$config->setRotation(45);
 		$config->setTrigger('on_share');
+		// Delivery audit rows are opt-in; these cases assert one is written, so the
+		// policy has to ask for it. The default-off behaviour is covered separately.
+		$config->setLogDelivery(true);
 
 		// Anonymous visitor: no session user at all.
 		$this->userSession->method('getUser')->willReturn(null);
@@ -683,6 +756,9 @@ class WatermarkServiceTest extends TestCase {
 		$config->setColor('#cccccc');
 		$config->setRotation(45);
 		$config->setTrigger('on_share');
+		// Delivery audit rows are opt-in; these cases assert one is written, so the
+		// policy has to ask for it. The default-off behaviour is covered separately.
+		$config->setLogDelivery(true);
 
 		$bob = $this->createMock(IUser::class);
 		$bob->method('getUID')->willReturn('bob');
@@ -730,6 +806,9 @@ class WatermarkServiceTest extends TestCase {
 		$config->setColor('#cccccc');
 		$config->setRotation(45);
 		$config->setTrigger('on_share');
+		// Delivery audit rows are opt-in; these cases assert one is written, so the
+		// policy has to ask for it. The default-off behaviour is covered separately.
+		$config->setLogDelivery(true);
 
 		$bob = $this->createMock(IUser::class);
 		$bob->method('getUID')->willReturn('bob');

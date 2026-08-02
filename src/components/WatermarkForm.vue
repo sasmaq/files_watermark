@@ -195,6 +195,23 @@
 							</span>
 						</label>
 					</div>
+
+					<!--
+						Only shown for the delivery triggers, because it only does anything
+						for them: they render per fetch, so recording them is what makes the
+						log grow without bound. The in-place triggers are always recorded —
+						those rows are how the Files list knows a file is watermarked — so
+						offering the switch there would promise something it cannot do.
+					-->
+					<div v-if="isDeliveryTrigger" class="wm-field wm-field--stacked wm-audit">
+						<NcCheckboxRadioSwitch :model-value="!!form.logDelivery"
+							@update:model-value="form.logDelivery = $event">
+							{{ t('files_watermark', 'Record every download in the activity log') }}
+						</NcCheckboxRadioSwitch>
+						<small class="wm-help">
+							{{ t('files_watermark', 'Off by default: these triggers watermark on every fetch, so this writes one entry per file per download — including every file inside a downloaded folder. Applying or removing a watermark is always recorded.') }}
+						</small>
+					</div>
 				</section>
 
 				<!-- 5. Scope (admin only) -->
@@ -409,6 +426,9 @@ const DEFAULTS = {
 	trigger: 'on_demand',
 	mimeTypes: '',
 	folderTag: '',
+	// Off, matching the column default. Delivery triggers render per fetch, so an
+	// audit row per fetch is what grows the log without bound.
+	logDelivery: false,
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })
@@ -479,6 +499,12 @@ const TYPE_OPTIONS = [
 		icon: 'M12,16L19.36,10.27L21,9L12,2L3,9L4.63,10.27M12,18.54L4.62,12.81L3,14.07L12,21.07L21,14.07L19.37,12.8L12,18.54Z',
 	},
 ]
+
+// The triggers that render per fetch rather than burning the mark into the stored
+// bytes. Only these have anything to audit per download.
+const DELIVERY_TRIGGERS = ['on_download', 'on_share']
+
+const isDeliveryTrigger = computed(() => DELIVERY_TRIGGERS.includes(form.trigger))
 
 const TRIGGER_OPTIONS = [
 	{ value: 'on_demand', label: t('files_watermark', 'On demand'), desc: t('files_watermark', 'Only when someone picks “Apply watermark” on a file.') },

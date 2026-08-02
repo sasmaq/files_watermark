@@ -120,6 +120,16 @@ class WatermarkService {
 	 * Record the audit row for a watermark that has actually been delivered.
 	 */
 	private function recordLog(File $file, string $trigger, WatermarkConfig $config, ?IUser $actor = null): void {
+		// Delivery rows are pure audit and are recorded only when the policy asks for
+		// them: they are written per *fetch*, so an archive of 200 members downloaded
+		// twice a day is 400 rows a day, forever. The in-place rows fall through — they
+		// are not history, they are the app's record that a file's stored bytes carry a
+		// watermark, and the badge and the double-burn guard both read them.
+		if (!$config->getLogDelivery()
+			&& in_array($trigger, WatermarkLogMapper::NON_DESTRUCTIVE_TRIGGERS, true)) {
+			return;
+		}
+
 		$user = $actor ?? $this->userSession->getUser();
 		$this->logMapper->insertLog(
 			$user?->getUID() ?? $this->anonymousLabel($trigger, 'public-link', 'system'),

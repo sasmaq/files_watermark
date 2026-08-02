@@ -391,6 +391,26 @@ class ZipInterceptorPluginTest extends TestCase {
 	}
 
 	/**
+	 * Sabre serves a HEAD by re-dispatching the request as a GET, so without this guard a
+	 * HEAD on a folder would build the whole archive — rendering every member, and
+	 * recording an audit row for each — to answer a request that carries no body.
+	 */
+	public function testASabreHeadSubRequestIsLeftToCore(): void {
+		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+
+		$request = $this->zipRequest();
+		$request->setHeader('X-Sabre-Original-Method', 'HEAD');
+
+		$this->assertTrue($this->plugin()->httpGet($request, new Response()));
+		$this->assertSame([], Streamer::$constructed);
+	}
+
+	/**
 	 * A GET on a *file* belongs to `DownloadInterceptorPlugin`. Claiming it here would
 	 * hand every single-file download to the archive builder.
 	 */
