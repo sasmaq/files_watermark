@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\EventListener;
 
 use OCA\FilesWatermark\BackgroundJob\WatermarkOnUploadJob;
+use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
@@ -31,6 +32,7 @@ class NodeWrittenListener implements IEventListener {
 
 	public function __construct(
 		private WatermarkService $watermarkService,
+		private OriginalStore $originalStore,
 		private IUserSession $userSession,
 		private IJobList $jobList,
 		private LoggerInterface $logger,
@@ -49,6 +51,14 @@ class NodeWrittenListener implements IEventListener {
 		}
 
 		if (!$this->watermarkService->isSupported($node->getMimeType())) {
+			return;
+		}
+
+		// Storing a preserved original is itself a write of a supported file into the
+		// owner's storage, so without this every backup queues a job to watermark the
+		// backup. watermarkInPlace() refuses those anyway; this keeps the pointless job
+		// out of the queue rather than relying on it being rejected at the far end.
+		if ($this->originalStore->isBackup($node)) {
 			return;
 		}
 

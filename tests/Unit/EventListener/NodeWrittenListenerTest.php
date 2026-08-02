@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\EventListener;
 use OCA\FilesWatermark\BackgroundJob\WatermarkOnUploadJob;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
+use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\BackgroundJob\IJobList;
 use OCP\Files\Events\Node\NodeWrittenEvent;
@@ -20,6 +21,7 @@ use Psr\Log\LoggerInterface;
 class NodeWrittenListenerTest extends TestCase {
 
 	private WatermarkService&MockObject $watermarkService;
+	private OriginalStore&MockObject $originalStore;
 	private IUserSession&MockObject $userSession;
 	private IJobList&MockObject $jobList;
 	private LoggerInterface&MockObject $logger;
@@ -28,11 +30,13 @@ class NodeWrittenListenerTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->watermarkService = $this->createMock(WatermarkService::class);
+		$this->originalStore = $this->createMock(OriginalStore::class);
 		$this->userSession = $this->createMock(IUserSession::class);
 		$this->jobList = $this->createMock(IJobList::class);
 		$this->logger = $this->createMock(LoggerInterface::class);
 		$this->listener = new NodeWrittenListener(
 			$this->watermarkService,
+			$this->originalStore,
 			$this->userSession,
 			$this->jobList,
 			$this->logger,
@@ -102,9 +106,24 @@ class NodeWrittenListenerTest extends TestCase {
 		$this->listener->handle($this->fileEvent());
 	}
 
+	public function testStoringAPreservedOriginalDoesNotQueueAJob(): void {
+		// Writing a backup is itself a write of a supported file into the owner's
+		// storage. Without this guard it queues a watermark of the backup, whose own
+		// backup queues another — the copies are supported mime types, so nothing
+		// downstream would stop it.
+		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_upload'));
+		$this->originalStore->method('isBackup')->willReturn(true);
+
+		$this->jobList->expects($this->never())->method('add');
+
+		$this->listener->handle($this->fileEvent());
+	}
+
 	public function testDoesNotQueueWithoutASession(): void {
 		$listener = new NodeWrittenListener(
 			$this->watermarkService,
+			$this->originalStore,
 			$this->createMock(IUserSession::class), // getUser() returns null
 			$this->jobList,
 			$this->logger,

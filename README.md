@@ -273,6 +273,34 @@ has the temp space; lower them on a small host. There is no unlimited setting: a
 - **On share:** when a share is created, a watermarked copy (`{name}_shared.{ext}`) is saved in the same folder
 - **Admin settings:** configure the global policy under **Settings → Additional → Watermark Settings**
 
+## Preserved originals and server-side encryption
+
+An in-place watermark (`on_demand`, `on_upload`) burns into the stored bytes and cannot be
+undone by re-rendering, so before overwriting a file the app keeps a copy of it. That copy
+lives in the **owner's** storage, at `.files_watermark/originals/{fileId}`, and is written
+through the Files API — which is what puts it under **server-side encryption**: with SSE
+enabled it is encrypted by whichever module the admin selected, with the server's own keys.
+The app neither holds a key nor knows which module is in use.
+
+It has to be there to get that. The selected module decides what is encrypted, and the
+default module encrypts only what lives under a user's `files`, `files_versions` and
+`files_trashbin` — app storage (appdata) is outside its remit, which is where these copies
+used to sit, in the clear, beside the ciphertext of the very same bytes.
+
+What that costs, and what to tell users:
+
+- the folder is **dot-prefixed**, so the web UI hides it, but desktop sync clients and
+  WebDAV do see it. Add `.files_watermark` to a sync-client ignore list if that matters
+- copies **count against the owner's quota**. A full quota means the copy is not written:
+  the watermark still applies, and **Remove Watermark** then reports honestly that it
+  cannot be undone
+- a user who **deletes the folder** gives up the ability to undo their watermarks
+- the app keeps its own triggers off these copies — they are never watermarked in place,
+  and never watermarked on delivery
+
+Copies written by earlier versions remain in appdata and are still restorable; nothing
+migrates them, and new copies always go to the owner.
+
 ## Docker (local test environment)
 
 A [`docker-compose.yml`](docker-compose.yml) is provided to run the app against a

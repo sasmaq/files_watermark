@@ -256,6 +256,14 @@ class WatermarkService {
 			return null;
 		}
 
+		// A preserved original is the app's own copy, kept precisely so the watermark can
+		// be taken off again. Serving it stamped would hand back a "clean original" that
+		// is nothing of the sort. Guarded here rather than in each plugin so the single
+		// file download and the archive path are both covered.
+		if ($this->originalStore->isBackup($file)) {
+			return null;
+		}
+
 		$config = $this->deliveryConfig($file, $publicContext);
 		if ($config === null) {
 			return null;
@@ -335,6 +343,15 @@ class WatermarkService {
 	 *              because the file is already watermarked
 	 */
 	public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null, ?IUser $actor = null): bool {
+		// The app's own preserved originals live in the owner's storage, where they are
+		// ordinary supported files as far as every trigger is concerned. Watermarking one
+		// would burn a watermark into the copy kept to undo watermarks, and store a copy
+		// of *that* — so this is the choke point every in-place path goes through, not
+		// only the listener that would queue it.
+		if ($this->originalStore->isBackup($file)) {
+			return false;
+		}
+
 		if ($this->isAlreadyWatermarked($file->getId())) {
 			$this->logger->info('files_watermark: skipping already-watermarked file {path}', [
 				'path' => $file->getPath(),
@@ -351,7 +368,7 @@ class WatermarkService {
 			// original *now*, while the stored content is still clean. A failed backup is
 			// logged and does not abort the watermark; the user simply won't be able to undo
 			// it, which removeWatermark() reports rather than pretending to restore.
-			$this->originalStore->store($file->getId(), $file->getContent());
+			$this->originalStore->store($file, $file->getContent());
 
 			$file->putContent(file_get_contents($tmpPath));
 		} finally {
@@ -385,7 +402,7 @@ class WatermarkService {
 	 */
 	public function removeWatermark(File $file): bool {
 		$fileId = $file->getId();
-		$content = $this->originalStore->read($fileId);
+		$content = $this->originalStore->read($file);
 
 		if ($content === null) {
 			$this->logger->info('files_watermark: no preserved original for {path}, cannot remove watermark', [
@@ -399,7 +416,7 @@ class WatermarkService {
 
 		// Only drop the backup once the restore has actually landed, so a failed
 		// putContent (which throws) leaves the original recoverable on a later attempt.
-		$this->originalStore->discard($fileId);
+		$this->originalStore->discard($file);
 
 		$this->logMapper->insertLog(
 			$this->userSession->getUser()?->getUID() ?? 'system',
@@ -415,8 +432,8 @@ class WatermarkService {
 	/**
 	 * Whether a watermark on this file can be undone (a preserved original exists).
 	 */
-	public function canRemoveWatermark(int $fileId): bool {
-		return $this->originalStore->has($fileId);
+	public function canRemoveWatermark(File $file): bool {
+		return $this->originalStore->has($file);
 	}
 
 	/**

@@ -956,7 +956,7 @@ class WatermarkServiceTest extends TestCase {
 		$order = [];
 		$this->originalStore->expects($this->once())
 			->method('store')
-			->with(11, 'original-bytes')
+			->with($file, 'original-bytes')
 			->willReturnCallback(function () use (&$order): bool {
 				$order[] = 'store';
 				return true;
@@ -1090,6 +1090,33 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertSame('bob@example.com', $placeholders['email']);
 	}
 
+	public function testAPreservedOriginalIsNeverWatermarkedOnDelivery(): void {
+		// The copy exists so the watermark can be taken off again. Serving it stamped
+		// would hand back a "clean original" that is nothing of the sort.
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getId')->willReturn(11);
+		$file->method('getPath')->willReturn('/alice/files/.files_watermark/originals/7');
+		$this->originalStore->method('isBackup')->with($file)->willReturn(true);
+
+		$this->assertNull($this->service->watermarkForDownload($file));
+		$this->assertNull($this->service->deliveryTrigger($file));
+	}
+
+	public function testAPreservedOriginalIsNeverWatermarkedInPlace(): void {
+		// Burning a watermark into the copy would store a copy of *that*, and the copies
+		// are supported mime types — nothing downstream would stop the recursion.
+		$file = $this->createMock(File::class);
+		$file->method('getId')->willReturn(11);
+		$file->method('getPath')->willReturn('/alice/files/.files_watermark/originals/7');
+		$this->originalStore->method('isBackup')->with($file)->willReturn(true);
+
+		$file->expects($this->never())->method('putContent');
+		$this->originalStore->expects($this->never())->method('store');
+
+		$this->assertFalse($this->service->watermarkInPlace($file, 'on_demand'));
+	}
+
 	public function testRemoveWatermarkRestoresPreservedOriginal(): void {
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')->willReturn('alice');
@@ -1099,11 +1126,11 @@ class WatermarkServiceTest extends TestCase {
 		$file->method('getId')->willReturn(11);
 		$file->method('getPath')->willReturn('/alice/files/photo.png');
 
-		$this->originalStore->method('read')->with(11)->willReturn('original-bytes');
+		$this->originalStore->method('read')->with($file)->willReturn('original-bytes');
 		$file->expects($this->once())->method('putContent')->with('original-bytes');
 		// Discarded only after the restore lands, and recorded so the file stops
 		// counting as watermarked.
-		$this->originalStore->expects($this->once())->method('discard')->with(11);
+		$this->originalStore->expects($this->once())->method('discard')->with($file);
 		$this->logMapper->expects($this->once())
 			->method('insertLog')
 			->with('alice', 11, '/alice/files/photo.png', 'removed', null);
@@ -1118,7 +1145,7 @@ class WatermarkServiceTest extends TestCase {
 		$file->method('getId')->willReturn(11);
 		$file->method('getPath')->willReturn('/alice/files/photo.png');
 
-		$this->originalStore->method('read')->with(11)->willReturn(null);
+		$this->originalStore->method('read')->with($file)->willReturn(null);
 		$file->expects($this->never())->method('putContent');
 		$this->originalStore->expects($this->never())->method('discard');
 		$this->logMapper->expects($this->never())->method('insertLog');
@@ -1133,7 +1160,7 @@ class WatermarkServiceTest extends TestCase {
 		$file->method('getId')->willReturn(11);
 		$file->method('getPath')->willReturn('/alice/files/photo.png');
 
-		$this->originalStore->method('read')->with(11)->willReturn('original-bytes');
+		$this->originalStore->method('read')->with($file)->willReturn('original-bytes');
 		$file->method('putContent')->willThrowException(new \RuntimeException('storage full'));
 		$this->originalStore->expects($this->never())->method('discard');
 		$this->logMapper->expects($this->never())->method('insertLog');

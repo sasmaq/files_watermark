@@ -109,8 +109,10 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [ ] [Archive caps](#open-3) are class constants, not configuration
 - [ ] [Rate limiting](#open-security) for on-demand applies on large files
 - [ ] [Public file-drop uploads](#open-3) are watermarked by neither the inline path nor the job
-- [ ] support the selected encryption module, and add tests, and encrypt the originals using the selected module in appdata.
-- [ ] support team folders.
+- [x] [Encryption](#open-security) — **done, but not where it was asked for.** Preserved
+  originals moved out of appdata into the owner's storage, which is the only place the
+  selected module encrypts them. Appdata could not be made to work: proved, not assumed
+- [ ] [Team Folder] support team folders.
 
 ### Test and CI gaps
 
@@ -1686,6 +1688,47 @@ read, and one SDD type is still missing.
     path, a traversal attempt, a non-hex name and an empty string — and mutation-tested:
     clearing every row instead of the stale ones fails it
 - [ ] Rate-limit or queue on-demand applies for large files — nothing throttles them today
+- [x] **Preserved originals are covered by server-side encryption.** They used to sit in appdata **in the clear**, beside the ciphertext of the very same bytes:
+  measured on a real instance with SSE on, `head -c 9` on one returned `%PDF-1.4` while the
+  user's own copy of that file began `HBEGIN:oc_encryption_module:…`. The pre-watermark copy
+  of a confidential document is the last thing that should be the readable one
+  - **the task said "encrypt them in appdata with the selected module", and that is not
+    reachable.** Three findings, each measured against Nextcloud 31.0.14 with the master key
+    enabled, not inferred:
+    1. the default module answers `shouldEncrypt()` with **false** for
+       `/appdata_…/files_watermark/originals/4242` and **true** for `/admin/files/…`. Only
+       `files`, `files_versions` and `files_trashbin` qualify
+    2. its key storage throws `BadMethodCallException` for any path whose first segment is
+       not a real user, which every appdata path is
+    3. driving the module by hand over an app-owned blob fails on read with **"Bad
+       Signature"** — `encrypt()` signs with `version + 1` while `decrypt()` verifies with
+       `version`, and that version comes from the file cache entry the storage layer keeps.
+       Nothing bumps it for bytes we encrypt ourselves. Reproduced for a virtual path *and*
+       for a real cached file, so it is the mechanism and not the path
+  - so the copies moved to `{owner}/files/.files_watermark/originals/{fileId}`, written
+    through the Files API. The storage layer encrypts them with whatever module the admin
+    selected, using the server's keys, versions and signatures. This app holds no key and
+    names no module — verified end to end: the copy on disk begins
+    `HBEGIN:oc_encryption_module:OC_DEFAULT_MODULE:cipher:AES-256-CTR:signed:true:…`, the
+    plaintext marker appears nowhere in it, the module wrote a real file key under the
+    owner's `files_encryption/keys/`, and watermark-then-undo restored byte-identical content
+  - **the costs were accepted deliberately**, and they are the reason this was a decision and
+    not a refactor: the folder is visible to sync clients and WebDAV (dot-prefixed, so the web
+    UI hides it), it counts against the owner's quota, and a user who deletes it gives up the
+    ability to undo their watermarks. A full quota means no copy is written — the watermark
+    still applies and `removeWatermark()` says it cannot be undone, which it already did
+  - the copy goes to the **owner**, not the acting user: a share recipient can lose access
+    tomorrow, and it is not their quota to spend
+  - **the app's own triggers are kept off these copies.** They are ordinary supported files in
+    a user's storage, so without a guard storing one queues a watermark of the copy, which
+    stores a copy of *that*. Guarded at the two choke points every path goes through —
+    `watermarkInPlace()` and `resolveDelivery()` — rather than in each plugin, plus an early
+    exit in `NodeWrittenListener` so the pointless job never reaches the queue
+  - copies written before the move are still read from appdata, so upgrading strands none.
+    Nothing migrates them: re-encrypting on upgrade would need every owner's storage mounted
+    at once, and a copy that is never restored is one that never needed moving
+  - `OriginalStoreTest` asserts the **location**, not just that a backup exists — the latter
+    would pass just as happily with the copy written in the clear, which is the whole bug
 - [x] **FPDI licence question retired, not answered.** FPDI has left the tree entirely
   (step 7 of the [migration](#pdf-stack-migration-to-tc-lib-pdf)), so its licence no longer
   applies to anything here; tc-lib-pdf is LGPL-3.0, as TCPDF already was
