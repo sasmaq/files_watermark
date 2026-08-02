@@ -75,6 +75,47 @@ jobs:
       - name: Check coding standard
         run: composer cs:check
 
+  psalm:
+    runs-on: ubuntu-latest
+
+    # One version is enough: psalm.xml pins `phpVersion="8.2"`, so the analysis is
+    # identical on 8.3 and the second leg would only re-prove that. The matrix that
+    # matters for version-specific behaviour is the syntax job above.
+    name: Static analysis (Psalm)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          # Same extensions as the PHPUnit job. Psalm reflects extension classes from
+          # the *running* PHP, so loading imagick here is what gets the optional Imagick
+          # branch of ImageWatermarker analysed at all — psalm.xml suppresses the
+          # undefined-class noise it would otherwise produce on a host without the
+          # extension. CI is therefore the stricter of the two, never the looser.
+          extensions: gd, imagick, gmp, mbstring, dom, zip
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-8.2-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-8.2-
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Run Psalm
+        run: composer psalm
+
   phpunit:
     runs-on: ubuntu-latest
 

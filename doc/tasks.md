@@ -103,6 +103,8 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [ ] [Archive caps](#open-3) are class constants, not configuration
 - [ ] [Rate limiting](#open-security) for on-demand applies on large files
 - [ ] [Public file-drop uploads](#open-3) are watermarked by neither the inline path nor the job
+- [ ] support the selected encryption module, and add tests
+- [ ] support team folders.
 
 ### Test and CI gaps
 
@@ -114,7 +116,9 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
   has historically caught a real bug
 - [ ] [`ZipInterceptorPlugin::streamNode` drift](#open-testing) against core, re-checked by hand
   on every Nextcloud upgrade
-- [ ] [Psalm](#open-testing) — nothing type-checks the DAV stubs against core
+- [x] [Psalm](#open-testing) — **built.** `lib/` is type-checked against core's OCP API and
+  the server stubs, clean at level 4 with no baseline, and it found three server classes
+  `lib/` referenced that no stub declared. Level 3 is the open backlog
 
 ### Documentation and release
 
@@ -1699,8 +1703,36 @@ fetches the same files through the same servers a browser does.
   does not
 - [ ] `ZipInterceptorPlugin::streamNode` duplicates core's, and the stubs cannot catch it
   drifting from `ZipFolderPlugin`. Re-diff against core on every Nextcloud upgrade
-- [ ] Psalm or PHPStan: neither `php -l` nor php-cs-fixer does any type analysis, so the DAV
-  stubs' fidelity to core is unchecked by any tool
+- [x] **Psalm — built.** `psalm.xml`, `composer psalm`, a job in `.github/workflows/php.yml`
+  and a stage in the `Jenkinsfile`. `lib/` is clean at **errorLevel 4 with no baseline**; the
+  configuration is commented in `psalm.xml`. What it does and does not settle:
+  - `nextcloud/ocp` supplies the *typed* OCP interfaces, so `lib/` is now checked against
+    core's declared API rather than against nothing. It ships no autoload section, hence the
+    `<extraFiles>` entry pointing at the directory
+  - the DAV stubs are fed in as `<stubs>`, the same `tests/stubs/CoreStubs.php` and
+    `tests/bootstrap.php` the test suite loads — one source of truth rather than a second set
+    of stubs free to drift from the first. They must be `<stubs>` and not `<extraFiles>`:
+    every declaration in them is behind an `if (!class_exists(...))` guard, and Psalm's
+    scanner only registers conditional declarations from stub files. As extraFiles they scan
+    to nothing and every symbol silently comes back undefined
+  - this still does **not** check the stubs against core — only a diff against a real server
+    does, see the entry below. What it checks is that `lib/Dav/` matches the stubs, which no
+    tool did before
+  - it found real gaps on the first run: `SabrePluginAddEvent`, `LoadAdditionalScriptsEvent`
+    and `OC\Hooks\Emitter` were referenced by `lib/` and declared by nothing, which is why
+    `SabrePluginAddListener`'s `@template-implements` had been quietly meaningless. The two
+    events are now transcribed into `CoreStubs.php` from 31.0.14 like the rest
+  - `doctrine/dbal` (^3.9, the line Nextcloud 31 ships) joined require-dev so the migrations'
+    `ISchemaWrapper` docblocks resolve to real `Schema` / `Table` types
+  - two suppressions, both commented in `psalm.xml`: `MissingOverrideAttribute` (`#[\Override]`
+    is PHP 8.3 and the floor is 8.2) and `UndefinedClass` in `ImageWatermarker` alone
+    (ext-imagick is optional and has no stub package, so it reads as undefined on a host
+    without it — both CI runners load it, so that branch *is* analysed there)
+- [ ] **Psalm level 3: 39 findings, a real backlog.** 29 are in `ImageWatermarker` —
+  `imagecreatefrom*()` and `imagecolorallocate()` returns are `false` / `null` on failure and
+  are passed straight on. The rest: `WatermarkImageStore` (4), `ShapedText` (2),
+  `ZipInterceptorPlugin` (2), `WatermarkService` (1), `UploadWatermarkPlugin` (1). Deliberately
+  not baselined — a baseline would turn the gate green with all 39 still in place
 - [ ] `ApiControllerTest` gaps: `deleteConfig` and `getLog` have no tests. `getConfig` and
   `saveConfig` are covered for the scope paths only
 - [ ] `WatermarkOnUploadJobTest` — an unknown user and a deleted file must be skipped rather
@@ -2097,6 +2129,12 @@ Open:
   - both gates were verified to actually fail (a bad-syntax file exits 1, a space-indented file
     exits 8) rather than being decorative
   - findings beyond whitespace: unused imports in `WatermarkConfigMapper` and its test
+- [x] **Static analysis in CI** — a `psalm` job in the same workflow and a stage in the
+  `Jenkinsfile`, both `composer psalm` on 8.2 only: `psalm.xml` pins `phpVersion="8.2"`, so
+  an 8.3 leg would re-prove the same analysis. Unlike the coding-standard job it loads the
+  extension set the PHPUnit job uses, because Psalm reflects extension classes from the
+  running PHP and that is what gets the optional Imagick branch analysed. See
+  [Psalm](#open-testing) for what it checks
 - [x] **Frontend CI** — `.github/workflows/nodejs.yml` runs three jobs: `npm run lint`
   (ESLint, Node 20), Jest on **Node 20 and 22**, and a `npm run build` webpack job. The build
   job is the one that matters beyond the suites: `js/` is committed, so a build that fails in

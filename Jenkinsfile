@@ -81,6 +81,27 @@ pipeline {
 					}
 				}
 
+				stage('Static analysis (Psalm)') {
+					// One version is enough: psalm.xml pins `phpVersion="8.2"`, so the
+					// analysis is identical on 8.3 and the second leg would only re-prove
+					// that. The ci/ image carries imagick, which is what gets the optional
+					// Imagick branch of ImageWatermarker analysed — Psalm reflects extension
+					// classes from the running PHP, and psalm.xml suppresses the
+					// undefined-class noise that a host without the extension would produce.
+					agent {
+						dockerfile {
+							dir 'ci'
+							filename 'php.Dockerfile'
+							additionalBuildArgs '--build-arg PHP_VERSION=8.2'
+							label 'docker'
+						}
+					}
+					steps {
+						sh 'composer install --prefer-dist --no-progress --no-interaction'
+						sh 'composer psalm'
+					}
+				}
+
 				stage('PHPUnit (PHP 8.2)') {
 					agent {
 						dockerfile {

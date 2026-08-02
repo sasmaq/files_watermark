@@ -177,8 +177,17 @@ npm run dev
 Lint:
 
 ```bash
-npm run lint
+npm run lint            # ESLint, for the Vue frontend
+composer lint           # php -l over every PHP file
+composer cs:check       # Nextcloud coding standard (composer cs:fix applies it)
+composer psalm          # Static analysis of lib/
 ```
+
+`composer psalm` type-checks `lib/` against core's public API — the `nextcloud/ocp`
+package supplies the typed OCP interfaces, and `tests/stubs/CoreStubs.php` the server
+classes that are not installable from packagist (`OCA\DAV\Connector\Sabre\*`,
+`OC\Streamer`, the two events). It is clean with no baseline; the configuration, and
+what it deliberately does not check, is commented in [`psalm.xml`](psalm.xml).
 
 ### Tests
 

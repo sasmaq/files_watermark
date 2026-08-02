@@ -24,10 +24,15 @@ declare(strict_types=1);
  *   CID=$(docker create nextcloud:31-apache)
  *   docker cp "$CID:/usr/src/nextcloud/apps/dav/lib/Connector/Sabre" ./ncsabre
  *   docker cp "$CID:/usr/src/nextcloud/lib/private/Streamer.php" ./Streamer.php
+ *   docker cp "$CID:/usr/src/nextcloud/apps/dav/lib/Events/SabrePluginAddEvent.php" .
+ *   docker cp "$CID:/usr/src/nextcloud/apps/files/lib/Event/LoadAdditionalScriptsEvent.php" .
  *   docker rm "$CID"
  *
  * then diff the declarations below against Node.php / File.php / Directory.php /
- * Streamer.php. Verified against: Nextcloud 31.0.14.
+ * Streamer.php / the two events. Verified against: Nextcloud 31.0.14.
+ *
+ * Psalm reads this file too (see the <stubs> section of psalm.xml), which is what
+ * type-checks lib/ against the signatures below instead of against nothing.
  * ---------------------------------------------------------------------------
  */
 
@@ -171,6 +176,49 @@ namespace OC {
 			public function finalize() {
 				self::$log[] = ['finalize', []];
 			}
+		}
+	}
+}
+
+namespace OCA\DAV\Events {
+
+	if (!class_exists(SabrePluginAddEvent::class)) {
+		/**
+		 * Mirrors `class SabrePluginAddEvent extends Event`
+		 * (apps/dav/lib/Events/SabrePluginAddEvent.php:20).
+		 *
+		 * Announced while the authenticated Files WebDAV server is being built;
+		 * {@see \OCA\FilesWatermark\EventListener\SabrePluginAddListener} answers it.
+		 * The public-link server announces OCP\BeforeSabrePubliclyLoadedEvent instead,
+		 * which is a real OCP class and needs no stub.
+		 */
+		class SabrePluginAddEvent extends \OCP\EventDispatcher\Event {
+			/** SabrePluginAddEvent.php:25 */
+			public function __construct(
+				private \Sabre\DAV\Server $server,
+			) {
+				parent::__construct();
+			}
+
+			/** SabrePluginAddEvent.php:34 — not nullable here, unlike SabrePluginEvent's. */
+			public function getServer(): \Sabre\DAV\Server {
+				return $this->server;
+			}
+		}
+	}
+}
+
+namespace OCA\Files\Event {
+
+	if (!class_exists(LoadAdditionalScriptsEvent::class)) {
+		/**
+		 * Mirrors `class LoadAdditionalScriptsEvent extends Event`
+		 * (apps/files/lib/Event/LoadAdditionalScriptsEvent.php:18).
+		 *
+		 * Empty in core: it carries no payload, and the body below is empty for the
+		 * same reason rather than by omission.
+		 */
+		class LoadAdditionalScriptsEvent extends \OCP\EventDispatcher\Event {
 		}
 	}
 }

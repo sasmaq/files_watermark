@@ -76,7 +76,7 @@ class WatermarkImageStore {
 			throw new \RuntimeException($this->l->t('The uploaded image could not be read.'));
 		}
 		if ($size > self::MAX_BYTES) {
-			$max = (int)(self::MAX_BYTES / 1024 / 1024);
+			$max = intdiv(self::MAX_BYTES, 1024 * 1024);
 			throw new \RuntimeException($this->l->t('The image is too large. Maximum size is %d MB.', [$max]));
 		}
 
