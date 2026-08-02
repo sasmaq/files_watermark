@@ -287,14 +287,21 @@ default module encrypts only what lives under a user's `files`, `files_versions`
 `files_trashbin` — app storage (appdata) is outside its remit, which is where these copies
 used to sit, in the clear, beside the ciphertext of the very same bytes.
 
-What that costs, and what to tell users:
+The folder is **hidden from clients**: it is dropped from every WebDAV listing, its paths
+answer 404 to every method, and sharing one of the copies is refused. So users do not see
+it in the web UI, in the desktop or mobile clients, or over WebDAV, and cannot delete it by
+accident. `doc/patch.md` documents how that works and what it deliberately does not cover.
 
-- the folder is **dot-prefixed**, so the web UI hides it, but desktop sync clients and
-  WebDAV do see it. Add `.files_watermark` to a sync-client ignore list if that matters
+What still costs something, and what to tell users:
+
 - copies **count against the owner's quota**. A full quota means the copy is not written:
   the watermark still applies, and **Remove Watermark** then reports honestly that it
   cannot be undone
-- a user who **deletes the folder** gives up the ability to undo their watermarks
+- the folder's *name* still appears in unified search results and the activity feed. Both
+  need a small Nextcloud core patch, which is written out in `doc/patch.md` and left to the
+  admin — they leak the name, never the contents
+- `occ` and server-side tooling still see the folder, as they must: that is how a restore
+  reads the copy back
 - the app keeps its own triggers off these copies — they are never watermarked in place,
   and never watermarked on delivery
 

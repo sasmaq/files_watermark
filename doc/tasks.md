@@ -162,6 +162,28 @@ Rasterised flattening existed for tamper resistance and was **removed** — see
   - pinned by `testAPageWithoutResourcesKeepsAUsableFormDictionary`, which asserts against
     the dictionary as a reader pairs it, not against the bytes that were written. Verified
     to fail without the override
+- [x] **Hiding the preserved originals from clients.** The folder is an
+  ordinary part of the user's tree — that is the price of the location SSE forces — so it was
+  listed by every client, addressable by anyone who knew the path, and shareable. Closed
+  app-side, with no core patch: `HideOriginalsPlugin` filters `beforeMultiStatus` (every
+  listing on the whole `/remote.php/dav/` tree, trashbin and the legacy endpoint included)
+  and answers 404 from `beforeMethod:*` (every method, so knowing the path buys nothing),
+  and `ShareGuardListener` refuses `BeforeShareCreatedEvent` for a copy
+  - **two traps, both measured.** Matching `/.files_watermark/` as a substring leaves the
+    folder *itself* addressable — `DELETE` on it answered **204** and took every preserved
+    original with it, because the request path normalises without a trailing slash. And
+    `setError()` on the share event is silently ignored: core acts only when
+    `isPropagationStopped()` is *also* true. Both are pinned by tests that fail when the
+    guard is weakened
+  - a share never passes the DAV guard (it is created from a path through the Files API) and
+    the public endpoint re-roots the node so its path no longer names the folder — which is
+    why registering the plugin there does **not** work. Measured before writing the listener
+  - previews were never a leak: the copies are named for their file id with no extension, so
+    they type as `application/octet-stream` and no preview provider exists. That falls out of
+    the naming, not the guards, and is written down so a rename does not quietly open it
+  - search and the activity feed still show the folder's *name*. Both need a core patch,
+    written out in [`patch.md`](patch.md) and deliberately left to the admin — they leak the
+    name, never the contents
 - [ ] **Content lost on some files printed with Windows "Microsoft Print to PDF" —
   reported, not reproduced.** The report is a white page carrying only the watermark, which
   is the same signature as the two defects already fixed here (the CropBox offset, and the
@@ -1713,10 +1735,12 @@ read, and one SDD type is still missing.
     plaintext marker appears nowhere in it, the module wrote a real file key under the
     owner's `files_encryption/keys/`, and watermark-then-undo restored byte-identical content
   - **the costs were accepted deliberately**, and they are the reason this was a decision and
-    not a refactor: the folder is visible to sync clients and WebDAV (dot-prefixed, so the web
-    UI hides it), it counts against the owner's quota, and a user who deletes it gives up the
-    ability to undo their watermarks. A full quota means no copy is written — the watermark
-    still applies and `removeWatermark()` says it cannot be undone, which it already did
+    not a refactor: the copies count against the owner's quota, and a full quota means no copy
+    is written — the watermark still applies and `removeWatermark()` says it cannot be undone,
+    which it already did
+  - **the visibility half of that cost was then taken back**, see
+    [Hiding the folder from clients](#open-1). The folder is dropped from every WebDAV
+    listing, its paths answer 404 to every method, and sharing a copy is refused
   - the copy goes to the **owner**, not the acting user: a share recipient can lose access
     tomorrow, and it is not their quota to spend
   - **the app's own triggers are kept off these copies.** They are ordinary supported files in

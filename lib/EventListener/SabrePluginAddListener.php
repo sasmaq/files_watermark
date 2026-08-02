@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\EventListener;
 
 use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
+use OCA\FilesWatermark\Dav\HideOriginalsPlugin;
 use OCA\FilesWatermark\Dav\PropFindPlugin;
 use OCA\FilesWatermark\Dav\UploadWatermarkPlugin;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
@@ -15,9 +16,10 @@ use Psr\Container\ContainerInterface;
 
 /**
  * Registers the watermark plugins on the Files WebDAV server: {@see PropFindPlugin}
- * serves the `{http://nextcloud.org/ns}is-watermarked` property for file nodes, and
+ * serves the `{http://nextcloud.org/ns}is-watermarked` property for file nodes,
  * {@see DownloadInterceptorPlugin} streams a watermarked copy on download when the
- * effective trigger is `on_download`.
+ * effective trigger is `on_download`, and {@see HideOriginalsPlugin} keeps the app's own
+ * preserved originals out of every listing and off every path.
  *
  * @template-implements IEventListener<SabrePluginAddEvent>
  */
@@ -35,6 +37,8 @@ class SabrePluginAddListener implements IEventListener {
 
 		$server = $event->getServer();
 		$server->addPlugin($this->container->get(PropFindPlugin::class));
+		// First, so the originals folder is already invisible to everything below it.
+		$server->addPlugin($this->container->get(HideOriginalsPlugin::class));
 		$server->addPlugin($this->container->get(DownloadInterceptorPlugin::class));
 		// Folder / multi-file downloads are served as an archive by core's
 		// ZipFolderPlugin, which the single-file interceptor never sees.

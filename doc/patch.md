@@ -13,148 +13,47 @@ for one reason: that is the only place Nextcloud's **server-side encryption** re
 the copy is ciphertext exactly like the file it was taken from. See
 [`tasks.md`](tasks.md) under Security for why appdata could not be made to work.
 
-The cost of that location is visibility. This document is the patch set that takes it
-back, ordered by what each one costs to keep.
+The cost of that location is visibility, and most of it is already paid for **in the app**:
+`HideOriginalsPlugin` takes the folder off WebDAV entirely and `ShareGuardListener` refuses
+to share a copy. Nothing to do for those — they ship, they are registered, and their tests
+fail if either guard is weakened. Read the class docblocks for why each hook is where it is.
 
-Everything below was **measured against Nextcloud 31.0.14** (`sabre/dav 4.7.0`), not
-inferred: each patch was applied to a running instance, the surface re-queried, and the
-instance restored. The commands that produced each result are included so you can repeat
-them.
+**This document is what is left: two patches to Nextcloud's own code**, which close the two
+places the app cannot reach from outside. They are deliberately *not* applied — patching
+shipped code has consequences that belong to whoever runs the instance, see
+[What these patches cost](#what-these-patches-cost).
+
+Both were **measured against Nextcloud 31.0.14**, not inferred: each was applied to a
+running instance, the surface re-queried, and the instance restored. The commands that
+produced each result are included so you can repeat them.
 
 ## Where the folder shows up
 
-| Surface | Visible before | Closed by |
-| --- | --- | --- |
-| WebDAV `PROPFIND` listing — desktop, mobile, any client | yes | Patch 1 (app) |
-| Web UI file list (goes through the same WebDAV endpoint) | yes | Patch 1 (app) |
-| `PROPFIND` addressed straight at the folder | yes | Patch 1 (app) |
-| Deleted-files list (`/dav/trashbin/...`) | yes | Patch 1 (app) |
-| Unified search (OCS, never touches WebDAV) | yes | Patch 2 (**core**) |
-| Activity feed and its API | yes | Patch 3 (**core**) |
-| `GET` of the exact path | yes | **nothing** — see [What none of this hides](#what-none-of-this-hides) |
-| Quota and parent folder size | yes | **nothing** |
+| Surface | Closed by |
+| --- | --- |
+| WebDAV `PROPFIND` listing — desktop, mobile, any client | `HideOriginalsPlugin` (app) |
+| Web UI file list (goes through the same WebDAV endpoint) | `HideOriginalsPlugin` (app) |
+| Legacy `/remote.php/webdav/` endpoint | `HideOriginalsPlugin` (app) |
+| `PROPFIND` addressed straight at the folder | `HideOriginalsPlugin` (app) |
+| Deleted-files list (`/dav/trashbin/...`) | `HideOriginalsPlugin` (app) |
+| `GET`, `PUT`, `DELETE`, `MOVE`, `COPY` of the exact path | `HideOriginalsPlugin` (app) |
+| A public link created **by path**, serving the bytes | `ShareGuardListener` (app) |
+| Unified search (OCS, never touches WebDAV) | **Patch 1**, below |
+| Activity feed and its API | **Patch 2**, below |
+| Thumbnails / previews | nothing needed — see [below](#what-none-of-this-hides) |
+| Quota and parent folder size | **nothing** |
 
-Patch 1 alone covers every *listing* a client can ask for. Patches 2 and 3 exist because
-search and activity are built from the file cache and from hooks, and never pass through
-the WebDAV response that Patch 1 filters.
-
----
-
-## Patch 1 — the app, no core changes
-
-The one to apply first, and the only one that survives a Nextcloud upgrade untouched.
-
-`Sabre\DAV\Server::generateMultiStatus()` emits `beforeMultiStatus` with the response's
-property list **by reference** (`3rdparty/sabre/dav/lib/DAV/Server.php:1638`), which is
-enough to drop entries from any multistatus the server is about to send. Every WebDAV
-listing — `PROPFIND` at any depth, and the `REPORT`s the Files app issues — goes through
-it, on the whole `/remote.php/dav/` tree rather than the files endpoint alone. That is why
-one plugin covers the trashbin as well.
-
-Add `lib/Dav/HideOriginalsPlugin.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace OCA\FilesWatermark\Dav;
-
-use OCA\FilesWatermark\Service\OriginalStore;
-use Sabre\DAV\Server;
-use Sabre\DAV\ServerPlugin;
-
-/**
- * Drops the app's preserved originals from every WebDAV listing.
- *
- * `beforeMultiStatus` hands over the response's property list by reference, so an entry
- * removed here never reaches the client — for `PROPFIND` at any depth, for the Files
- * app's `REPORT`s, and for the trashbin, which is the same Sabre tree.
- *
- * This hides; it does not protect. A client that already knows the exact path can still
- * `GET` the file, which is deliberate: the app's own restore path must keep working.
- */
-class HideOriginalsPlugin extends ServerPlugin {
-
-	public function initialize(Server $server): void {
-		$server->on('beforeMultiStatus', function (&$fileProperties): void {
-			$live = '/' . OriginalStore::HOME_FOLDER . '/';
-			// The trashbin renames what it takes in: `.files_watermark.d1785710850`.
-			$trashed = '/' . OriginalStore::HOME_FOLDER . '.d';
-
-			$filtered = [];
-			foreach ($fileProperties as $entry) {
-				$href = '/' . ltrim((string)($entry['href'] ?? ''), '/');
-				if (str_contains($href, $live) || str_contains($href, $trashed)) {
-					continue;
-				}
-				$filtered[] = $entry;
-			}
-			$fileProperties = $filtered;
-		});
-	}
-}
-```
-
-and register it in `lib/EventListener/SabrePluginAddListener.php`:
-
-```diff
- 		$server = $event->getServer();
- 		$server->addPlugin($this->container->get(PropFindPlugin::class));
-+		$server->addPlugin($this->container->get(HideOriginalsPlugin::class));
- 		$server->addPlugin($this->container->get(DownloadInterceptorPlugin::class));
-```
-
-with `use OCA\FilesWatermark\Dav\HideOriginalsPlugin;` alongside the other plugin imports.
-
-### Verify
-
-```bash
-# Before: the folder is in the listing
-curl -s -u admin:admin -X PROPFIND -H "Depth: 1" \
-  http://localhost:8080/remote.php/dav/files/admin/ \
-  | tr '>' '>\n' | grep -o '<d:href>[^<]*'
-```
-
-```text
-/remote.php/dav/files/admin/
-/remote.php/dav/files/admin/.files_watermark/     <-- gone once the plugin is registered
-/remote.php/dav/files/admin/Documents/
-...
-```
-
-Addressed directly, the folder returns `207` with **no `href` at all**, which clients read
-as nothing there:
-
-```bash
-curl -s -u admin:admin -X PROPFIND -H "Depth: 0" \
-  "http://localhost:8080/remote.php/dav/files/admin/.files_watermark/" | grep -c d:href
-# 0
-```
-
-Trashbin, after the folder has been deleted once:
-
-```bash
-curl -s -u admin:admin -X PROPFIND -H "Depth: 1" \
-  "http://localhost:8080/remote.php/dav/trashbin/admin/trash/" \
-  | tr '>' '>\n' | grep -o '<d:href>[^<]*'
-# only /remote.php/dav/trashbin/admin/trash/ — the .files_watermark.d… entry is gone
-```
-
-### Know before you apply it
-
-- the filter matches the folder name **anywhere** in the path, so a folder a user creates
-  themselves at `Documents/.files_watermark/` would be hidden too. The app only ever
-  writes at the home root; tighten the match to that if the over-reach matters to you
-- hiding a path a sync client has already seen reads to that client as a **remote
-  deletion**: it removes its local copy. It does not touch the server copy
+The app-side guards already cover every route that serves the **bytes**. The two patches
+below cover the two that leak the folder's *name*: search and activity are built from the
+file cache and from hooks, so they never pass through the WebDAV response the plugin
+filters, and no app-side hook reaches them.
 
 ---
 
-## Patch 2 — core: unified search
+## Patch 1 — unified search
 
 Search is built from the file cache by the Files app's search provider and never touches
-the WebDAV response, so Patch 1 does not reach it. Unpatched, the folder and its contents
+the WebDAV response, so the app's DAV guard does not reach it. Unpatched, the folder and its contents
 come back by name:
 
 ```bash
@@ -200,7 +99,7 @@ curl -s -u admin:admin -H "OCS-APIRequest: true" -H "Accept: application/json" \
 
 ---
 
-## Patch 3 — core: activity feed
+## Patch 2 — activity feed
 
 Activity is written from hooks, so it announces the copies as they are made — in the web
 UI feed and through the activity API that mobile clients read:
@@ -247,7 +146,7 @@ rewrite history.
 
 ---
 
-## What the core patches cost
+## What these patches cost
 
 Both files are shipped, signed code, so patching them **fails Nextcloud's integrity
 check**. Measured, not predicted:
@@ -275,23 +174,46 @@ Consequences to plan for:
   disabling the check for the whole instance, which is a real protection traded away for a
   cosmetic reason
 
-Because of that, Patch 1 is worth applying on its own even if you never take 2 and 3: it
-costs nothing at upgrade time and closes every surface a sync client actually lists.
+That is why these two are left to you while the app-side guards ship: the guards cost
+nothing at upgrade time and close every route that actually serves the bytes. These two buy
+the folder's *name* disappearing from search results and the activity feed, at the price of
+re-applying them after every upgrade. The trade is yours to make, and doing neither leaves
+the contents just as unreachable.
 
 ## What none of this hides
 
-- **`GET` by exact path still returns the file** (`200`). These patches hide the copies
-  from listings, search and activity; they are not an access control. Anyone who knows the
-  path and has the account can fetch the bytes — as they can for the original file itself,
-  which is the same data
+The app's own guards already close every route found here that serves the bytes; these two
+patches close the two that leak the name. What neither touches:
+
 - **quota and folder sizes still include it.** The owner's usage reflects the copies, and
   nothing in the WebDAV response is rewritten to pretend otherwise. This is the honest
   behaviour: the space really is used
 - **`occ` and server-side tooling** see the folder normally — `files:scan`,
-  `files:cleanup`, and any app reading the file cache directly
+  `files:cleanup`, and any app reading the file cache directly. It has to: the app's own
+  restore path reads these files through the same Files API
+- **shares that already exist.** `ShareGuardListener` refuses new ones; it does not revoke
+  old ones, so list them once on an instance that ran without it
 - **other apps' listings.** Anything that builds its own view from the file cache rather
-  than from WebDAV needs the same treatment as Patch 2. Search and activity are the two
-  that surfaced on a default install; an instance with more apps may have others
+  than from WebDAV needs the same treatment as Patch 1 here. Search and activity are the
+  two that surfaced on a default install; an instance with more apps may have others
+- **anyone with the account and shell or database access.** None of this is an
+  access-control boundary — it is about what clients are shown. The copies hold the same
+  bytes as the user's own file, which that user can read anyway
+
+### Previews are not a leak here, but not by design
+
+Thumbnails of the copies cannot be generated at all: preserved originals are named for
+their file id with **no extension**, so Nextcloud detects them as
+`application/octet-stream`, for which no preview provider exists.
+
+```console
+.files_watermark/originals/4244   mime=application/octet-stream   previewable=false
+Nextcloud.png                     mime=image/png                  previewable=true
+```
+
+Both files hold identical PNG bytes. This falls out of the naming scheme rather than from
+anything in these patches — change how copies are named and previews start working, at
+which point `/core/preview?fileId=…` becomes a route worth closing.
 
 ## The no-patch option
 
@@ -300,9 +222,10 @@ by `sync-exclude.lst`), and `.files_watermark` can be added to it per client or 
 the deployed configuration. That needs no server change at all and cannot be undone by an
 upgrade.
 
-It is weaker than Patch 1 in two ways worth stating plainly: it covers only the clients you
-control, and it does nothing about the web UI, the mobile apps, search or activity. Treat
-it as a supplement to Patch 1 for managed desktops, not a replacement.
+It is weaker than what the app already does, in two ways worth stating plainly: it covers
+only the clients you control, and it does nothing about the web UI, the mobile apps, search
+or activity. The app's own guards need no client cooperation at all, so this is at most a
+belt-and-braces measure for managed desktops — never a substitute.
 
 > Unlike everything above, this section is **not** measured — it describes client-side
 > configuration that was not exercised against a real desktop client here.

@@ -12,6 +12,7 @@ use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
+use OCA\FilesWatermark\EventListener\ShareGuardListener;
 use OCA\FilesWatermark\Service\PdfFontPath;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
@@ -20,6 +21,7 @@ use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\Preview\BeforePreviewFetchedEvent;
+use OCP\Share\Events\BeforeShareCreatedEvent;
 
 class Application extends App implements IBootstrap {
 
@@ -148,6 +150,10 @@ class Application extends App implements IBootstrap {
 		// SabrePluginAddEvent — it needs its own registration to be watermarked.
 		$context->registerEventListener(BeforeSabrePubliclyLoadedEvent::class, SabrePublicPluginAddListener::class);
 		$context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
+		// A share is created from a path through the Files API, so it never passes the DAV
+		// guard that hides the preserved originals — this is what keeps one from being
+		// handed out through a public link.
+		$context->registerEventListener(BeforeShareCreatedEvent::class, ShareGuardListener::class);
 	}
 
 	public function boot(IBootContext $context): void {
