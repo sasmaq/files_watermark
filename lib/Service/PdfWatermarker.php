@@ -82,7 +82,10 @@ class PdfWatermarker {
 		//
 		// The documented trade-off is real but does not apply: a subsetted font cannot be used
 		// to *edit* the text later without the same font installed. Nobody edits a watermark.
-		$pdf = new Tcpdf(
+		//
+		// WatermarkPdfDocument rather than Tcpdf itself: it corrects a library defect that
+		// blanks the page when a source page resolves to no resources. See that class.
+		$pdf = new WatermarkPdfDocument(
 			'pt',
 			subsetfont: true,
 			fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath, $config)],

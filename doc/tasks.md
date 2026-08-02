@@ -100,10 +100,16 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
   watermark exists not to do
 - [x] [PDF 1.5+ with compressed xref](#open-1) — read natively by the renderer. No
   configuration, no external binary, no host-dependent behaviour
+- [x] [A page with no resources came out blank](#open-1) — a tc-lib-pdf defect that writes
+  `/Resources` with **no value**, mis-pairing every entry after it. Corrected in
+  `WatermarkPdfDocument`
+- [ ] [Content lost on some Windows "Microsoft Print to PDF" files](#open-1) — reported from
+  the field, **not reproduced**. 30+ synthetic variants of that producer's structure all
+  round-trip intact; `tests/diagnose-pdf.php` is the instrument for the actual file
 - [ ] [Archive caps](#open-3) are class constants, not configuration
 - [ ] [Rate limiting](#open-security) for on-demand applies on large files
 - [ ] [Public file-drop uploads](#open-3) are watermarked by neither the inline path nor the job
-- [ ] support the selected encryption module, and add tests
+- [ ] support the selected encryption module, and add tests, and encrypt the originals using the selected module in appdata.
 - [ ] support team folders.
 
 ### Test and CI gaps
@@ -134,6 +140,41 @@ Rasterised flattening existed for tamper resistance and was **removed** — see
 
 ### Open {#open-1}
 
+- [x] **A page with no resources came out blank — a library defect, corrected.** tc-lib-pdf
+  assembles the imported page's Form XObject dictionary with `sprintf`, and its resource
+  cloner returns an empty *string* rather than `<< >>` for a page that resolves to no
+  resources. The dictionary then reads
+  `/Resources /Group << … >> /Filter /FlateDecode /Length 96`: `/Resources` swallows
+  `/Group`, the group dictionary is left standing where a **key** belongs, and every entry
+  after it pairs with the wrong name — `/Filter` included, so a reader hands deflate bytes
+  to the content interpreter and draws nothing. The page arrives blank with the watermark on
+  it and every original byte still in the file
+  - a page resolves to no resources when it declares none and inherits none, which is legal
+    for content that names no font, image or graphics state — and is also what a
+    `/Resources` object that cannot be found produces
+  - corrected in `WatermarkPdfDocument` by overriding `getOutImportedObjects()`, the
+    library's own hook for that block of the body. **Repairing the finished file instead
+    corrupts it**: the five inserted bytes shift everything after them while the xref still
+    points at the old offsets, so the document stops parsing at all. That was the first
+    attempt, and re-reading the output inside the test is what caught it
+  - pinned by `testAPageWithoutResourcesKeepsAUsableFormDictionary`, which asserts against
+    the dictionary as a reader pairs it, not against the bytes that were written. Verified
+    to fail without the override
+- [ ] **Content lost on some files printed with Windows "Microsoft Print to PDF" —
+  reported, not reproduced.** The report is a white page carrying only the watermark, which
+  is the same signature as the two defects already fixed here (the CropBox offset, and the
+  valueless `/Resources` above), so it is likely a third path to the same end rather than
+  anything to do with that producer by name
+  - **30+ synthetic variants of that producer's structure all round-trip intact**: object
+    streams behind a cross-reference stream, `/Resources` inline / indirect / inherited /
+    absent, `/Font` sub-dictionaries indirect, Type0 → CIDFontType2 → `FontFile2` chains,
+    ICCBased colour spaces, images with soft masks, transparency groups, `/Contents` arrays,
+    indirect `/Length`, `/Filter` as a name and as an array, CRLF and bare-CR line endings,
+    `stream\r\n` against `stream\n`, and multi-page documents sharing one font object
+  - `tests/diagnose-pdf.php` is what closes this: run against the real file, it reports per
+    page whether the content survived the import, whether it is still readable as operators,
+    and whether every resource the copied stream names is still defined. It is a bench
+    instrument, not part of the app — for a file that cannot be shared
 - [x] **PDF 1.5+ with compressed xref — solved outright.** The renderer reads these files
   natively, so they are watermarked with **no external binary and no configuration**. Two of
   the three Nextcloud skeleton PDFs are such files, which is why this mattered so much:

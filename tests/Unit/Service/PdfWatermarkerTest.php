@@ -17,6 +17,7 @@ class PdfWatermarkerTest extends TestCase {
 	use CompressedXrefFixture;
 	use CroppedPageFixture;
 	use PdfFixtures;
+	use ResourcelessPageFixture;
 
 	/**
 	 * Reordering, medial forms and a lam-alef ligature in one word, so a shaper that only
@@ -599,6 +600,112 @@ class PdfWatermarkerTest extends TestCase {
 			$fixture,
 			'a classic xref table means the fixture is readable by any parser',
 		);
+	}
+
+	/**
+	 * A page with no resources must still come out as a *readable* form dictionary.
+	 *
+	 * This is the "the watermark deleted my content" case. tc-lib-pdf writes the imported
+	 * page's dictionary with `sprintf` and its resource cloner returns an empty string —
+	 * not `<< >>` — when a page resolves to no resources, so the dictionary reads
+	 * `/Resources /Group << … >> /Filter /FlateDecode`: `/Resources` swallows `/Group`,
+	 * the group dictionary stands where a key belongs, and **every entry after it pairs
+	 * with the wrong name**. `/Filter` is one of them, so a reader takes deflate bytes for
+	 * content operators and draws nothing. The page arrives blank with the overlay on it
+	 * and every original byte still in the file.
+	 *
+	 * Asserted by parsing the output rather than by matching the bytes that were written:
+	 * what matters is what a reader makes of the dictionary, which is the thing that broke.
+	 */
+	public function testAPageWithoutResourcesKeepsAUsableFormDictionary(): void {
+		$source = $this->tmpDir . '/no-resources.pdf';
+		file_put_contents($source, $this->buildResourcelessPagePdf());
+		$dest = $this->tmpDir . '/out.pdf';
+
+		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
+
+		$form = $this->importedFormDict($dest);
+		$this->assertNotSame([], $form, 'no imported form XObject in the output');
+
+		$this->assertArrayHasKey('Resources', $form);
+		$this->assertSame(
+			'<<',
+			$form['Resources'],
+			'/Resources holds a name instead of a dictionary, so it has swallowed the '
+			. 'entry that follows it',
+		);
+
+		// The entry that actually costs the user their content: with the value missing,
+		// /Filter lands on the wrong key and the stream is read as if it were not
+		// compressed at all.
+		$this->assertArrayHasKey('Filter', $form, '/Filter was lost from the form dictionary');
+		$this->assertSame('/FlateDecode', $form['Filter']);
+
+		$this->assertSame(1, $this->readPageCount($dest));
+	}
+
+	/**
+	 * The fixture has to keep reaching the case, or the test above passes on an ordinary
+	 * page that was never affected.
+	 */
+	public function testTheResourcelessFixtureDeclaresNoResources(): void {
+		$fixture = $this->buildResourcelessPagePdf();
+
+		$this->assertStringNotContainsString(
+			'/Resources',
+			$fixture,
+			'the fixture now declares resources, so it no longer reproduces the case',
+		);
+		$this->assertStringContainsString('/Filter /FlateDecode', $fixture);
+	}
+
+	/**
+	 * The imported page's Form XObject dictionary, as a reader sees it: keys in order,
+	 * mapped to the token that follows each one.
+	 *
+	 * Deliberately a flat token pairing rather than a parsed structure — the defect being
+	 * pinned *is* a key/value misalignment, and a parser that helpfully re-pairs the
+	 * entries would hide it.
+	 *
+	 * @return array<string, string>
+	 */
+	private function importedFormDict(string $pdf): array {
+		$raw = (string)file_get_contents($pdf);
+		if (preg_match('~<< /Type /XObject /Subtype /Form.*?/Length \d+ >>~s', $raw, $match) !== 1) {
+			return [];
+		}
+
+		// Tokens: names, dictionary and array openers, numbers.
+		preg_match_all('~/[^\s/<>\[\]()]+|<<|>>|\[|\]|[\d.-]+~', $match[0], $tokens);
+
+		$dict = [];
+		$depth = 0;
+		$count = count($tokens[0]);
+		for ($i = 0; $i < $count; $i++) {
+			$token = $tokens[0][$i];
+			if ($token === '<<' || $token === '[') {
+				$depth++;
+				continue;
+			}
+			if ($token === '>>' || $token === ']') {
+				$depth--;
+				continue;
+			}
+			// Only the outermost dictionary's own keys.
+			if ($depth === 1 && str_starts_with($token, '/')) {
+				$key = substr($token, 1);
+				if (!array_key_exists($key, $dict)) {
+					$dict[$key] = $tokens[0][$i + 1] ?? '';
+				}
+				// Skip the value so it is never read as a key of its own.
+				$i++;
+				if (($tokens[0][$i] ?? '') === '<<' || ($tokens[0][$i] ?? '') === '[') {
+					$i--;
+				}
+			}
+		}
+
+		return $dict;
 	}
 
 	/**
