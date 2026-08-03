@@ -42,6 +42,51 @@ describe('On-upload watermarking', () => {
 		})
 	})
 
+	/**
+	 * The second upload to a path, which used to land **clean and still badged**.
+	 *
+	 * The double-burn guard asks whether this *file id* is watermarked, and a file id
+	 * survives having its content replaced — so the guard meant to stop a file being
+	 * stamped twice suppressed the first stamp of entirely new bytes. Two uploads was all
+	 * it took to store an unwatermarked file under the policy that exists to prevent that.
+	 *
+	 * Three things have to hold, and the last one is the one that bites: the overwrite is
+	 * watermarked, it is watermarked **in-request** rather than left to cron, and undoing
+	 * it gives back the file that was actually uploaded second. The preserved original is
+	 * taken before the burn and never overwritten, so a stale copy of the *first* upload
+	 * meant "remove watermark" restored a file the user had already replaced.
+	 */
+	it('watermarks an overwrite, and keeps the right original for it', () => {
+		const file = `${folder}/overwrite.pdf`
+		let second
+
+		cy.task('fixture:pdf', { pages: 1, text: 'first upload' })
+			.then((base64) => cy.wmUpload(file, base64))
+		cy.wmDownload(file).then((base64) => {
+			cy.task('probe:pdf', { base64 }).its('watermarked').should('be.true')
+		})
+
+		// A different document at the same path.
+		cy.task('fixture:pdf', { pages: 3, text: 'second upload' }).then((base64) => {
+			second = base64
+			cy.wmUpload(file, base64)
+		})
+
+		cy.wmDownload(file).then((base64) => {
+			expect(base64, 'the overwrite was served back as uploaded').to.not.eq(second)
+			cy.task('probe:pdf', { base64 }).then((pdf) => {
+				expect(pdf.watermarked, 'the second upload was stored clean').to.be.true
+				expect(pdf.pages, 'the wrong document was watermarked').to.eq(3)
+			})
+		})
+
+		cy.wmRemove(file)
+		cy.wmDownload(file).then((base64) => {
+			expect(base64, 'undoing the watermark restored the file the upload replaced')
+				.to.eq(second)
+		})
+	})
+
 	it('watermarks a chunked upload, which lands as a MOVE and never a PUT', () => {
 		const file = `${folder}/chunked.pdf`
 

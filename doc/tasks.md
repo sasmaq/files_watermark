@@ -44,7 +44,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 482 PHPUnit + 91 Jest + 88 Cypress E2E, no binary-conditional skips | Psalm level 3, the `on_upload` overwrite hole |
+| [Testing](#testing) | 489 PHPUnit + 91 Jest + 89 Cypress E2E, no binary-conditional skips | Psalm level 3, the Bidi shaping bug |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -122,9 +122,9 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [x] [The trigger × access matrix](#manual-verification-matrix) — **all four triggers ×
   all six access paths are driven automatically** by `12-trigger-matrix.cy.js`, 25 tests.
   It found one on its first run: see the `on_upload` overwrite hole below
-- [ ] [**`on_upload` does not watermark an overwrite, and still badges it**](#open-3) — a
-  second upload to the same path lands clean while the audit row and the `is-watermarked`
-  property stay behind. Measured, not suspected
+- [x] [**The `on_upload` overwrite hole**](#open-3) — **fixed.** A second upload to the same
+  path used to land clean and still badged; the fix caught a second bug behind it and a
+  silent data-loss path behind that
 - [ ] [`ZipInterceptorPlugin::streamNode` drift](#open-testing) against core, re-checked by hand
   on every Nextcloud upgrade
 - [x] [Psalm](#open-testing) — **built.** `lib/` is type-checked against core's OCP API and
@@ -476,32 +476,47 @@ share, and public-link access. This is where every delivery-time bug has been fo
 
 ### Open {#open-3}
 
-- [ ] **`on_upload` does not watermark an overwrite, and the file still claims it is
-  watermarked.** Found by `12-trigger-matrix.cy.js` on its first run. Upload a supported file
-  under `on_upload`, then upload again to the same path: the second copy is stored **clean**,
-  while the audit row and the `is-watermarked` property from the first upload stay behind, so
-  the Files list badges it and `canRemoveWatermark()` offers to undo a watermark that is not
-  there. Measured on 31.0.14:
+- [x] **The `on_upload` overwrite hole — fixed, and it had two more bugs behind it.**
+  Found by `12-trigger-matrix.cy.js` on its first run: upload a supported file under
+  `on_upload`, then upload again to the same path, and the second copy was stored **clean**
+  while the audit row and the `is-watermarked` property from the first upload stayed behind.
+  Measured on 31.0.14 — a 34,851-byte watermarked file, re-uploaded, came back as the
+  868-byte clean fixture with `is-watermarked` still reporting 1
 
-  | step | stored bytes | watermark markers | `is-watermarked` |
-  | --- | --- | --- | --- |
-  | 1st PUT (create) | 34,851 | 3 | — |
-  | 2nd PUT (overwrite) | 868 — the clean fixture, byte for byte | 0 | **1** |
-
-  - the cause is one line: `watermarkInPlace()` returns early on
-    `isAlreadyWatermarked($fileId)`, and **a file id survives an overwrite**. The guard
-    exists to stop the same *content* being burned twice; keyed by id, it also suppresses the
-    first burn of entirely new content that reuses the id
-  - it is a bypass, not only an inconsistency: two uploads of the same path is all it takes
-    to store an unwatermarked file under a policy that exists to prevent exactly that
-  - the fix is a design decision rather than a patch, which is why it is written down here
-    rather than applied: the row cannot simply be deleted on write (in-place rows are what
-    the badge and the double-burn guard read, and the audit trail is deliberately not
-    something a later write may erase), so the guard needs to compare the *content* it
-    guarded — a size/mtime/etag or a stored hash on the log row — rather than the id alone
-  - `12-trigger-matrix` deliberately creates its `on_upload` file fresh so the matrix keeps
-    measuring the matrix. The overwrite case belongs in `02-on-upload.cy.js` with the fix
-
+  - **the cause**: `watermarkInPlace()` returns early on `isAlreadyWatermarked($fileId)`,
+    and **a file id survives an overwrite**. The guard exists to stop the same *content*
+    being burned twice; keyed by id, it also suppressed the first burn of new content that
+    reused the id. Two uploads of the same path was all it took to store an unwatermarked
+    file under the policy that exists to prevent exactly that
+  - **not fixed by bypassing the guard for `on_upload`**, which was the obvious move and is
+    wrong twice over: the background job re-burns through the same call and would stamp an
+    already-stamped file a second time, and it does nothing for the badge, for the stale
+    preserved original, or for writes that never reach the DAV plugin
+  - **fixed by catching the write instead.** `NodeWrittenListener` already tells this app's
+    own writes from a user's — that is what `suppressFor()` is for — so an unsuppressed
+    write to a file with a standing watermark now records a `replaced` row, which the
+    mapper's latest-row logic treats exactly like `removed`. Ahead of every policy check on
+    purpose: the watermarked bytes are gone whatever the current trigger is, so this also
+    fixes the badge under `on_demand` and `on_download`, where nothing would ever re-burn
+  - **inferring it later cannot work**, which is worth writing down: mtime is
+    client-supplied on sync uploads (`X-OC-MTime`), so a fresh upload routinely looks
+    *older* than the watermark it replaced, and hashing content on every badge lookup would
+    read every file in a directory listing
+  - **second bug, revealed by the first being fixed**: with the guard cleared the burn ran
+    and then *threw*. `Sabre\DAV\Tree` caches nodes per path, and on an overwrite the
+    cached node predates the write — its storage resolves against the data root, so
+    `getContent()` read `data/<path>` instead of `data/<user>/files/<path>`. The burn fell
+    back to cron, which is not what "watermarked in-request" means. `markDirty($path)`
+    before re-reading the node fixes it; a create never hit it, because there was no node
+    to cache
+  - **third, and the one that would have hurt**: the preserved original is taken before the
+    burn and `OriginalStore::store()` never overwrites, so after an overwrite the copy
+    still held the *first* upload. "Remove watermark" would have restored a file the user
+    had already replaced — silent data loss, from the feature that exists to protect them.
+    The replacement now discards it, and the next burn preserves the right bytes. Verified
+    end to end: upload A → overwrite with B → undo restores **B**
+  - pinned by `02-on-upload.cy.js` (`watermarks an overwrite, and keeps the right original
+    for it`, verified to fail without the fix), plus mapper, service and listener unit tests
 - [x] **Tar archives are broken in core.** `Accept: application/x-tar` yields a truncated
   archive, and it reproduces identically on the untouched core path, so it is not caused by
   this app. Browsers request zip. Worth an upstream report

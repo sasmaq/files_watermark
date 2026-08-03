@@ -67,6 +67,13 @@ class NodeWrittenListener implements IEventListener {
 			return;
 		}
 
+		// Past this point the write is the *user's*, not one of ours — which is the only
+		// moment an overwrite of watermarked content can be recognised for what it is.
+		// Ahead of every policy check below on purpose: the watermarked bytes are gone
+		// whatever the current trigger is, and a badge that outlives them is a lie the
+		// admin never configured.
+		$this->watermarkService->noteContentReplaced($node);
+
 		$uid = $this->userSession->getUser()?->getUID();
 		if ($uid === null) {
 			// No session to attribute the watermark to, and the job needs a uid to

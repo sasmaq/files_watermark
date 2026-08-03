@@ -120,6 +120,44 @@ class NodeWrittenListenerTest extends TestCase {
 		$this->listener->handle($this->fileEvent());
 	}
 
+	public function testAUserWriteOverWatermarkedContentIsReportedToTheService(): void {
+		// The listener is the only place that can tell a user's write from one of this
+		// app's own, so it is where an overwrite has to be caught.
+		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_demand'));
+
+		$this->watermarkService->expects($this->once())->method('noteContentReplaced');
+
+		$this->listener->handle($this->fileEvent());
+	}
+
+	public function testThisAppsOwnWriteIsNotAReplacement(): void {
+		// The burn rewrites the file it is watermarking. Reported as a replacement it
+		// would cancel the very watermark being applied.
+		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_upload'));
+
+		$this->watermarkService->expects($this->never())->method('noteContentReplaced');
+
+		$event = $this->fileEvent('application/pdf', 99);
+		NodeWrittenListener::suppressFor(99, function () use ($event): void {
+			$this->listener->handle($event);
+		});
+	}
+
+	public function testAReplacementIsReportedWhateverTheTriggerIs(): void {
+		// The watermarked bytes are gone whatever the policy says, and a badge that
+		// outlives them is a lie no admin configured. on_download never burns anything,
+		// so this would be the easy case to skip.
+		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_download'));
+
+		$this->watermarkService->expects($this->once())->method('noteContentReplaced');
+		$this->jobList->expects($this->never())->method('add');
+
+		$this->listener->handle($this->fileEvent());
+	}
+
 	public function testDoesNotQueueWithoutASession(): void {
 		$listener = new NodeWrittenListener(
 			$this->watermarkService,

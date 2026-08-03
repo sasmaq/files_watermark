@@ -51,12 +51,27 @@ class WatermarkLogMapper extends QBMapper {
 	private const REMOVAL_TRIGGER = 'removed';
 
 	/**
+	 * Trigger recorded when a *user's own write* replaces content this app had
+	 * watermarked — an upload over an existing file, most often from a sync client.
+	 *
+	 * It cancels an earlier apply for the same reason `removed` does: the watermarked
+	 * bytes are gone. The distinction is who did it and whether anything was restored,
+	 * which is exactly what an audit trail should keep separate.
+	 */
+	private const REPLACEMENT_TRIGGER = 'replaced';
+
+	/** The in-place events that leave a file's stored content *not* watermarked. */
+	private const CANCELLING_TRIGGERS = [self::REMOVAL_TRIGGER, self::REPLACEMENT_TRIGGER];
+
+	/**
 	 * Return the subset of the given file ids whose *stored* content is watermarked
 	 * right now. Runs as a single batched `IN (...)` query.
 	 *
 	 * A file's status is decided by its **most recent** in-place event, not by the mere
 	 * existence of one: apply → removed → apply must end up watermarked, and
-	 * apply → removed must not. Rows are read in insertion order (`id`, which is
+	 * apply → removed must not. `replaced` cancels an apply the same way — a user's own
+	 * write over a watermarked file leaves bytes that carry no watermark, whatever the
+	 * log says happened before. Rows are read in insertion order (`id`, which is
 	 * monotonic — `created_at` has only second resolution and ties on fast round-trips)
 	 * and the last one per file wins.
 	 *
@@ -93,7 +108,7 @@ class WatermarkLogMapper extends QBMapper {
 
 		$ids = [];
 		foreach ($latest as $fileId => $trigger) {
-			if ($trigger !== self::REMOVAL_TRIGGER) {
+			if (!in_array($trigger, self::CANCELLING_TRIGGERS, true)) {
 				$ids[] = $fileId;
 			}
 		}

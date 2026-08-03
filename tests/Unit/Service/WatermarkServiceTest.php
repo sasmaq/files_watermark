@@ -1117,6 +1117,46 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertFalse($this->service->watermarkInPlace($file, 'on_demand'));
 	}
 
+	/**
+	 * The overwrite hole, closed: a user's write over watermarked content is recorded so
+	 * the guard, the badge and the preserved original all stop describing bytes that are
+	 * gone.
+	 */
+	public function testAUserWriteOverWatermarkedContentIsRecordedAndOrphansTheBackup(): void {
+		$file = $this->createMock(File::class);
+		$file->method('getId')->willReturn(11);
+		$file->method('getPath')->willReturn('/alice/files/report.pdf');
+
+		$this->logMapper->method('findWatermarkedFileIds')->with([11])->willReturn([11]);
+
+		// The copy belongs to content that no longer exists. Left in place, "remove
+		// watermark" would restore the *previous* file over the one just uploaded.
+		$this->originalStore->expects($this->once())->method('discard')->with($file);
+
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('alice', 11, '/alice/files/report.pdf', 'replaced', null);
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$this->userSession->method('getUser')->willReturn($user);
+
+		$this->service->noteContentReplaced($file);
+	}
+
+	public function testAWriteToAnUnwatermarkedFileRecordsNothing(): void {
+		// A first upload, or content already superseded: there is nothing standing to
+		// replace, and a row here would cancel a watermark that was never applied.
+		$file = $this->createMock(File::class);
+		$file->method('getId')->willReturn(11);
+		$this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
+
+		$this->originalStore->expects($this->never())->method('discard');
+		$this->logMapper->expects($this->never())->method('insertLog');
+
+		$this->service->noteContentReplaced($file);
+	}
+
 	public function testRemoveWatermarkRestoresPreservedOriginal(): void {
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')->willReturn('alice');

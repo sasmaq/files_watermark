@@ -117,6 +117,37 @@ class WatermarkLogMapperTest extends TestCase {
 		$this->assertSame([2], $this->mapper->findWatermarkedFileIds([2, 5]));
 	}
 
+	public function testAReplacementCancelsAnEarlierWatermark(): void {
+		// A user's own write over a watermarked file leaves bytes that carry no
+		// watermark. Keyed by file id alone the row would outlive the content it
+		// describes, which is what let a second upload land clean and still badged.
+		$this->mockQuery(
+			[
+				['file_id' => 2, 'trigger' => 'on_upload'],
+				['file_id' => 5, 'trigger' => 'on_upload'],
+				['file_id' => 5, 'trigger' => 'replaced'],
+			],
+			[2, 5],
+		);
+
+		$this->assertSame([2], $this->mapper->findWatermarkedFileIds([2, 5]));
+	}
+
+	public function testAWatermarkAfterAReplacementCountsAgain(): void {
+		// upload → replaced → upload: the overwrite is watermarked in its turn, and the
+		// file is watermarked again. Only the last event counts.
+		$this->mockQuery(
+			[
+				['file_id' => 7, 'trigger' => 'on_upload'],
+				['file_id' => 7, 'trigger' => 'replaced'],
+				['file_id' => 7, 'trigger' => 'on_upload'],
+			],
+			[7],
+		);
+
+		$this->assertSame([7], $this->mapper->findWatermarkedFileIds([7]));
+	}
+
 	public function testReapplyAfterRemovalCountsAsWatermarkedAgain(): void {
 		// apply → removed → apply: only the last event counts.
 		$this->mockQuery(

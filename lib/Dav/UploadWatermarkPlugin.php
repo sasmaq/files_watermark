@@ -73,6 +73,13 @@ class UploadWatermarkPlugin extends ServerPlugin {
 		}
 
 		try {
+			// The tree caches nodes per path, and for an *overwrite* the cached one was
+			// built before this write landed: its storage still resolves against the data
+			// root, so `getContent()` reads `data/<path>` instead of
+			// `data/<user>/files/<path>` and throws. The burn then falls back to cron,
+			// which is not what "watermarked in-request" means. A create never hit it —
+			// there was no node to cache.
+			$this->server->tree->markDirty($path);
 			$davNode = $this->server->tree->getNodeForPath($path);
 		} catch (NotFound) {
 			return;

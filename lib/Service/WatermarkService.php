@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Service;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
 use OCP\Files\FileInfo;
@@ -27,6 +28,13 @@ class WatermarkService {
 
 	/** Log trigger recorded when a watermark is undone; see {@see removeWatermark}. */
 	public const TRIGGER_REMOVED = 'removed';
+
+	/**
+	 * A user's own write replaced content this app had watermarked.
+	 *
+	 * Recorded rather than inferred: see {@see noteContentReplaced}.
+	 */
+	public const TRIGGER_REPLACED = 'replaced';
 
 	/** Per-request memo for {@see resolveConfig}. One policy, so one slot. */
 	private ?WatermarkConfig $configCache = null;
@@ -412,7 +420,13 @@ class WatermarkService {
 			return false;
 		}
 
-		$file->putContent($content);
+		// Suppressed like every other write this app makes: without it the restore looks
+		// to NodeWrittenListener like a user replacing watermarked content, and a
+		// `replaced` row lands in the audit trail a moment before the `removed` one that
+		// actually describes what happened.
+		NodeWrittenListener::suppressFor($fileId, function () use ($file, $content): void {
+			$file->putContent($content);
+		});
 
 		// Only drop the backup once the restore has actually landed, so a failed
 		// putContent (which throws) leaves the original recoverable on a later attempt.
@@ -427,6 +441,52 @@ class WatermarkService {
 		);
 
 		return true;
+	}
+
+	/**
+	 * Record that a user's own write replaced watermarked content, and drop the copy that
+	 * write orphaned.
+	 *
+	 * **This is what makes an overwrite behave.** The double-burn guard asks the log
+	 * whether this *file id* has a standing watermark, and a file id survives having its
+	 * content replaced — so without this, re-uploading over a watermarked file left the
+	 * new bytes clean while the badge, the guard and the audit row all still described the
+	 * bytes that had just been thrown away. Two uploads of the same path were enough to
+	 * store an unwatermarked file under a policy whose whole purpose is preventing that.
+	 *
+	 * Caught at the write rather than inferred afterwards, because every way of inferring
+	 * it later is wrong: mtime is client-supplied on sync uploads (`X-OC-MTime`), so a
+	 * fresh upload routinely looks *older* than the watermark it replaced, and hashing the
+	 * content on every badge lookup would read every file in a directory listing. The write
+	 * itself is unambiguous, and {@see NodeWrittenListener::suppressFor} already tells this
+	 * app's own writes apart from a user's.
+	 *
+	 * The preserved original goes with it. It belongs to content that no longer exists, and
+	 * keeping it would let "remove watermark" restore *the previous file* over the one the
+	 * user just uploaded — losing their data to a feature that exists to protect it.
+	 * {@see OriginalStore::store()} never overwrites, so discarding here is also what lets
+	 * the next burn preserve the right bytes.
+	 *
+	 * A `replaced` row rather than a `removed` one: nothing was restored and nobody asked
+	 * for a removal. Both cancel the apply for the guard's purposes; only one of them is
+	 * true.
+	 */
+	public function noteContentReplaced(File $file): void {
+		$fileId = $file->getId();
+		if (!$this->isAlreadyWatermarked($fileId)) {
+			// Nothing standing to replace: a first upload, or content already superseded.
+			return;
+		}
+
+		$this->originalStore->discard($file);
+
+		$this->logMapper->insertLog(
+			$this->userSession->getUser()?->getUID() ?? 'system',
+			$fileId,
+			$file->getPath(),
+			self::TRIGGER_REPLACED,
+			null,
+		);
 	}
 
 	/**
