@@ -128,6 +128,40 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
+	 * A Latin name inside an Arabic line reaches the page in its own left-to-right order.
+	 *
+	 * Asserted on the PDF's own bytes rather than trusted to follow from the image path,
+	 * because **this renderer does its own Bidi**: `getTextCell()` builds a `Bidi` internally
+	 * from the logical string, so it reaches the rule N1 defect
+	 * (`patches/patch-tc-lib-unicode-bidi-n1.php`) by a different route than
+	 * {@see ShapedText::shape()} does. Unpatched, this drew `Doe John - سري` — the watermark
+	 * naming the wrong person, in the format most likely to be handed to a court.
+	 */
+	public function testLatinNameKeepsItsOrderInsideAnArabicLine(): void {
+		$source = $this->createSourcePdf(1);
+		$dest = $this->tmpDir . '/arabic-latin.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate('سري - {username}');
+		$this->watermarker->apply($source, $dest, $config, ['username' => 'John Doe']);
+
+		$drawn = $this->firstTextRunCodepoints($dest);
+		$ascii = implode('', array_map(
+			static fn (int $c): string => $c >= 0x20 && $c <= 0x7E ? chr($c) : '',
+			$drawn,
+		));
+
+		$this->assertSame('John Doe - ', $ascii, 'the two words of the name must not swap');
+		// The Arabic half must still be there, shaped — a fix that dropped it would satisfy
+		// the assertion above.
+		$this->assertSame(
+			$this->codepointsOf(ShapedText::shape('سري - John Doe')),
+			$drawn,
+			'the PDF and image renderers must agree, glyph for glyph',
+		);
+	}
+
+	/**
 	 * **One face draws everything**, so a watermark looks the same whatever the text is.
 	 *
 	 * The predecessor kept Latin on standard-14 Helvetica and embedded a second face only

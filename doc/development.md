@@ -1121,36 +1121,118 @@ base direction is pinned to the rule the renderer uses rather than to the viewer
   test mock returns source strings — and the new ones pin the preview direction (six cases,
   including that it ignores `dir="rtl"` on the document), the LTR file path, and the plural
 
-### Found while doing this: the renderer reverses Latin words in an RTL line {#open-bidi}
+### Found while doing this, fixed later: the renderer reversed Latin words in an RTL line {#open-bidi}
 
 Comparing the preview against the shaper — the thing the pinned direction makes possible — turned
 up a real bug in `tc-lib-unicode`'s Bidi implementation, in the app's dependency rather than in
 its own code.
 
-**In a right-to-left paragraph, each space-separated Latin word is placed as its own run, so a
-multi-word Latin name comes out backwards.** Measured through `ShapedText::shape()`:
+**In a right-to-left paragraph, each space-separated Latin word was placed as its own run, so a
+multi-word Latin name came out backwards.** Measured through `ShapedText::shape()`:
+
+| Template | Was drawn as | Now draws as |
+| --- | --- | --- |
+| `سري - John Doe` | `Doe John - ﻱﺮﺳ` — reversed | `John Doe - ﻱﺮﺳ` |
+| `محمد - John Q Public` | `Public Q John - ﺪﻤﺤﻣ` | `John Q Public - ﺪﻤﺤﻣ` |
+| `سري John` | `John ﻱﺮﺳ` — was already right | `John ﻱﺮﺳ` |
+| `John سري Doe` | `John ﻱﺮﺳ Doe` (LTR base) | `John ﻱﺮﺳ Doe` |
+| `John Doe - سري` | `John Doe - ﻱﺮﺳ` (LTR base) | `John Doe - ﻱﺮﺳ` |
+
+Per UAX #9 rule N1 a neutral between two same-direction characters takes that direction, so the
+space inside `John Doe` is L and the name is one run.
+
+**Root cause: N1 and N2 were dead code.** `Bidi\StepN` gated all three of its neutral-resolution
+paths on a character's type being the literal string `'NI'`, and no character is ever given that
+type — `NI` is not a bidirectional type at all, it is UAX #9's *class* of neutral and isolate
+types (`B`, `S`, `WS`, `ON`, `FSI`, `LRI`, `RLI`, `PDI`). `StepX::pushChar()` stores the concrete
+type (`'WS'` for a space) and uses `'NI'` only as a sentinel in the directional status stack.
+Confirmed by instrumenting the N1 entry check: it returned early on every character of every
+string. Neutrals were therefore never resolved, so the space kept the paragraph's RTL level while
+the two Latin words were bumped above it, and L2 reversed each word as its own run.
+
+- **It bit exactly the default template with an Arabic prefix** — `سري - {displayname}` with a
+  two-word display name — which is a plausible thing for an Arabic deployment to configure, and
+  the watermark then named the person backwards. A watermark exists to identify someone, so this
+  was not cosmetic
+- The browser got it right, so **the preview and the output disagreed** for this one shape. That
+  was by design of the pinning: the preview is the contract, and a disagreement is a renderer bug
+  rather than something to paper over by making the preview wrong too. They agree again now
+- Fixed by testing membership of the NI class instead of equality to `'NI'`, in
+  `patches/patch-tc-lib-unicode-bidi-n1.php`. N2 comes back to life with the same change, which
+  is intended and is a no-op in effect — it assigns the embedding direction, leaving the level
+  unchanged under I1/I2 — but it is what makes the remaining neutrals strongly typed as the rules
+  require
+- **Cross-checked against `python-bidi`** on thirteen mixed Arabic/Latin strings: twelve agree
+  exactly. The thirteenth, `سري - John Doe (Acme)`, differs only because that reference implements
+  no bracket pairs at all (no N0) — tc-lib's own N0 is right there and the reference is wrong
+- Guarded by `ShapedTextTest::testLatinRunsAreNotReorderedInsideRtl()`, seven cases, five of which
+  fail with the patch reverted. The other two are controls that were correct before and after
+- Still worth an upstream report; both this and the lam-alef fix below are small enough to be
+  clean PRs against 2.11.0
+
+### Found while fixing a watermark report: lam-alef eats the first letter {#open-lamalef}
+
+Reported as "Arabic text looks disconnected and separated" in a watermarked image. It was not
+a shaping or font problem — both were working. `tc-lib-unicode` **2.11.0** (current; nothing
+newer to upgrade to) drops the **first character of any string containing a lam + alef pair**
+and leaves behind the lam that the ligature should have consumed.
+
+`Bidi\Shaping\Arabic::processAlChar()` locates the redundant lam with
+`getNewCharIndexBySourceIndex($laaChar['i'])`, which matches on `$item['i']`. Nothing ever
+writes that field: `Bidi\StepX::pushChar()` sets `'i' => -1` on every character and no later
+step fills it in — the real source index lives in `'pos'`. Every lookup is therefore
+`getNewCharIndexBySourceIndex(-1)`, which matches array index 0, so the deletion always lands
+on the first character of the string instead of on the lam.
 
 | Template | Drawn as | Correct? |
 | --- | --- | --- |
-| `سري - John Doe` | `Doe John - ﻱﺮﺳ` | **no** — the name is reversed |
-| `سري John` | `John ﻱﺮﺳ` | yes |
-| `John سري Doe` | `John ﻱﺮﺳ Doe` | yes (LTR base) |
-| `John Doe - سري` | `John Doe - ﻱﺮﺳ` | yes (LTR base) |
+| `محمد الاختبار` | `حمد الاختبار` + a stray lam | **no** — the leading meem is gone |
+| `بلا` | lam-medial + lam-alef | **no** — the beh is gone |
+| `xلاy` | `لاy` | **no** — the `x` is gone |
+| `لا` | lam-alef | yes — index 0 *is* the lam, so it works by accident |
+| `كتاب` | `كتاب` | yes — no ligature, no deletion |
 
-Per UAX #9 rule N1 a neutral between two same-direction characters takes that direction, so the
-space inside `John Doe` is L and the name is one run. The library resolves it to the paragraph
-direction instead, splitting the name in two and ordering the halves right to left.
+Two things made this survive a suite that asserts on code points:
 
-- **It bites exactly the default template with an Arabic prefix** — `سري - {displayname}`
-  with a two-word display name — which is a plausible thing for an Arabic deployment to
-  configure, and the watermark then names the person backwards. A watermark exists to identify
-  someone, so this is not cosmetic
-- The browser gets it right, so **the preview and the output now disagree** for this one
-  shape. That is by design of the pinning: the preview is the contract, and a disagreement is a
-  renderer bug rather than something to paper over by making the preview wrong too
-- Untouched here deliberately: the fix is in a vendored dependency, and this task was the
-  interface. Worth an upstream report, with a pre-pass in `ShapedText` (bidi-run detection
-  before handing the string over) as the local option if upstream is slow
+- **the probe word hid it perfectly.** `الاختبار` begins with an alef, so losing it still left
+  seven code points, still all in Presentation Forms-B, still starting at reh — every existing
+  assertion in `ShapedTextTest` passed on output missing a letter. `testShapedSequenceIsExact()`
+  now pins the whole glyph sequence for four strings that put the ligature somewhere the loss
+  cannot be mistaken for the ligature
+- **both renderers were affected, for one reason.** `ShapedText::shape()` calls `Bidi` directly;
+  `tc-lib-pdf`'s `Text.php` builds its own inside `getTextCell()`. One fix in the shared library
+  covers PDFs and images alike
+
+Fixed by matching on `'pos'`, in `patches/patch-tc-lib-unicode-lam-alef.php`.
+
+### How the vendor patches are applied {#vendor-patches}
+
+`vendor/` is gitignored, so a hand-edit would be erased by the next `composer install` and would
+never reach a release. Both fixes above therefore live in `patches/`:
+
+| File | What it fixes |
+| --- | --- |
+| `patches/apply.php` | the runner — machinery, not a patch |
+| `patches/patch-tc-lib-unicode-bidi-n1.php` | [Latin words reversing in an RTL line](#open-bidi) |
+| `patches/patch-tc-lib-unicode-lam-alef.php` | [lam-alef eating the first letter](#open-lamalef) |
+
+`apply.php` globs `patch-*.php`, each of which returns a target file and a list of exact
+`from`/`to` source strings and documents its defect in its own docblock. Composer runs it from
+`post-install-cmd` and `post-update-cmd`, so patches are re-applied on every install — in CI, in
+the E2E stage that bind-mounts this workspace into a Nextcloud container, and at packaging time.
+
+Two rules, both on the reasoning in [`patch.md`](patch.md#what-these-patches-cost):
+
+- **idempotent** — an anchor already in its patched form is the normal steady state, reported and
+  skipped rather than failed
+- **loud, never silent** — a missing anchor, a non-unique anchor, or a half-applied file exits
+  non-zero and takes `composer install` down with it. A patch that applied to shifted context
+  would be worse than one that refused, and a silent no-op would ship the bug it was written for
+
+Both patches also have tests that fail if they did not run, so a skipped patch cannot reach a
+release through a green suite either. Neither is a substitute for an upstream fix: 2.11.0 is the
+current release, so there is nothing to upgrade to today, but these should be dropped the moment
+there is.
 
 ---
 

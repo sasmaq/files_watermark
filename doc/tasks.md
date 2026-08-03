@@ -6,7 +6,7 @@ This file is the checklist and nothing else. The reasoning — how each thing wa
 what was measured, why a design is what it is — lives in
 [development.md](development.md), and every item here links to it.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **489 PHPUnit**,
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **500 PHPUnit**,
 **91 Jest**, **89 Cypress**, no host-conditional skips.
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -18,10 +18,6 @@ The two things standing between this and a 1.0 release are **Office support** an
 
 Things that produce a wrong file, or say something untrue about one.
 
-- [ ] **Latin words reverse inside an RTL watermark.** `سري - John Doe` draws as
-  `Doe John - سري` — a UAX #9 rule N1 violation in `tc-lib-unicode`. It names the wrong
-  person, which is the one thing a watermark exists not to do.
-  [notes](development.md#open-bidi)
 - [ ] **Content lost on some Windows "Microsoft Print to PDF" files.** Reported from the
   field, **not reproduced** — 30+ synthetic variants of that producer's structure all
   round-trip intact. `tests/diagnose-pdf.php` is the instrument for a real file.
@@ -150,12 +146,12 @@ Things that produce a wrong file, or say something untrue about one.
 | [Delivery and triggers](development.md#3-delivery-and-triggers-goal-3) | All four triggers, single-file and archive, on every access path; caps are `occ` settings | Tar (core bug), file-drop uploads |
 | [Admin UI and file actions](development.md#4-admin-ui-and-file-actions-goal-4) | **Complete** | — |
 | [Storage backends](development.md#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | — |
-| [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** — watermark shaped and reordered, UI translated and RTL-clean | `{date}` localisation, a real Arabic instance, the bidi bug this surfaced |
+| [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** — watermark shaped and reordered, UI translated and RTL-clean. Two `tc-lib-unicode` bugs found and [patched](development.md#vendor-patches) | `{date}` localisation, a real Arabic instance, upstream PRs for both patches |
 | [No external binaries](development.md#no-external-binaries) | **Done.** No `exec()` anywhere | A rule that keeps it that way |
 | [PDF stack migration](development.md#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone | — |
 | [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | Their *name* in search and activity |
 | [Data model](development.md#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, one dead column |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
 | [Security](development.md#security) | Two real vulnerabilities found and fixed | Rate limiting |
-| [Testing](development.md#testing) | 489 PHPUnit + 91 Jest + 89 Cypress, no host-conditional skips | Psalm level 3 |
+| [Testing](development.md#testing) | 500 PHPUnit + 91 Jest + 89 Cypress, no host-conditional skips | Psalm level 3 |
 | [Docs and release](development.md#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |

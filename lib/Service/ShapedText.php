@@ -52,6 +52,14 @@ final class ShapedText {
 	 * Measured on the probe string `الاختبار`: 8 code points in, 7 glyphs out, every one in
 	 * Arabic Presentation Forms-B, including one lam-alef ligature — which is where the
 	 * eighth went.
+	 *
+	 * **Depends on the `patches/` fixes to `tc-lib-unicode` having been applied.** Unpatched,
+	 * the library drops the first character of any string containing a lam-alef pair, and
+	 * reverses the words of a multi-word Latin name inside an RTL line. Composer applies both
+	 * on every install, and `ShapedTextTest` fails if either did not run —
+	 * `testShapedSequenceIsExact()` and `testLatinRunsAreNotReorderedInsideRtl()`
+	 * respectively. The PDF renderer reaches the same library through `getTextCell()`, so the
+	 * two patches cover both rendering paths.
 	 */
 	public static function shape(string $text): string {
 		if (!self::mayNeedShaping($text)) {

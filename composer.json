@@ -33,6 +33,9 @@
         "sort-packages": true
     },
     "scripts": {
+        "post-install-cmd": "@patch:vendor",
+        "post-update-cmd": "@patch:vendor",
+        "patch:vendor": "@php patches/apply.php",
         "lint": "find . -name '*.php' -not -path './vendor/*' -not -path './node_modules/*' -not -path './build/*' -print0 | xargs -0 -n1 php -l",
         "cs:check": "php-cs-fixer fix --dry-run --diff",
         "cs:fix": "php-cs-fixer fix",
@@ -40,6 +43,7 @@
         "test": "phpunit"
     },
     "scripts-descriptions": {
+        "patch:vendor": "Apply the tc-lib-unicode Arabic/Bidi fixes in patches/ to vendor/",
         "lint": "Check every PHP file for syntax errors",
         "cs:check": "Report coding-standard violations without changing anything",
         "cs:fix": "Apply the Nextcloud coding standard in place",
