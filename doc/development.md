@@ -1598,9 +1598,10 @@ still missing.
 - **`group_id` and `user_id` dropped**, with the group- and per-user-override features
   they scoped — see [Admin UI](#open-4). `watermark_config` now holds exactly one row: the
   server-wide policy. (`watermark_log.user_id` is untouched — that one records who acted.)
-- `WatermarkConfigMapperTest` covers the **entity**; the mapper's finders and
-  insert/update are still untested, including `hasDeliveryTrigger()`, which the archive fast
-  path depends on and which is currently only exercised through a mock
+- **The mapper is covered now**, `hasDeliveryTrigger()` included — the archive fast path
+  depends on it and it had only ever been exercised through a mock of itself. The file that
+  used to carry the name while testing only the entity is `WatermarkConfigTest`; the queries
+  are in `WatermarkConfigMapperTest`. See the test inventory below
 
 ### Delivered
 
@@ -1867,10 +1868,15 @@ fetches the same files through the same servers a browser does.
   simulate a host without GD; `PdfWatermarker` and `WatermarkLogMapper` are mocked). Behind
   them: 4 redundant casts, 3 truthy comparisons on possibly-empty strings, 3
   `PropertyNotSetInConstructor` and one docblock contradiction
-- `ApiControllerTest` gaps: `deleteConfig` and `getLog` have no tests. `getConfig` and
-  `saveConfig` are covered for the scope paths only
-- `WatermarkOnUploadJobTest` — an unknown user and a deleted file must be skipped rather
-  than fatal, and the acting user must reach `watermarkInPlace()`
+- **`ApiController` — covered end to end now.** `deleteConfig` and `getLog` had no tests at
+  all, and `getConfig` / `saveConfig` were covered for the scope, token and image paths only:
+  `ApiControllerConfigTest` (32) and `ApiControllerLogTest` (6) close both. Every endpoint's
+  admin gate is asserted for a signed-in non-admin *and* an anonymous caller, since those are
+  different code paths through `isAdmin()`
+- **`WatermarkOnUploadJobTest` (8) — written.** The skips (unknown user, deleted file, a
+  folder under a reused id, a malformed argument), the acting user reaching
+  `watermarkInPlace()`, a failed render logged rather than thrown, and both edges of the
+  suppression window. See the entry in the test inventory below
 - `OfficeWatermarkerTest`, `MetadataWatermarkerTest` — pending those services
 - **Arabic text cases in `PdfWatermarkerTest` and `ImageWatermarkerTest`** — done with the
   watermark half, asserting glyph order and shaping rather than "a valid file came out", which
@@ -1878,8 +1884,6 @@ fetches the same files through the same servers a browser does.
 - **No Jest coverage of a *loaded* Arabic locale.** The mock returns source strings, so the
   suite proves the calls are wired, never that the catalogue renders — that gap is covered
   instead by `L10nCatalogueTest` and by driving `@nextcloud/l10n` directly
-- `WatermarkConfigMapperTest` — mapper finders and insert/update (see
-  [Data model](#open-data))
 
 ### DAV plugin test harness
 
@@ -2036,12 +2040,37 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
 - `ApiControllerScopeTest` (11) — unsupported and mistyped MIME types rejected, blank
   normalised to null, a tag name rejected, a non-existent tag id rejected, a real tag accepted,
   and no tag lookup when none is given
-- `ApiControllerFlattenTest` (9) — capability reported to the form, the setting rejected
-  when the renderer is absent, off by default, DPI clamped
+- `ApiControllerConfigTest` (32) — the policy endpoints the other controller files leave
+  alone: `getConfig` (stored policy, empty list on a fresh install, admin gate), `saveConfig`'s
+  own fields (unknown type and trigger rejected *by name*, six malformed colours refused and
+  uppercase hex kept as typed, the three numeric clamps, `logDelivery` opt-in, insert vs
+  update by `id`, and an unknown `id` as 404) and `deleteConfig`
+  - the clamps are the ones worth having: `opacity`, `fontSize` and `rotation` arrive as
+    plain ints and nothing downstream refuses a negative font size, so `max()`/`min()` in the
+    controller is the only bound. Dropping the opacity clamp fails two of these
+- `ApiControllerLogTest` (6) — the serialised rows, an empty log as `[]`, `limit`/`offset`
+  reaching the query rather than silently staying at their defaults, and the admin gate. The
+  rows name who downloaded what across every account, so that gate is the whole of this
+  endpoint's security; it is checked before the table is touched
 - `ApiControllerApplyWatermarkTest` (6), `ApiControllerRemoveWatermarkTest` (7),
   `ApiControllerWatermarkedStatusTest` (5), `ApiControllerImageTest` (9)
 - `NodeWrittenListenerTest` (9) — queues the job rather than watermarking inline, trigger
   gating, no-session and already-watermarked skips, `suppressFor()` re-entrancy
+- `WatermarkOnUploadJobTest` (8) — the other half of that pair, and the one place where
+  everything is stale by construction: the job runs under cron with no session, against a file
+  written some time ago, holding nothing but a file id and a uid
+  - **the skips** — a deleted account (checked *before* `getUserFolder()`, which throws deep
+    in the mount setup on an unknown uid), a deleted or moved file, a folder returned under a
+    reused id, and an argument missing its keys
+  - **the acting user reaches `watermarkInPlace()`** — there is no session to infer it from,
+    so dropping that argument renders `{username}` as "Unknown" and attributes the audit row
+    to "system". The mutation is caught
+  - **a failed render is logged with file id and uid, and does not escape.** Cron's own error
+    path is where an unreadable PDF would otherwise read like a broken job class
+  - **both edges of the suppression window**, driven by handing a real `NodeWrittenListener`
+    the write from inside the burn — the only way to observe it, since the suppression list is
+    private static state with no reader. Nothing is queued during the burn, and the *next*
+    write to the same file is seen again. Removing `suppressFor()` fails the first
 - `WatermarkLogMapperTest` (8) — batched lookup, distinct ids, a removal cancelling an
   earlier apply, apply → removed → apply counting as watermarked again, and the prune pair's
   `WHERE` clauses: cutoff and delivery-only by default, the trigger clause *absent* when in-place
@@ -2050,8 +2079,29 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   the age filter, `--dry-run` counting without deleting, and a `--days` that is not a positive
   whole number **refused** rather than coerced to 0, which would make a typo the most
   destructive form of the command
+- `WatermarkConfigMapperTest` (13) — the queries, with no database: the builder is mocked and
+  what is asserted is the shape of what the mapper asks for
+  - `setMaxResults(1)` on `findGlobal()` is load-bearing. Nothing in the schema enforces one
+    row — the column that scoped configs to a user was dropped, not replaced with a unique key
+    — and unbounded, `findEntity()` answers a second row with
+    `MultipleObjectsReturnedException` on *every watermarked request* rather than in the
+    settings page
+  - `findById()` binds its id as `PARAM_INT`. As a string it works on SQLite and MySQL and
+    fails on PostgreSQL, so only one of the three supported databases would report it
+  - `hasDeliveryTrigger()` selects `id` (never read, only counted), asks for exactly
+    `on_download` / `on_share`, and caps at one row — it runs on every folder download
+  - **the type map, and which half of it does what.** `addType()` decides the parameter type
+    each column is *written* with, and dropping one is caught by the insert test. It does
+    **not** affect reads: the entity's typed properties coerce `"40"` to `40` on the way out,
+    so the round-trip test passes with or without it. Worth knowing before reaching for
+    `addType` as the fix for a read-side type bug
+  - writing back only sends the columns that changed, which is also why the insert test sets
+    values that differ from the defaults — `Entity`'s setters mark a field updated only when
+    it changes, so "saving" the defaults writes nothing at all
+- `WatermarkConfigTest` (4) — the entity: what it serialises to the settings page, and the
+  CSV MIME column
 - `WatermarkImageStoreTest` (8), `DownloadControllerTest` (4),
-  `BeforePreviewFetchedListenerTest` (4), `WatermarkConfigMapperTest` (4, entity only)
+  `BeforePreviewFetchedListenerTest` (4)
   - no `ShareCreatedListenerTest`: on-share is delivery-time, so it is covered by
     `WatermarkServiceTest` and `BeforePreviewFetchedListenerTest`
 

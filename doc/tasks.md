@@ -80,13 +80,6 @@ Things that produce a wrong file, or say something untrue about one.
 - [ ] **`ZipInterceptorPlugin::streamNode` drift.** It duplicates core's and the stubs
   cannot catch it drifting; re-diff against core on every Nextcloud upgrade.
   [notes](development.md#open-testing)
-- [ ] **`ApiControllerTest` gaps** — `deleteConfig` and `getLog` untested; `getConfig` and
-  `saveConfig` covered for the scope paths only. [notes](development.md#open-testing)
-- [ ] **`WatermarkOnUploadJobTest`** — an unknown user and a deleted file must skip rather
-  than fatal, and the acting user must reach `watermarkInPlace()`.
-  [notes](development.md#open-testing)
-- [ ] **`WatermarkConfigMapperTest`** — the mapper's finders and insert/update; the current
-  test covers the entity only. [notes](development.md#open-data)
 - [ ] **Jest against a *loaded* Arabic catalogue** — the mock returns source strings, so
   the suite proves the calls are wired, never that the catalogue renders.
   [notes](development.md#open-testing)
