@@ -145,6 +145,13 @@ class UploadWatermarkPlugin extends ServerPlugin {
 			return null;
 		}
 
+		// Only initialize() sets the server, and only Sabre calls it. A MOVE that reaches
+		// this before that happened has no tree to resolve the Destination against, and
+		// guessing at the URI would point the watermark at the wrong node.
+		if ($this->server === null) {
+			return null;
+		}
+
 		try {
 			return $this->server->calculateUri($destination);
 		} catch (\Throwable) {

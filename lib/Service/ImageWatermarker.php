@@ -178,8 +178,10 @@ class ImageWatermarker {
 			}
 		}
 
-		if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath() && file_exists($config->getImagePath())) {
-			$watermark = new \Imagick($config->getImagePath());
+		$imagePath = $config->getImagePath();
+		if (in_array($config->getType(), ['image', 'combined'], true)
+			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)) {
+			$watermark = new \Imagick($imagePath);
 			$wmW = intval($width * 0.3);
 			$wmH = intval($watermark->getImageHeight() * ($wmW / $watermark->getImageWidth()));
 			$watermark->resizeImage($wmW, $wmH, \Imagick::FILTER_LANCZOS, 1);
@@ -208,6 +210,14 @@ class ImageWatermarker {
 			default => throw new \RuntimeException("Unsupported image type: $mime"),
 		};
 
+		// GD reports a file it cannot decode by returning false and emitting a warning, and
+		// every call below takes the handle without looking. Truncated uploads are the
+		// realistic source: the MIME type is read from the first bytes, so a half-written
+		// JPEG passes engineForMime() and fails here.
+		if ($src === false) {
+			throw new \RuntimeException("GD could not decode this $mime file; it may be truncated or corrupt.");
+		}
+
 		$width = imagesx($src);
 		$height = imagesy($src);
 
@@ -216,6 +226,12 @@ class ImageWatermarker {
 			$color = $this->hexToRgb($config->getColor());
 			$opacity = intval((1 - $config->getOpacity() / 100) * 127);
 			$textColor = imagecolorallocatealpha($src, $color[0], $color[1], $color[2], $opacity);
+			// False only for a palette image whose 256 entries are already spoken for. The
+			// alternative to refusing is drawing with colour index -1, which GD renders as
+			// whatever happens to sit at that slot.
+			if ($textColor === false) {
+				throw new \RuntimeException('GD could not allocate the watermark colour; the image palette is full.');
+			}
 			$fontSize = $config->getFontSize();
 			$rotation = $config->getRotation();
 			// FreeType draws code points in the order given and joins nothing, so Arabic
@@ -227,6 +243,12 @@ class ImageWatermarker {
 			// so the lattice can do the rotating. Its eight values are the corners
 			// relative to the baseline origin, with y negative above the baseline.
 			$box = imagettfbbox($fontSize, 0, $fontPath, $text);
+			// False when FreeType cannot open the face. fontFor() has already established the
+			// file is there, so this is a font that is present but unreadable — measuring it
+			// as nothing would tile the whole page at one point.
+			if ($box === false) {
+				throw new \RuntimeException('FreeType could not measure the bundled font; the file is present but unusable.');
+			}
 			$left = min($box[0], $box[6]);
 			$right = max($box[2], $box[4]);
 			$top = min($box[5], $box[7]);
@@ -253,15 +275,21 @@ class ImageWatermarker {
 			}
 		}
 
-		if (in_array($config->getType(), ['image', 'combined'], true) && $config->getImagePath() && file_exists($config->getImagePath())) {
-			$watermarkMime = mime_content_type($config->getImagePath());
+		$imagePath = $config->getImagePath();
+		if (in_array($config->getType(), ['image', 'combined'], true)
+			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)) {
+			$watermarkMime = mime_content_type($imagePath);
+			// False for a type GD does not read here, and false again if it does read the
+			// type but cannot decode this particular file. The logo is dropped either way and
+			// the text half still renders — the same thing an unsupported type has always
+			// done, rather than a new failure mode for a corrupt one.
 			$wm = match ($watermarkMime) {
-				'image/png' => imagecreatefrompng($config->getImagePath()),
-				'image/jpeg' => imagecreatefromjpeg($config->getImagePath()),
-				default => null,
+				'image/png' => imagecreatefrompng($imagePath),
+				'image/jpeg' => imagecreatefromjpeg($imagePath),
+				default => false,
 			};
 
-			if ($wm !== null) {
+			if ($wm !== false) {
 				$wmOrigW = imagesx($wm);
 				$wmOrigH = imagesy($wm);
 				$wmW = intval($width * 0.3);
@@ -269,10 +297,15 @@ class ImageWatermarker {
 				$scaled = imagescale($wm, $wmW, $wmH);
 				imagedestroy($wm);
 
-				$dstX = intval(($width - $wmW) / 2);
-				$dstY = intval(($height - $wmH) / 2);
-				imagecopymerge($src, $scaled, $dstX, $dstY, 0, 0, $wmW, $wmH, $config->getOpacity());
-				imagedestroy($scaled);
+				// imagescale() fails on a zero target dimension — a logo scaled below one
+				// pixel by a very narrow source image. Nothing to composite, so the source
+				// image goes out with its text watermark and without the logo.
+				if ($scaled !== false) {
+					$dstX = intval(($width - $wmW) / 2);
+					$dstY = intval(($height - $wmH) / 2);
+					imagecopymerge($src, $scaled, $dstX, $dstY, 0, 0, $wmW, $wmH, $config->getOpacity());
+					imagedestroy($scaled);
+				}
 			}
 		}
 

@@ -116,6 +116,63 @@ class ImageWatermarkerTest extends TestCase {
 	}
 
 	/**
+	 * A truncated upload reaches the renderer: the MIME type is read from the first bytes, so
+	 * `engineForMime()` sees a PNG and hands it to GD, which cannot decode it and answers
+	 * false. That handle used to be passed straight to `imagesx()`, `imagettftext()` and
+	 * `imagepng()` — a run of warnings ending in an output file that is not an image. The
+	 * failure has to be named, because this is the path an interrupted upload takes.
+	 */
+	public function testTruncatedSourceImageIsRefusedByName(): void {
+		if (!extension_loaded('gd')) {
+			$this->markTestSkipped('This pins the GD path specifically.');
+		}
+
+		$source = $this->createImage('image/png', 'png', 200, 150);
+		// Header kept, image data gone: still detected as a PNG, no longer decodable.
+		file_put_contents($source, substr((string)file_get_contents($source), 0, 40));
+		$this->assertSame('image/png', mime_content_type($source));
+
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessageMatches('/could not decode/i');
+
+		$this->withImageWarningsSilenced(fn () => $this->watermarker->apply(
+			$source,
+			$this->tmpDir . '/out.png',
+			$this->makeConfig('text'),
+			['username' => 'Alice'],
+		));
+	}
+
+	/**
+	 * The logo is the half that can be dropped: an unreadable one has always been skipped
+	 * when its *type* was unsupported, and a corrupt file of a supported type now takes the
+	 * same route rather than compositing a false handle. The text still has to arrive — a
+	 * `combined` policy that silently produced an unwatermarked file would be the worst of
+	 * the three outcomes.
+	 */
+	public function testUndecodableLogoIsDroppedAndTheTextStillRenders(): void {
+		if (!extension_loaded('gd')) {
+			$this->markTestSkipped('This pins the GD path specifically.');
+		}
+
+		$source = $this->createImage('image/png', 'png', 400, 300);
+		$logo = $this->createImage('image/png', 'png', 120, 90, [255, 0, 0], 'logo');
+		file_put_contents($logo, substr((string)file_get_contents($logo), 0, 40));
+
+		$dest = $this->tmpDir . '/corrupt_logo.png';
+		$config = $this->makeConfig('combined');
+		$config->setImagePath($logo);
+
+		$this->withImageWarningsSilenced(fn () => $this->watermarker->apply($source, $dest, $config, ['username' => 'Alice']));
+
+		$this->assertGreaterThan(
+			0,
+			$this->changedPixels($source, $dest),
+			'the text half should still have been drawn without the logo',
+		);
+	}
+
+	/**
 	 * The regression test for tiles landing on top of each other.
 	 *
 	 * The image renderer used to step a fixed grid — `max(210, fontSize * 10)` across —
@@ -423,6 +480,21 @@ class ImageWatermarkerTest extends TestCase {
 		}
 
 		$this->assertNotEmpty($engines);
+	}
+
+	/**
+	 * GD announces a file it cannot decode twice over: an E_WARNING as well as a false
+	 * return. The warning is GD's and is not what the two tests above are about — they are
+	 * about what the app does with the return value — so it is swallowed here rather than
+	 * left to litter every run.
+	 */
+	private function withImageWarningsSilenced(callable $fn): void {
+		set_error_handler(static fn (): bool => true);
+		try {
+			$fn();
+		} finally {
+			restore_error_handler();
+		}
 	}
 
 	private function makeConfig(string $type, int $opacity = 80, int $rotation = 45, int $fontSize = 20, string $color = '#000000'): WatermarkConfig {

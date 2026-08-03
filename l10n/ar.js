@@ -125,6 +125,7 @@ OC.L10N.register(
     "File type \"%1$s\" is not supported. Supported types: %2$s." : "نوع الملف \"%1$s\" غير مدعوم. الأنواع المدعومة: %2$s.",
     "No preserved original is available for this file, so its watermark cannot be removed." : "لا تتوفر نسخة أصلية محفوظة لهذا الملف، لذا لا يمكن إزالة علامته المائية.",
     "The uploaded image could not be read." : "تعذّرت قراءة الصورة المرفوعة.",
+    "The watermarked file could not be read back." : "تعذّرت إعادة قراءة الملف بعد وضع العلامة المائية.",
     "The image is too large. Maximum size is %d MB." : "الصورة كبيرة جدًا. الحجم الأقصى هو %d ميغابايت.",
     "The image must be a PNG or JPEG file." : "يجب أن تكون الصورة ملف PNG أو JPEG.",
     "The watermark image could not be stored." : "تعذّر تخزين صورة العلامة المائية.",

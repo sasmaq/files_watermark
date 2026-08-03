@@ -55,6 +55,12 @@ class WatermarkImageStore {
 	 * Whether $value is a reference produced by {@see store} rather than something a user
 	 * typed. The config column is shared with legacy absolute paths, so every read goes
 	 * through this — an unrecognised value is ignored, not resolved.
+	 *
+	 * Asserted rather than merely returned: the pattern cannot match null or the empty
+	 * string, so a caller that has been through this guard does not have to re-prove it
+	 * before handing the value to the appdata folder.
+	 *
+	 * @psalm-assert-if-true non-empty-string $value
 	 */
 	public static function isReference(?string $value): bool {
 		return $value !== null && preg_match('/^[0-9a-f]{32}\.(png|jpg)$/', $value) === 1;
@@ -80,8 +86,12 @@ class WatermarkImageStore {
 			throw new \RuntimeException($this->l->t('The image is too large. Maximum size is %d MB.', [$max]));
 		}
 
+		// getimagesize() answers false for anything it cannot parse as an image at all, and
+		// an IMAGETYPE_* constant otherwise. Both are the same refusal to the admin, and
+		// carrying the type forward is what keeps the extension below tied to the bytes.
 		$info = @getimagesize($tmpPath);
-		if ($info === false || !isset(self::ALLOWED[$info[2]])) {
+		$imageType = $info === false ? null : $info[2];
+		if ($imageType === null || !isset(self::ALLOWED[$imageType])) {
 			throw new \RuntimeException($this->l->t('The image must be a PNG or JPEG file.'));
 		}
 
@@ -96,7 +106,7 @@ class WatermarkImageStore {
 		}
 
 		// Opaque name: nothing the client sent reaches the filesystem.
-		$name = bin2hex(random_bytes(16)) . '.' . self::ALLOWED[$info[2]];
+		$name = bin2hex(random_bytes(16)) . '.' . self::ALLOWED[$imageType];
 
 		try {
 			$folder->newFile($name, $content);

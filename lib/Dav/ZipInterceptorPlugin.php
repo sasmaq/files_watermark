@@ -238,7 +238,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	 * The requested member filter: [] for a whole-folder download, a list of child names
 	 * for a selection, or null when the parameter is malformed (defer to core).
 	 *
-	 * @return string[]|null
+	 * @return list<string>|null
 	 */
 	private function memberFilter(RequestInterface $request): ?array {
 		$files = $request->getHeaderAsArray('X-NC-Files');
@@ -249,13 +249,19 @@ class ZipInterceptorPlugin extends ServerPlugin {
 			$files = is_array($decoded) ? $decoded : [$decoded];
 		}
 
+		// Rebuilt entry by entry rather than handed back with array_values(): the source is
+		// either a header array or whatever json_decode() made of a query parameter, so
+		// "every entry is a string" is only true once each one has been looked at — which is
+		// exactly what BeforeZipCreatedEvent's list<string> asks for.
+		$members = [];
 		foreach ($files as $file) {
 			if (!is_string($file)) {
 				return null;
 			}
+			$members[] = $file;
 		}
 
-		return array_values($files);
+		return $members;
 	}
 
 	/**
@@ -387,7 +393,14 @@ class ZipInterceptorPlugin extends ServerPlugin {
 			$size = $node->getSize();
 		}
 
-		if ($stream === false) {
+		// `filesize()` returns false when the rendered temp file has gone missing between
+		// preRender and here. Tar writes the length into the header before the bytes, so a
+		// wrong one corrupts the archive silently — refused on the same path as a stream
+		// that will not open, rather than shipped as a broken download.
+		if ($stream === false || $size === false) {
+			if ($stream !== false) {
+				fclose($stream);
+			}
 			$this->logger->info('files_watermark: cannot read file for archive stream', [
 				'path' => $node->getPath(),
 			]);

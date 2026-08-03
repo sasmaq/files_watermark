@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <psalm
-	errorLevel="4"
+	errorLevel="3"
 	phpVersion="8.2"
 	strictBinaryOperands="false"
 	resolveFromConfigFile="true"
@@ -12,12 +12,22 @@
 	xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd"
 >
 	<!--
-		lib/ is clean at errorLevel 4, so there is no baseline file here to go stale.
-		Level 3 would add 39 findings, 29 of them in ImageWatermarker: unchecked
-		imagecreatefrom*() / imagecolorallocate() returns, which are `false` and `null` on
-		failure and are then passed straight on. They are a real backlog, tracked in
-		doc/tasks.md instead of frozen into a baseline — a baseline would turn the gate
-		green while every one of them is still there.
+		lib/ is clean at errorLevel 3, so there is no baseline file here to go stale.
+
+		Level 3 is where Psalm starts reporting the *possibly* failing type: the `false` a GD
+		call returns for a file it cannot decode, the `null` a nullable getter can hand on.
+		Clearing it took 39 fixes, 29 of them in ImageWatermarker, and none of them a cast or
+		a suppression — every one is a check with an outcome, because that is the only version
+		that is worth the noise. What they buy is that a truncated upload now fails by name
+		instead of reaching imagettftext() as `false` and producing a warning-strewn image
+		nobody asked for.
+
+		Level 2 would add 48, and they are a different kind of finding: 38 are ClassMustBeFinal
+		— a design opinion about `final`, not a type check, and one the suite contradicts
+		directly: FakeImageStack extends ImageWatermarker to simulate a host without GD, and
+		PdfWatermarker and WatermarkLogMapper are mocked — with 4 redundant casts, 3 truthy comparisons on
+		possibly-empty strings, 3 PropertyNotSetInConstructor and one docblock contradiction
+		behind it. Tracked in doc/tasks.md rather than frozen into a baseline.
 	-->
 
 	<!--

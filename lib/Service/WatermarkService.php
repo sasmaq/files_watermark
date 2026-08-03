@@ -378,7 +378,16 @@ class WatermarkService {
 			// it, which removeWatermark() reports rather than pretending to restore.
 			$this->originalStore->store($file, $file->getContent());
 
-			$file->putContent(file_get_contents($tmpPath));
+			// Read before writing, and checked: false here would otherwise reach putContent()
+			// as the empty string and replace the file with nothing — the one outcome this
+			// burn cannot be allowed to have, since the original is already overwritten by
+			// the time anyone notices.
+			$watermarked = file_get_contents($tmpPath);
+			if ($watermarked === false) {
+				throw new \RuntimeException($this->l->t('The watermarked file could not be read back.'));
+			}
+
+			$file->putContent($watermarked);
 		} finally {
 			// $tmpPath holds a plaintext watermarked copy of the file. putContent() can
 			// throw (a locked node, a full quota), and without this the copy is left

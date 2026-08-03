@@ -68,7 +68,14 @@ final class ShapedText {
 
 		$shaped = '';
 		foreach ((new Bidi($text))->getOrdArray() as $codepoint) {
-			$shaped .= mb_chr($codepoint, 'UTF-8');
+			$char = mb_chr($codepoint, 'UTF-8');
+			// Not encodable as UTF-8, so the reordering produced something that is not a code
+			// point. Appending it would drop that character silently and shift everything
+			// after it; the unshaped source is wrong in a visible way instead of a quiet one.
+			if ($char === false) {
+				return $text;
+			}
+			$shaped .= $char;
 		}
 
 		return $shaped === '' ? $text : $shaped;
@@ -93,8 +100,16 @@ final class ShapedText {
 			return null;
 		}
 
+		// False if the archive stopped being readable between the check above and here.
+		// Without a key there is no cache path to speak of, so the caller is told there is no
+		// font — the same answer the is_readable() guard gives.
+		$key = hash_file('sha256', $archive);
+		if ($key === false) {
+			return null;
+		}
+
 		$cached = sys_get_temp_dir() . DIRECTORY_SEPARATOR
-			. 'files_watermark_font_' . substr(hash_file('sha256', $archive), 0, 16) . '.ttf';
+			. 'files_watermark_font_' . substr($key, 0, 16) . '.ttf';
 		if (is_readable($cached) && filesize($cached) > 0) {
 			return $cached;
 		}

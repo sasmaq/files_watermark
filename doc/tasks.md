@@ -74,9 +74,9 @@ Things that produce a wrong file, or say something untrue about one.
 
 ## Testing and CI
 
-- [ ] **Psalm level 3: 39 findings**, 29 of them in `ImageWatermarker` — unchecked
-  `imagecreatefrom*()` and `imagecolorallocate()` returns. Deliberately not baselined.
-  [notes](development.md#open-testing)
+- [ ] **Psalm level 2: 48 findings**, 38 of them `ClassMustBeFinal` — a design opinion the
+  test doubles contradict, not a type check. Behind it: 4 redundant casts, 3 truthy
+  comparisons, 3 `PropertyNotSetInConstructor`. [notes](development.md#open-testing)
 - [ ] **`ZipInterceptorPlugin::streamNode` drift.** It duplicates core's and the stubs
   cannot catch it drifting; re-diff against core on every Nextcloud upgrade.
   [notes](development.md#open-testing)

@@ -1815,8 +1815,9 @@ fetches the same files through the same servers a browser does.
   does not
 - `ZipInterceptorPlugin::streamNode` duplicates core's, and the stubs cannot catch it
   drifting from `ZipFolderPlugin`. Re-diff against core on every Nextcloud upgrade
-- **Psalm — built.** `psalm.xml`, `composer psalm`, a job in `.github/workflows/php.yml`
-  and a stage in the `Jenkinsfile`. `lib/` is clean at **errorLevel 4 with no baseline**; the
+- **Psalm — built.** `psalm.xml`, `composer psalm`, a job in `.github/workflows/php.yml`,
+  `ci/gitlab/php.gitlab-ci.yml` and a stage in the `Jenkinsfile`. `lib/` is clean at
+  **errorLevel 3 with no baseline** (it was 4 until the 39 level-3 findings were cleared); the
   configuration is commented in `psalm.xml`. What it does and does not settle:
   - `nextcloud/ocp` supplies the *typed* OCP interfaces, so `lib/` is now checked against
     core's declared API rather than against nothing. It ships no autoload section, hence the
@@ -1840,11 +1841,32 @@ fetches the same files through the same servers a browser does.
     is PHP 8.3 and the floor is 8.2) and `UndefinedClass` in `ImageWatermarker` alone
     (ext-imagick is optional and has no stub package, so it reads as undefined on a host
     without it — both CI runners load it, so that branch *is* analysed there)
-- **Psalm level 3: 39 findings, a real backlog.** 29 are in `ImageWatermarker` —
-  `imagecreatefrom*()` and `imagecolorallocate()` returns are `false` / `null` on failure and
-  are passed straight on. The rest: `WatermarkImageStore` (4), `ShapedText` (2),
-  `ZipInterceptorPlugin` (2), `WatermarkService` (1), `UploadWatermarkPlugin` (1). Deliberately
-  not baselined — a baseline would turn the gate green with all 39 still in place
+- **Psalm level 3 — cleared, and the gate moved to it.** The 39 findings were the
+  *possibly* failing types: 29 in `ImageWatermarker` (`imagecreatefrom*()` /
+  `imagecolorallocatealpha()` / `imagettfbbox()` return `false` on failure and were passed
+  straight on), the rest in `WatermarkImageStore` (4), `ShapedText` (2),
+  `ZipInterceptorPlugin` (2), `WatermarkService` (1) and `UploadWatermarkPlugin` (1). Every one
+  is now a check with an outcome — no casts, no suppressions, no baseline
+  - the behaviour that changed, rather than the types: **a truncated upload now fails by
+    name.** GD answers `false` for a file it cannot decode, and the MIME type is read from the
+    first bytes, so an interrupted upload passed `engineForMime()` and died inside
+    `imagesx()`. Pinned by `testTruncatedSourceImageIsRefusedByName`
+  - **a corrupt logo is dropped, not composited.** An unsupported logo *type* has always been
+    skipped silently; a corrupt file of a supported type now takes the same route instead of
+    passing a false handle to `imagecopymerge()`, and the text half still renders —
+    `testUndecodableLogoIsDroppedAndTheTextStillRenders`
+  - **`WatermarkService` no longer risks emptying a file it has just overwritten.**
+    `file_get_contents()` on the rendered temp file reached `putContent()` unchecked, and
+    `false` there writes the empty string — over bytes whose only backup had been taken
+    moments earlier
+  - `isReference()` carries `@psalm-assert-if-true non-empty-string`, which is what lets the
+    three call sites in `WatermarkImageStore` hand the reference to appdata without re-proving
+    it is not null
+- **Psalm level 2: 48 findings, not a backlog of the same kind.** 38 are `ClassMustBeFinal`, a
+  design opinion the suite contradicts directly (`FakeImageStack` extends `ImageWatermarker` to
+  simulate a host without GD; `PdfWatermarker` and `WatermarkLogMapper` are mocked). Behind
+  them: 4 redundant casts, 3 truthy comparisons on possibly-empty strings, 3
+  `PropertyNotSetInConstructor` and one docblock contradiction
 - `ApiControllerTest` gaps: `deleteConfig` and `getLog` have no tests. `getConfig` and
   `saveConfig` are covered for the scope paths only
 - `WatermarkOnUploadJobTest` — an unknown user and a deleted file must be skipped rather
