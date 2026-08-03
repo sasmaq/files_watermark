@@ -44,9 +44,10 @@ class WatermarkConfig extends Entity {
 	protected ?string $textTemplate = null;
 	protected ?string $imagePath = null;
 	protected string $position = 'diagonal';
-	protected int $opacity = 80;
+	protected int $opacity = 40;
 	protected int $fontSize = 24;
-	protected string $color = '#cccccc';
+	/** Mid grey: legible over both light pages and dark imagery, unlike a near-white tint. */
+	protected string $color = '#808080';
 	protected int $rotation = 45;
 	protected string $trigger = 'on_demand';
 	/** Comma-separated MIME types to watermark; null means all supported types */

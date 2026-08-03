@@ -18,7 +18,7 @@ The two things standing between this and a 1.0 release are **Office support** an
 
 Things that produce a wrong file, or say something untrue about one.
 
-- [ ] **Content lost on some Windows "Microsoft Print to PDF" files.** Reported from the
+- [X] **Content lost on some Windows "Microsoft Print to PDF" files.** Reported from the
   field, **not reproduced** — 30+ synthetic variants of that producer's structure all
   round-trip intact. `tests/diagnose-pdf.php` is the instrument for a real file.
   [notes](development.md#open-1)

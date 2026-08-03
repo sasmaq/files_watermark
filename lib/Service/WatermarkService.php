@@ -535,9 +535,10 @@ class WatermarkService {
 		// "Alice Smith" identifies the leak to them in a way "asmith3" does not.
 		$config->setTextTemplate('{displayname} - {date}');
 		$config->setPosition('diagonal');
-		$config->setOpacity(80);
+		// Faint enough to read the document through, dark enough to survive a screenshot.
+		$config->setOpacity(40);
 		$config->setFontSize(24);
-		$config->setColor('#cccccc');
+		$config->setColor('#808080');
 		$config->setRotation(45);
 		$config->setTrigger('on_demand');
 		return $config;

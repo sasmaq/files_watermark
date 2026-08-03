@@ -11,7 +11,7 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
     the account name when the watermark has to identify exactly one account
 - **Image watermarks** — overlay a logo or image on files
 - **Combined** text + image watermarks
-- Diagonal tiled placement at 45° rotation and 80% opacity by default
+- Diagonal tiled placement at 45° rotation, mid grey (`#808080`) and 40% opacity by default
 - Three trigger modes: **on download**, **on demand** (file action menu), **on share**
 - Global policy configurable by admins under **Settings → Additional → Watermark Settings**
 - Full audit log of every watermark event

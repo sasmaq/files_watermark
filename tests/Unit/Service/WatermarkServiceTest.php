@@ -108,7 +108,8 @@ class WatermarkServiceTest extends TestCase {
 
 		$result = $this->service->resolveConfig();
 		$this->assertSame('text', $result->getType());
-		$this->assertSame(80, $result->getOpacity());
+		$this->assertSame(40, $result->getOpacity());
+		$this->assertSame('#808080', $result->getColor());
 		$this->assertSame(45, $result->getRotation());
 	}
 

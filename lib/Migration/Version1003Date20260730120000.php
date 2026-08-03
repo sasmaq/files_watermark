@@ -142,7 +142,7 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 		]);
 		$table->addColumn('opacity', Types::SMALLINT, [
 			'notnull' => true,
-			'default' => 80,
+			'default' => 40,
 		]);
 		$table->addColumn('font_size', Types::SMALLINT, [
 			'notnull' => true,
@@ -151,7 +151,7 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 		$table->addColumn('color', Types::STRING, [
 			'notnull' => true,
 			'length' => 7,
-			'default' => '#cccccc',
+			'default' => '#808080',
 		]);
 		$table->addColumn('rotation', Types::SMALLINT, [
 			'notnull' => true,

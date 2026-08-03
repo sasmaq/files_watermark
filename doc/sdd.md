@@ -109,7 +109,7 @@
 
 - Position: repeated diagonal (tiled)
 - Rotation angle at 45 degree
-- Font size, font color (hex), opacity at 80%
+- Font size, font color (hex, `#808080` by default), opacity at 40%
 
 ### 5.3 Trigger Modes
 
