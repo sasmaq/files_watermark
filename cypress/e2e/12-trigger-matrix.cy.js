@@ -260,19 +260,13 @@ describe('Trigger × access matrix', () => {
 	})
 
 	/**
-	 * Created here rather than in the outer `before`, so this is the path's **first**
-	 * upload and the DAV plugin burns it in-request.
+	 * Created here rather than in the outer `before`, so this row measures a first upload
+	 * and nothing else.
 	 *
-	 * That is not tidiness. Overwriting a path that has already been watermarked leaves
-	 * the new content **clean** while the audit row and the `is-watermarked` badge stay
-	 * behind — `watermarkInPlace()` short-circuits on `isAlreadyWatermarked($fileId)`,
-	 * and a file id survives an overwrite, so the guard against a double burn suppresses
-	 * the first burn of entirely new bytes. Measured on 31.0.14: a 34,851-byte
-	 * watermarked file, re-uploaded, comes back as the 868-byte clean fixture with
-	 * `is-watermarked` still reporting 1.
-	 *
-	 * Uploading fresh keeps this file measuring the matrix. The overwrite itself belongs
-	 * with `02-on-upload`, once the guard is fixed — see `tasks.md`.
+	 * An overwrite is a different question with its own answer — it used to land clean and
+	 * still badged, and closing that took three fixes — so it is asserted on its own in
+	 * `02-on-upload` rather than folded in here, where a failure would read as a broken
+	 * matrix cell.
 	 */
 	inPlace('on_upload', () => {
 		cy.task('fixture:pdf', { pages: 2, text: 'on_upload' }).then((base64) => {

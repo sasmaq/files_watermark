@@ -35,7 +35,7 @@ Features:
 - سياسة عامة يضبطها المدير وتسري على الخادم كله
 - سجل تدقيق كامل لكل حدث علامة مائية
     ]]></description>
-    <version>1.6.0</version>
+    <version>1.7.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>

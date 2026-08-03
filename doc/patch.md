@@ -11,7 +11,7 @@ The app keeps a pre-watermark copy of every file it burns a watermark into, at
 `{owner}/files/.files_watermark/originals/{fileId}`. It lives in the owner's own storage
 for one reason: that is the only place Nextcloud's **server-side encryption** reaches, so
 the copy is ciphertext exactly like the file it was taken from. See
-[`tasks.md`](tasks.md) under Security for why appdata could not be made to work.
+[`development.md`](development.md#security) for why appdata could not be made to work.
 
 The cost of that location is visibility, and most of it is already paid for **in the app**:
 `HideOriginalsPlugin` takes the folder off WebDAV entirely and `ShareGuardListener` refuses

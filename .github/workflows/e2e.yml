@@ -25,7 +25,7 @@ jobs:
       # The container runs the *compiled* app off the bind mount, so both builds
       # have to happen on the runner before Nextcloud starts. `--no-dev` because
       # the dev tree is what shadowed core's Sabre once — see the autoloader note
-      # in doc/tasks.md.
+      # in doc/development.md.
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:

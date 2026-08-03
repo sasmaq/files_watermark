@@ -40,7 +40,7 @@ use Sabre\HTTP\ResponseInterface;
  *
  * Registered on the authenticated Files server only. Public file-drop uploads have no
  * session to attribute a watermark to, so they fall through to the job — which also
- * declines them for want of a uid. See the note in doc/tasks.md.
+ * declines them for want of a uid. See the note in doc/development.md.
  */
 class UploadWatermarkPlugin extends ServerPlugin {
 

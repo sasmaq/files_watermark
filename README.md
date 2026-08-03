@@ -122,7 +122,10 @@ files_watermark/
 │   ├── support/      # Login, policy, upload/download commands
 │   └── tasks/        # Node side: binary-safe HTTP, PDF/image/zip probes
 └── doc/
-    └── sdd.md        # Software Development Document
+    ├── sdd.md          # Software Development Document
+    ├── tasks.md        # what is left to do — the checklist
+    ├── development.md  # the engineering record: why each piece is the way it is
+    └── patch.md        # optional Nextcloud core patches, and what they cost
 ```
 
 ## Installation
