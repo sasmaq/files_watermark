@@ -789,7 +789,6 @@ class PdfWatermarkerTest extends TestCase {
 		$config = new WatermarkConfig();
 		$config->setType($type);
 		$config->setTextTemplate('{username}');
-		$config->setPosition('diagonal');
 		$config->setOpacity(80);
 		$config->setFontSize(24);
 		$config->setColor('#cccccc');

@@ -135,11 +135,6 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 			'length' => 512,
 			'default' => null,
 		]);
-		$table->addColumn('position', Types::STRING, [
-			'notnull' => true,
-			'length' => 32,
-			'default' => 'diagonal',
-		]);
 		$table->addColumn('opacity', Types::SMALLINT, [
 			'notnull' => true,
 			'default' => 40,

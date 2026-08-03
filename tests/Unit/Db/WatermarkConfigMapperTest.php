@@ -14,7 +14,6 @@ class WatermarkConfigMapperTest extends TestCase {
 		$config->setType('combined');
 		$config->setTextTemplate('{username}');
 		$config->setImagePath('/path/to/logo.png');
-		$config->setPosition('diagonal');
 		$config->setOpacity(75);
 		$config->setFontSize(18);
 		$config->setColor('#ff0000');

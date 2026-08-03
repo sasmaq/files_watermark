@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Migration\Version1003Date20260730120000;
 use OCA\FilesWatermark\Migration\Version1005Date20260731140000;
 use OCA\FilesWatermark\Migration\Version1006Date20260731160000;
 use OCA\FilesWatermark\Migration\Version1007Date20260801120000;
+use OCA\FilesWatermark\Migration\Version1008Date20260804000000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -33,10 +34,10 @@ use PHPUnit\Framework\TestCase;
  * and not a comment. An `addColumn` that loses its `hasColumn` guard, or a `createTable`
  * that stops checking `hasTable`, breaks the other three silently.
  *
- * The chain under test is therefore 1003, 1005 and 1006. 1003 no longer creates the
- * per-group and per-user scope columns, so a fresh install never has them; 1005 drops
- * `group_id` and 1006 drops `user_id` from every install that does. 1004 is a data-only
- * step and changes no schema, so it is absent here.
+ * The chain under test is therefore 1003, 1005, 1006, 1007 and 1008. 1003 no longer creates
+ * the per-group and per-user scope columns or `position`, so a fresh install never has them;
+ * 1005 drops `group_id`, 1006 drops `user_id` and 1008 drops `position` from every install
+ * that does. 1004 is a data-only step and changes no schema, so it is absent here.
  *
  * Doctrine is not a dependency of this app — Nextcloud provides it at runtime — so the
  * schema objects here are fakes. That is enough: what is under test is the migrations'
@@ -50,7 +51,7 @@ class SchemaConvergenceTest extends TestCase {
 	 * steps already built.
 	 */
 	private const EXPECTED_CONFIG_COLUMNS = [
-		'id', 'type', 'text_template', 'image_path', 'position',
+		'id', 'type', 'text_template', 'image_path',
 		'opacity', 'font_size', 'color', 'rotation', 'trigger', 'mime_types', 'folder_tag',
 		'created_at', 'updated_at', 'log_delivery',
 	];
@@ -59,9 +60,12 @@ class SchemaConvergenceTest extends TestCase {
 	 * What the pre-1007 states are seeded with — every expected column *except* the one
 	 * 1007 adds. Seeding `log_delivery` too would let its `hasColumn` guard skip the
 	 * `addColumn` on all three upgrade paths, which is precisely the branch under test.
+	 *
+	 * `position` is absent here and seeded with the other dropped columns instead: every
+	 * install that predates 1008 has it, and no install that survives 1008 does.
 	 */
 	private const PRE_1007_CONFIG_COLUMNS = [
-		'id', 'type', 'text_template', 'image_path', 'position',
+		'id', 'type', 'text_template', 'image_path',
 		'opacity', 'font_size', 'color', 'rotation', 'trigger', 'mime_types', 'folder_tag',
 		'created_at', 'updated_at',
 	];
@@ -69,10 +73,13 @@ class SchemaConvergenceTest extends TestCase {
 	/**
 	 * Columns an earlier version created and a later one dropped. Seeding them here is
 	 * what makes the upgrade states differ from the fresh one at all.
+	 *
+	 * `position` joins the scope columns as of 1008: same story, one step later — stored,
+	 * never read, and dropped rather than implemented.
 	 */
-	private const DROPPED_CONFIG_COLUMNS = ['user_id', 'group_id'];
+	private const DROPPED_CONFIG_COLUMNS = ['user_id', 'group_id', 'position'];
 
-	/** Their indexes, which have to go with them. */
+	/** The scope columns' indexes, which have to go with them. `position` had none. */
 	private const DROPPED_CONFIG_INDEXES = ['wm_config_user_idx', 'wm_config_group_idx'];
 
 	/**
@@ -128,13 +135,13 @@ class SchemaConvergenceTest extends TestCase {
 	}
 
 	/**
-	 * The scope columns go the same way, and their indexes have to go with them.
+	 * The retired columns go the same way, and any indexes have to go with them.
 	 *
 	 * Leaving an index behind is the failure mode worth pinning: the column drop is the
 	 * visible half, and an index over a column that no longer exists is DDL the database
 	 * platforms disagree about rather than anything this test could otherwise see.
 	 */
-	public function testScopeColumnsAndTheirIndexesAreDroppedOnUpgrade(): void {
+	public function testRetiredColumnsAndTheirIndexesAreDroppedOnUpgrade(): void {
 		$schema = new FakeSchema();
 		$this->preCreateTables($schema, []);
 		$table = $schema->getTable('watermark_config');
@@ -156,7 +163,7 @@ class SchemaConvergenceTest extends TestCase {
 	}
 
 	/** A fresh install never has them, so the drop steps must pass over them quietly. */
-	public function testDroppingTheScopeColumnsIsSkippedOnAFreshInstall(): void {
+	public function testDroppingTheRetiredColumnsIsSkippedOnAFreshInstall(): void {
 		$schema = new FakeSchema();
 
 		$this->runMigration($schema);
@@ -243,6 +250,8 @@ class SchemaConvergenceTest extends TestCase {
 		$migration1006->changeSchema($output, $closure, []);
 
 		(new Version1007Date20260801120000())
+			->changeSchema($output, $closure, []);
+		(new Version1008Date20260804000000())
 			->changeSchema($output, $closure, []);
 	}
 

@@ -69,8 +69,6 @@ Things that produce a wrong file, or say something untrue about one.
 
 - [ ] **Run the migrations on MySQL, PostgreSQL and SQLite.** They use portable types, but
   that has not been observed on all three. [notes](development.md#open-data)
-- [ ] **One dead column.** `position` is accepted, validated and stored, then never read —
-  drop it or use it. [notes](development.md#open-data)
 - [ ] **`metadata` is not an accepted `type`** — needs `VALID_TYPES` and a migration, with
   the invisible watermark above. [notes](development.md#open-data)
 
@@ -115,7 +113,7 @@ Things that produce a wrong file, or say something untrue about one.
 
 ## Environment
 
-- [ ] Confirm **`php-bcmath`** is in RHEL 9 AppStream on the real target build.
+- [x] Confirm **`php-bcmath`** is in RHEL 9 AppStream on the real target build.
   [notes](development.md#open-env)
 - [ ] Headless **LibreOffice / Collabora** in the Docker dev environment — blocked on
   Office support.

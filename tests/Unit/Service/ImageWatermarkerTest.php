@@ -429,7 +429,6 @@ class ImageWatermarkerTest extends TestCase {
 		$config = new WatermarkConfig();
 		$config->setType($type);
 		$config->setTextTemplate('{username}');
-		$config->setPosition('diagonal');
 		$config->setOpacity($opacity);
 		$config->setFontSize($fontSize);
 		$config->setColor($color);

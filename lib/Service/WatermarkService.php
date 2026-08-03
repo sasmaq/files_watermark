@@ -534,7 +534,6 @@ class WatermarkService {
 		// The display name, not the account name: a watermark is read by a person, and
 		// "Alice Smith" identifies the leak to them in a way "asmith3" does not.
 		$config->setTextTemplate('{displayname} - {date}');
-		$config->setPosition('diagonal');
 		// Faint enough to read the document through, dark enough to survive a screenshot.
 		$config->setOpacity(40);
 		$config->setFontSize(24);

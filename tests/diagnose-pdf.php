@@ -136,7 +136,6 @@ echo 'structure: ' . (str_contains($raw, '/Type /XRef') || str_contains($raw, '/
 $config = new WatermarkConfig();
 $config->setType('text');
 $config->setTextTemplate('DIAGNOSTIC');
-$config->setPosition('diagonal');
 $config->setOpacity(80);
 $config->setFontSize(24);
 $config->setColor('#cccccc');

@@ -141,7 +141,6 @@
 | `type` | ENUM('text','image','combined','metadata') | Watermark type |
 | `text_template` | TEXT | Text with placeholders |
 | `image_path` | VARCHAR(512) | Nextcloud path to watermark image |
-| `position` | VARCHAR(32) | Placement identifier |
 | `opacity` | TINYINT | 0–100 |
 | `font_size` | SMALLINT | pt |
 | `color` | CHAR(7) | Hex color |

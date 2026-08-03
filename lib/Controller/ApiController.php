@@ -83,7 +83,6 @@ class ApiController extends Controller {
 		string $type,
 		?string $textTemplate,
 		?string $imagePath,
-		string $position = 'diagonal',
 		int $opacity = 40,
 		int $fontSize = 24,
 		string $color = '#808080',
@@ -207,7 +206,6 @@ class ApiController extends Controller {
 		$config->setType($type);
 		$config->setTextTemplate($textTemplate);
 		$config->setImagePath($imagePath);
-		$config->setPosition($position);
 		$config->setOpacity(max(0, min(100, $opacity)));
 		$config->setFontSize(max(6, min(120, $fontSize)));
 		$config->setColor($color);

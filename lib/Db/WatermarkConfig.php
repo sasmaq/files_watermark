@@ -15,8 +15,6 @@ use OCP\AppFramework\Db\Entity;
  * @method void setTextTemplate(?string $textTemplate)
  * @method string|null getImagePath()
  * @method void setImagePath(?string $imagePath)
- * @method string getPosition()
- * @method void setPosition(string $position)
  * @method int getOpacity()
  * @method void setOpacity(int $opacity)
  * @method int getFontSize()
@@ -43,7 +41,6 @@ class WatermarkConfig extends Entity {
 	protected string $type = 'text';
 	protected ?string $textTemplate = null;
 	protected ?string $imagePath = null;
-	protected string $position = 'diagonal';
 	protected int $opacity = 40;
 	protected int $fontSize = 24;
 	/** Mid grey: legible over both light pages and dark imagery, unlike a near-white tint. */
@@ -86,7 +83,6 @@ class WatermarkConfig extends Entity {
 			'type' => $this->type,
 			'textTemplate' => $this->textTemplate,
 			'imagePath' => $this->imagePath,
-			'position' => $this->position,
 			'opacity' => $this->opacity,
 			'fontSize' => $this->fontSize,
 			'color' => $this->color,

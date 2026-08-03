@@ -75,7 +75,6 @@ Cypress.Commands.add('wmSetPolicy', (policy = {}) => {
 			type: 'text',
 			textTemplate: '{displayname} - {date}',
 			trigger: 'on_demand',
-			position: 'diagonal',
 			opacity: 40,
 			fontSize: 24,
 			color: '#808080',

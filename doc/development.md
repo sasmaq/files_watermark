@@ -1581,18 +1581,20 @@ Recorded because they were raised before the decision, not to relitigate it.
 
 ## Data model
 
-**Position:** the schema carries every implemented feature. One column is stored but never
-read, and one SDD type is still missing.
+**Position:** the schema carries every implemented feature and nothing else. One SDD type is
+still missing.
 
 ### Notes and open questions {#open-data}
 
 - Verify the migrations run cleanly on **MySQL, PostgreSQL and SQLite**. They use the
   portable schema builder and run on SQLite; a cross-DB run has not been done
 - `metadata` is not an accepted `type` — needs both `VALID_TYPES` and a migration
-- **One dead column left.** `position` is accepted, validated and stored, and then never
+- **`position` dropped** (`Version1008Date20260804000000`). It was accepted, stored and never
   read by anything: text is always tiled and images always centred, which matches the UI copy,
-  so the column encodes a choice the renderers do not offer. It looks supported from the
-  outside. Either wire it up or remove it, as `group_id` was
+  so the column encoded a choice the renderers do not offer while looking supported from the
+  outside. Removed rather than wired up, as `group_id` was — corner placement is a feature
+  with its own geometry, tests and UI, and it does not start from a column that has held
+  `diagonal` since 1000
 - **`group_id` and `user_id` dropped**, with the group- and per-user-override features
   they scoped — see [Admin UI](#open-4). `watermark_config` now holds exactly one row: the
   server-wide policy. (`watermark_log.user_id` is untouched — that one records who acted.)
