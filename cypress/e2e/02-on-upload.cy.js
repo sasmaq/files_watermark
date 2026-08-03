@@ -1,5 +1,5 @@
 /**
- * On upload — and specifically, **promptly**.
+ * On upload - and specifically, **promptly**.
  *
  * The listener alone cannot burn the watermark (the write still holds a lock on the
  * node, so `putContent()` from there throws `LockedException`), so it enqueues a job;
@@ -11,7 +11,7 @@
  * against the bug this covers.
  *
  * The MOVE case is not a variation on the PUT case, it is the other half of the
- * feature: chunked uploads — every large file from the web UI and the desktop client —
+ * feature: chunked uploads - every large file from the web UI and the desktop client -
  * assemble with a MOVE and never PUT their final path, so a PUT-only hook skips them
  * all silently.
  */
@@ -46,7 +46,7 @@ describe('On-upload watermarking', () => {
 	 * The second upload to a path, which used to land **clean and still badged**.
 	 *
 	 * The double-burn guard asks whether this *file id* is watermarked, and a file id
-	 * survives having its content replaced — so the guard meant to stop a file being
+	 * survives having its content replaced - so the guard meant to stop a file being
 	 * stamped twice suppressed the first stamp of entirely new bytes. Two uploads was all
 	 * it took to store an unwatermarked file under the policy that exists to prevent that.
 	 *

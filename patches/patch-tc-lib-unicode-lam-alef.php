@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * `tc-lib-unicode` drops the first character of any string containing a lam-alef pair.
  *
- * Measured on **2.11.0**, the current release — there is no upstream version to upgrade to.
+ * Measured on **2.11.0**, the current release - there is no upstream version to upgrade to.
  * Applied by {@see apply.php}; see that file for the idempotency and fail-loudly rules.
  *
  * ## The defect
@@ -20,7 +20,7 @@ declare(strict_types=1);
  * `'i' => -1` and no later step fills it in. The real source index is carried in `'pos'`.
  *
  * So the lookup is always `getNewCharIndexBySourceIndex(-1)`, which matches the *first*
- * element of the array — index 0, the first character of the whole string. The result is
+ * element of the array - index 0, the first character of the whole string. The result is
  * that any string containing a lam-alef pair loses its **first character**, while the lam
  * that should have been consumed survives as a stray glyph.
  *
@@ -35,7 +35,7 @@ declare(strict_types=1);
  *
  * ## The fix
  *
- * Match on `'pos'` — the field that actually holds the source index — instead of `'i'`.
+ * Match on `'pos'` - the field that actually holds the source index - instead of `'i'`.
  *
  * Guarded by `ShapedTextTest::testShapedSequenceIsExact()`, which pins the whole glyph
  * sequence: the counts and ranges the suite checked before this was found are all satisfied

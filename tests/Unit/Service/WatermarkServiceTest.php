@@ -200,7 +200,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$this->assertSame($logoTmp, $seen, 'renderer should get the materialised path');
 		$this->assertFileDoesNotExist($logoTmp, 'logo temp copy leaked');
-		// The stored config keeps its reference — only the render-time copy was rewritten.
+		// The stored config keeps its reference - only the render-time copy was rewritten.
 		$this->assertSame(str_repeat('a', 32) . '.png', $config->getImagePath());
 
 		@unlink($tmpPath);
@@ -374,8 +374,8 @@ class WatermarkServiceTest extends TestCase {
 	 * @dataProvider unusableTagProvider
 	 */
 	public function testUnusableStoredFolderTagDegradesInsteadOfCrashing(\Throwable $thrown): void {
-		// saveConfig rejects both of these now, but a config stored before it did — or
-		// edited straight in the database — must still land on this app's ordinary
+		// saveConfig rejects both of these now, but a config stored before it did - or
+		// edited straight in the database - must still land on this app's ordinary
 		// "cannot watermark" path. InvalidArgumentException in particular is not a
 		// RuntimeException, so uncaught it sailed past every caller and turned each
 		// watermark request into an HTTP 500.
@@ -492,7 +492,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
 
-		// The clean original is never modified — only a temp copy is rendered ...
+		// The clean original is never modified - only a temp copy is rendered ...
 		$file->expects($this->never())->method('putContent');
 		$this->pdfWatermarker->expects($this->once())->method('apply');
 		// ... and every download is audited.
@@ -511,7 +511,7 @@ class WatermarkServiceTest extends TestCase {
 
 	/**
 	 * Delivery audit is **off unless the policy asks for it**, and the render happens
-	 * either way — the switch governs the record, never the watermark.
+	 * either way - the switch governs the record, never the watermark.
 	 *
 	 * This is the growth control: `on_download` and `on_share` render per fetch, so they
 	 * logged per fetch, one row per watermarked member of every archive every time
@@ -578,7 +578,7 @@ class WatermarkServiceTest extends TestCase {
 
 	public function testWatermarkForDownloadDegradesToNullOnRenderFailure(): void {
 		// on_download applies and the file is a watermark candidate, but the renderer
-		// itself fails — the download must degrade to null (and log) rather than throw.
+		// itself fails - the download must degrade to null (and log) rather than throw.
 		$config = new WatermarkConfig();
 		$config->setType('text');
 		$config->setTextTemplate('{username}');
@@ -611,7 +611,7 @@ class WatermarkServiceTest extends TestCase {
 
 	public function testWatermarkForDownloadExcludedMimeIsNotApplicable(): void {
 		// on_download applies but a mime whitelist excludes this file: it is "not
-		// applicable" (served untouched, no error logged) — not a watermark failure.
+		// applicable" (served untouched, no error logged) - not a watermark failure.
 		$config = new WatermarkConfig();
 		$config->setType('text');
 		$config->setTrigger('on_download');
@@ -706,7 +706,7 @@ class WatermarkServiceTest extends TestCase {
 		$file->method('getPath')->willReturn('/alice/files/report.pdf');
 		$file->method('getContent')->willReturn('%PDF-fake');
 		$file->method('getOwner')->willReturn($alice);
-		// Not a shared mount — the giveaway that the storage test alone is insufficient.
+		// Not a shared mount - the giveaway that the storage test alone is insufficient.
 		$file->method('getStorage')->willReturn($this->storage(false));
 
 		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
@@ -797,7 +797,7 @@ class WatermarkServiceTest extends TestCase {
 
 	public function testWatermarkForDownloadWatermarksImageForSharedRecipient(): void {
 		// Images go through the same on_share delivery gate, but render via the image
-		// watermarker (GD/Imagick) — which, unlike the PDF path, doesn't fail on
+		// watermarker (GD/Imagick) - which, unlike the PDF path, doesn't fail on
 		// real-world files, so a recipient reliably gets a watermarked image.
 		$config = new WatermarkConfig();
 		$config->setType('text');
@@ -845,7 +845,7 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	public function testWatermarkForDownloadSkipsOwnerAccessWhenOnShare(): void {
-		// on_share must NOT watermark when the owner reads their own file — only
+		// on_share must NOT watermark when the owner reads their own file - only
 		// when a non-owner (share recipient / public visitor) fetches it.
 		$config = new WatermarkConfig();
 		$config->setType('text');
@@ -930,7 +930,7 @@ class WatermarkServiceTest extends TestCase {
 
 	public function testWatermarkInPlacePreservesOriginalBeforeOverwriting(): void {
 		// The burn is irreversible, so the pre-watermark bytes must be handed to the
-		// store — and it has to happen while getContent() still returns the clean file.
+		// store - and it has to happen while getContent() still returns the clean file.
 		$config = new WatermarkConfig();
 		$config->setType('image');
 		$config->setTextTemplate('{username}');
@@ -1106,7 +1106,7 @@ class WatermarkServiceTest extends TestCase {
 
 	public function testAPreservedOriginalIsNeverWatermarkedInPlace(): void {
 		// Burning a watermark into the copy would store a copy of *that*, and the copies
-		// are supported mime types — nothing downstream would stop the recursion.
+		// are supported mime types - nothing downstream would stop the recursion.
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn(11);
 		$file->method('getPath')->willReturn('/alice/files/.files_watermark/originals/7');
@@ -1195,7 +1195,7 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	public function testRemoveWatermarkKeepsBackupWhenRestoreFails(): void {
-		// If the write throws, the backup is the only copy of the original left — it
+		// If the write throws, the backup is the only copy of the original left - it
 		// must survive so the user can try again.
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn(11);
@@ -1234,7 +1234,7 @@ class WatermarkServiceTest extends TestCase {
 	 * With no user to attribute the watermark to, *both* identity tokens have to fall back
 	 * to the anonymous label. Leaving `{displayname}` unhandled would render an empty
 	 * string, so a public-link download would carry a watermark with a blank where the
-	 * identity belongs — which reads as a rendering fault rather than as "nobody signed in".
+	 * identity belongs - which reads as a rendering fault rather than as "nobody signed in".
 	 *
 	 * @dataProvider anonymousTriggerProvider
 	 */
@@ -1381,7 +1381,7 @@ class WatermarkServiceTest extends TestCase {
 	 * The regression behind the ZIP leak: a *container* cannot answer for its members.
 	 *
 	 * A received single-file share is mounted inside the recipient's own home, so the
-	 * folder holding it is not an ISharedStorage and reports "owner access" — while the
+	 * folder holding it is not an ISharedStorage and reports "owner access" - while the
 	 * member itself is a share that must be watermarked. Gating an archive on the folder
 	 * therefore shipped clean originals; ZipInterceptorPlugin now gates on
 	 * hasDeliveryTriggerConfigured() and judges each member with deliveryTriggerFor().
@@ -1398,7 +1398,7 @@ class WatermarkServiceTest extends TestCase {
 
 		$this->assertNull(
 			$this->service->deliveryTriggerFor($home),
-			'the container must not report on_share — only members can answer',
+			'the container must not report on_share - only members can answer',
 		);
 		// ...while a member inside it does, which is what the archive path must ask.
 		$this->assertSame('on_share', $this->service->deliveryTriggerFor($this->nodeOnStorage(true)));
@@ -1425,7 +1425,7 @@ class WatermarkServiceTest extends TestCase {
 
 	/**
 	 * The default is memoised too, so an install with no policy saved does not re-query
-	 * per member — the miss is the case a folder download hits hardest.
+	 * per member - the miss is the case a folder download hits hardest.
 	 */
 	public function testTheDefaultConfigIsMemoisedToo(): void {
 		$this->configMapper->expects($this->once())

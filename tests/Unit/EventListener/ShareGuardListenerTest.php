@@ -40,7 +40,7 @@ class ShareGuardListenerTest extends TestCase {
 		$this->listener->handle($event);
 
 		$this->assertSame('This file cannot be shared.', $event->getError());
-		// Core checks BOTH — `if ($event->isPropagationStopped() && $event->getError())`
+		// Core checks BOTH - `if ($event->isPropagationStopped() && $event->getError())`
 		// in Share20\Manager. With the error alone the share is created regardless, so
 		// this half of the assertion is the one that actually stops it.
 		$this->assertTrue($event->isPropagationStopped());

@@ -10,7 +10,7 @@ module.exports = {
 			// The E2E harness is Node and Cypress, not the app bundle: CommonJS,
 			// `require` without extensions, and prose docblocks rather than the
 			// per-parameter JSDoc the Nextcloud config asks of exported frontend
-			// helpers — most of these functions take one destructured options bag,
+			// helpers - most of these functions take one destructured options bag,
 			// and `@param root0.user` documents nothing.
 			files: ['cypress/**/*.js', 'cypress.config.js'],
 			env: {

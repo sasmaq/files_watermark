@@ -72,8 +72,8 @@ class WatermarkImageStoreTest extends TestCase {
 		$this->assertTrue(WatermarkImageStore::isReference(str_repeat('a', 32) . '.png'));
 		$this->assertTrue(WatermarkImageStore::isReference(str_repeat('0', 32) . '.jpg'));
 
-		// Anything a user could type — in particular the absolute server paths the old
-		// free-text field accepted — must not look like a reference.
+		// Anything a user could type - in particular the absolute server paths the old
+		// free-text field accepted - must not look like a reference.
 		$this->assertFalse(WatermarkImageStore::isReference('/etc/passwd'));
 		$this->assertFalse(WatermarkImageStore::isReference('/var/www/html/core/img/logo.png'));
 		$this->assertFalse(WatermarkImageStore::isReference('../../' . str_repeat('a', 32) . '.png'));

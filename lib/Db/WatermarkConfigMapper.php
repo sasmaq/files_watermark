@@ -48,7 +48,7 @@ class WatermarkConfigMapper extends QBMapper {
 	}
 
 	/**
-	 * The server-wide policy — the only one there is.
+	 * The server-wide policy - the only one there is.
 	 *
 	 * Throws `DoesNotExistException` on an install where no admin has saved one yet;
 	 * {@see WatermarkService::resolveConfig} answers that with its built-in default

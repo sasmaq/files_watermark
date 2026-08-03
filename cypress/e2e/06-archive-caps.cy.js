@@ -2,7 +2,7 @@
  * What happens when an archive is too big to render.
  *
  * Members are rendered to temp files *before* any bytes are sent, which is what lets
- * a failed render answer with a real 403 instead of a truncated archive — and it is
+ * a failed render answer with a real 403 instead of a truncated archive - and it is
  * why the work is capped at 200 members / 256 MiB. Over the cap the two delivery
  * triggers deliberately part company:
  *
@@ -73,7 +73,7 @@ describe('Archives past the rendering cap', () => {
 	 * the key an admin types is the key the code reads. The unit tests stub `IAppConfig`,
 	 * so a rename on either side would leave them green and the setting inert.
 	 *
-	 * It runs against a folder of **three** members — far under the default of 200 — so
+	 * It runs against a folder of **three** members - far under the default of 200 - so
 	 * a denial here can only come from the configured value.
 	 */
 	it('honours a member cap lowered with occ', () => {

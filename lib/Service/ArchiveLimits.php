@@ -13,7 +13,7 @@ use Psr\Log\LoggerInterface;
  * The ceilings on {@see \OCA\FilesWatermark\Dav\ZipInterceptorPlugin}'s pre-render pass.
  *
  * `on_share` must never leak a clean original, so every member of an archive is rendered
- * to a temp file *before* any bytes go out — that is what lets a failed render abort with
+ * to a temp file *before* any bytes go out - that is what lets a failed render abort with
  * a real 403 instead of a truncated archive. The cost is temp disk and CPU proportional to
  * the folder, and these two numbers are what bounds it.
  *
@@ -21,7 +21,7 @@ use Psr\Log\LoggerInterface;
  * approves in a form; these are host tuning, sized by the server's temp filesystem and how
  * long a request may take, and they mean nothing to the watermark that comes out. Putting
  * them in the policy would also have meant either two more fields on a form about
- * appearance, or two more columns with no way to set them — and a stored setting with no
+ * appearance, or two more columns with no way to set them - and a stored setting with no
  * way in is exactly what the group and per-user overrides turned out to be.
  *
  * ```
@@ -64,7 +64,7 @@ class ArchiveLimits {
 	 *
 	 * Every failure here degrades to the default rather than throwing. This is read on
 	 * the delivery path, once per archive request: a typo in an `occ` command must not
-	 * become an HTTP 500 on every folder download — the app has shipped that exact shape
+	 * become an HTTP 500 on every folder download - the app has shipped that exact shape
 	 * of bug once already, from a mistyped system tag.
 	 */
 	private function limit(string $key, int $default): int {

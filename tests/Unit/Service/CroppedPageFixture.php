@@ -6,7 +6,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 /**
  * Builds a one-page PDF whose visible area is a `/CropBox` **offset from the origin**,
- * with all of its content inside that box — the shape that made watermarked files come
+ * with all of its content inside that box - the shape that made watermarked files come
  * out blank.
  *
  * Hand-built byte by byte for the same reason {@see CompressedXrefFixture} is: the
@@ -14,8 +14,8 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
  * offset visible area on request. Generating this through `writePdf()` would yield a
  * fixture that no longer reproduces the case.
  *
- * The content is a single image, because that is what the report came from — a photo run
- * through a print-to-PDF driver — and because an image is trivially locatable in the
+ * The content is a single image, because that is what the report came from - a photo run
+ * through a print-to-PDF driver - and because an image is trivially locatable in the
  * output by its bytes.
  */
 trait CroppedPageFixture {
@@ -33,7 +33,7 @@ trait CroppedPageFixture {
 		[$x0, $y0, $x1, $y1] = $cropBox;
 		$image = gzcompress($this->croppedPagePixels());
 
-		// The image fills exactly the visible box, in the *source's* coordinates — so if
+		// The image fills exactly the visible box, in the *source's* coordinates - so if
 		// the importer forgets the box origin, the content lands off the page.
 		$draw = sprintf("q\n%F 0 0 %F %F %F cm\n/Im0 Do\nQ\n", $x1 - $x0, $y1 - $y0, $x0, $y0);
 
@@ -42,7 +42,7 @@ trait CroppedPageFixture {
 			2 => '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
 			3 => sprintf(
 				'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /CropBox [%F %F %F %F ] %s'
-				. '/Resources << /XObject << /Im0 5 0 R >> /ProcSet [/PDF /ImageC] >> /Contents 4 0 R >>',
+					. '/Resources << /XObject << /Im0 5 0 R >> /ProcSet [/PDF /ImageC] >> /Contents 4 0 R >>',
 				$x0,
 				$y0,
 				$x1,
@@ -77,8 +77,8 @@ trait CroppedPageFixture {
 	/**
 	 * What fraction of the imported page ends up inside the output page, 0.0–1.0.
 	 *
-	 * Every byte of a lost page is still in the file — it is drawn somewhere nothing can
-	 * see it — so neither the file size nor a search for the image data can tell a good
+	 * Every byte of a lost page is still in the file - it is drawn somewhere nothing can
+	 * see it - so neither the file size nor a search for the image data can tell a good
 	 * render from a blank one. This composes the two transforms that decide where the
 	 * content actually lands: the imported form's own `/Matrix`, which carries the page
 	 * rotation, and the `cm` that places the form on the page.

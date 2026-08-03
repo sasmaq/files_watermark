@@ -1,4 +1,4 @@
-# Frontend jobs — the GitLab equivalent of .github/workflows/nodejs.yml.
+# Frontend jobs - the GitLab equivalent of .github/workflows/nodejs.yml.
 
 .node:
   stage: check
@@ -6,12 +6,12 @@
   # the `images` stage.
   needs: []
   variables:
-    NODE_VERSION: '20'
+    NODE_VERSION: "20"
   image: node:$NODE_VERSION-bookworm
   before_script:
     - npm ci
   cache:
-    # The npm cache is version-independent — it stores tarballs, not built artifacts —
+    # The npm cache is version-independent - it stores tarballs, not built artifacts -
     # so Node 20 and 22 share one, which is also what makes the second Jest leg cheap.
     key:
       files:
@@ -30,7 +30,7 @@ node:jest:
   stage: test
   parallel:
     matrix:
-      - NODE_VERSION: ['20', '22']
+      - NODE_VERSION: ["20", "22"]
   script:
     - npm test
 
@@ -42,7 +42,7 @@ node:build:
   script:
     - npm run build
   artifacts:
-    # Not a release artifact — it is what lets you diff CI's bundle against the committed
+    # Not a release artifact - it is what lets you diff CI's bundle against the committed
     # one when they disagree.
     expire_in: 1 day
     paths:

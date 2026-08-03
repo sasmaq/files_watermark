@@ -9,7 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The entity itself: what it serialises to the settings page, and how it reads the one
- * column that holds a list. The mapper around it is {@see WatermarkConfigMapperTest} — this
+ * column that holds a list. The mapper around it is {@see WatermarkConfigMapperTest} - this
  * file used to carry that name while testing none of it.
  */
 class WatermarkConfigTest extends TestCase {

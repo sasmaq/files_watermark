@@ -24,12 +24,12 @@ jobs:
 
       # The container runs the *compiled* app off the bind mount, so both builds
       # have to happen on the runner before Nextcloud starts. `--no-dev` because
-      # the dev tree is what shadowed core's Sabre once — see the autoloader note
+      # the dev tree is what shadowed core's Sabre once - see the autoloader note
       # in doc/development.md.
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
           extensions: bcmath
           coverage: none
 
@@ -67,7 +67,7 @@ jobs:
         run: docker compose exec -T -u www-data nextcloud php occ app:enable files_watermark
 
       # Core allows 20 shares per 10 minutes per user, and this suite rebuilds its
-      # fixtures — users, folders, shares — on every run, which legitimately looks like
+      # fixtures - users, folders, shares - on every run, which legitimately looks like
       # abuse. Two runs inside the window exhaust the budget and the share specs fail in
       # their setup with an empty 429. Off on a throwaway test instance only.
       - name: Turn off rate limiting on the test instance

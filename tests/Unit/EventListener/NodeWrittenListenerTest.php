@@ -109,7 +109,7 @@ class NodeWrittenListenerTest extends TestCase {
 	public function testStoringAPreservedOriginalDoesNotQueueAJob(): void {
 		// Writing a backup is itself a write of a supported file into the owner's
 		// storage. Without this guard it queues a watermark of the backup, whose own
-		// backup queues another — the copies are supported mime types, so nothing
+		// backup queues another - the copies are supported mime types, so nothing
 		// downstream would stop it.
 		$this->watermarkService->method('isSupported')->willReturn(true);
 		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_upload'));

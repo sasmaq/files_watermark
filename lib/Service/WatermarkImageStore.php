@@ -20,8 +20,8 @@ use Psr\Log\LoggerInterface;
  * files it downloaded. Images now only ever come from here: uploaded through the settings
  * UI, validated, and referenced by an opaque generated name that cannot escape this folder.
  *
- * A reference is just a file name ({@see isReference}) resolved inside the app's appdata —
- * never a caller-supplied path — so a config carrying a legacy absolute path resolves to
+ * A reference is just a file name ({@see isReference}) resolved inside the app's appdata -
+ * never a caller-supplied path - so a config carrying a legacy absolute path resolves to
  * nothing instead of reading it.
  */
 class WatermarkImageStore {
@@ -54,7 +54,7 @@ class WatermarkImageStore {
 	/**
 	 * Whether $value is a reference produced by {@see store} rather than something a user
 	 * typed. The config column is shared with legacy absolute paths, so every read goes
-	 * through this — an unrecognised value is ignored, not resolved.
+	 * through this - an unrecognised value is ignored, not resolved.
 	 *
 	 * Asserted rather than merely returned: the pattern cannot match null or the empty
 	 * string, so a caller that has been through this guard does not have to re-prove it
@@ -124,7 +124,7 @@ class WatermarkImageStore {
 	 *
 	 * Appdata is not necessarily on a local disk (object storage is a supported primary
 	 * storage), so the content is copied to a temp file rather than assuming a path exists.
-	 * The caller owns that file and must delete it — see {@see WatermarkService::watermarkFile}.
+	 * The caller owns that file and must delete it - see {@see WatermarkService::watermarkFile}.
 	 */
 	public function localPath(?string $reference): ?string {
 		if (!self::isReference($reference)) {

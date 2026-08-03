@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php-version: ['8.2', '8.3']
+        php-version: ["8.2", "8.3"]
 
     name: Syntax (PHP ${{ matrix.php-version }})
 
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
 
     # The Nextcloud coding standard is version-independent, so one PHP version is
-    # enough — unlike the syntax job, which is what catches version-specific parse
+    # enough - unlike the syntax job, which is what catches version-specific parse
     # errors. Pinned to the lowest supported version to share the composer cache
     # with the 8.2 PHPUnit job below.
     name: Coding standard
@@ -55,7 +55,7 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
           coverage: none
 
       - name: Get Composer cache directory
@@ -90,10 +90,10 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
           # Same extensions as the PHPUnit job. Psalm reflects extension classes from
           # the *running* PHP, so loading imagick here is what gets the optional Imagick
-          # branch of ImageWatermarker analysed at all — psalm.xml suppresses the
+          # branch of ImageWatermarker analysed at all - psalm.xml suppresses the
           # undefined-class noise it would otherwise produce on a host without the
           # extension. CI is therefore the stricter of the two, never the looser.
           extensions: gd, imagick, gmp, mbstring, dom, zip
@@ -122,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php-version: ['8.2', '8.3']
+        php-version: ["8.2", "8.3"]
 
     name: PHPUnit (PHP ${{ matrix.php-version }})
 

@@ -2,7 +2,7 @@
 #
 # Standalone stack (separate from docker-compose.yml) that runs Nextcloud with
 # RustFS as the S3 PRIMARY object store, so every file lives on S3. Use it to
-# verify Goal 5 — that download / on-demand / on-upload watermarking works on
+# verify Goal 5 - that download / on-demand / on-upload watermarking works on
 # S3-backed storage.
 #
 # Build the app on the host first (the container runs the compiled output):

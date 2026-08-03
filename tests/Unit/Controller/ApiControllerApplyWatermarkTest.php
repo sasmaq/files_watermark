@@ -149,7 +149,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 
 		$response = $this->controller->applyWatermark('doc.pdf');
 
-		// A benign no-op — 200 with a distinct status the UI can branch on, not an error.
+		// A benign no-op - 200 with a distinct status the UI can branch on, not an error.
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
 		$this->assertSame(['status' => 'already_watermarked', 'path' => 'doc.pdf'], $response->getData());
 	}

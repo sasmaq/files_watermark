@@ -60,7 +60,7 @@ onMounted(async () => {
 			config.value = configs[0]
 		}
 	} catch (e) {
-		// A 404 just means no config exists yet — show the form with defaults
+		// A 404 just means no config exists yet - show the form with defaults
 		if (e?.response?.status !== 404) {
 			loadError.value = e?.response?.data?.error ?? e.message
 		}

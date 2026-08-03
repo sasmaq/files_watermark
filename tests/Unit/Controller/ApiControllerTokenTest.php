@@ -26,7 +26,7 @@ use PHPUnit\Framework\TestCase;
  *
  * The immediate reason this exists: the settings form offers a chip per token, and the
  * server holds its own allowlist. If the two drift, the UI hands the admin a token that
- * comes straight back as a 400 — which is what would have happened when `{displayname}`
+ * comes straight back as a 400 - which is what would have happened when `{displayname}`
  * was added to the form, had `VALID_TOKENS` not been updated with it.
  */
 class ApiControllerTokenTest extends TestCase {
@@ -92,21 +92,21 @@ class ApiControllerTokenTest extends TestCase {
 	}
 
 	/**
-	 * The two identity tokens side by side — the combination an admin reaches for when the
+	 * The two identity tokens side by side - the combination an admin reaches for when the
 	 * watermark has to be both readable and unambiguous.
 	 */
 	public function testBothIdentityTokensCanBeUsedTogether(): void {
-		$response = $this->save('{displayname} ({username}) — {date}');
+		$response = $this->save('{displayname} ({username}) - {date}');
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
-		$this->assertSame('{displayname} ({username}) — {date}', $response->getData()['textTemplate']);
+		$this->assertSame('{displayname} ({username}) - {date}', $response->getData()['textTemplate']);
 	}
 
 	/**
 	 * An Arabic template has to survive the API unchanged, byte for byte.
 	 *
 	 * The token check runs a regex over the template, and a validator that was not
-	 * UTF-8-aware would either mangle the text or reject it outright — either way the
+	 * UTF-8-aware would either mangle the text or reject it outright - either way the
 	 * renderers would never see what the admin typed, and the fault would look like a
 	 * rendering bug rather than a validation one.
 	 */
@@ -122,7 +122,7 @@ class ApiControllerTokenTest extends TestCase {
 	public function testUnknownTokenIsRejectedAndNamed(): void {
 		$this->configMapper->expects($this->never())->method('insert');
 
-		$response = $this->save('{displayName} — {date}');
+		$response = $this->save('{displayName} - {date}');
 
 		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
 		// Naming the offender matters here more than usual: {displayName} differs from the

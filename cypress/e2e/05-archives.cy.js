@@ -4,7 +4,7 @@
  * Core streams archive members straight from `$node->fopen('rb')`, so before
  * `ZipInterceptorPlugin` existed a folder download was a way to fetch every file on
  * the server unwatermarked, in every mode. Nothing about the archive looks wrong when
- * that happens — it is a valid zip of valid files — so every assertion here unpacks
+ * that happens - it is a valid zip of valid files - so every assertion here unpacks
  * the archive and probes the *members*.
  *
  * The single-file-share case is the one that matters most and is the least obvious: a
@@ -51,7 +51,7 @@ describe('Archive (ZIP) downloads', () => {
 			contentType: 'text/markdown',
 		})
 
-		// A single file shared on its own — the container-gate regression.
+		// A single file shared on its own - the container-gate regression.
 		cy.task('fixture:pdf', { pages: 1, text: 'single share' })
 			.then((base64) => cy.wmUpload(`${folder}/single.pdf`, base64))
 
@@ -177,7 +177,7 @@ describe('Archive (ZIP) downloads', () => {
 
 		it('watermarks a selection made on a received single-file share', () => {
 			// The regression. The file is mounted at the recipient's root, so the
-			// container here is the recipient's own home — not shared storage.
+			// container here is the recipient's own home - not shared storage.
 			cy.task('nc:get', {
 				url: `/remote.php/dav/files/${recipientUid}`
 					+ `?accept=zip&files=${encodeURIComponent('["single.pdf"]')}`,
@@ -200,20 +200,20 @@ describe('Archive (ZIP) downloads', () => {
 		 * The archive's audit granularity, decided and pinned: **one `watermark_log` row
 		 * per watermarked member**, written per fetch.
 		 *
-		 * A row per archive was the alternative and is strictly less useful — it could say
+		 * A row per archive was the alternative and is strictly less useful - it could say
 		 * that someone downloaded an archive but not which documents were in it, which is
 		 * the question the audit trail exists to answer. Rows are keyed by file id, which
 		 * is also what the Files-list indicator and the double-burn guard read.
 		 *
 		 * The cost is real and deliberate: delivery triggers render per fetch, so a second
 		 * download of the same folder writes the same rows again. That is asserted rather
-		 * than glossed over — it is the same behaviour a single-file `on_download` has, so
+		 * than glossed over - it is the same behaviour a single-file `on_download` has, so
 		 * the archive path is not a special case, and the volume is bounded by the archive
 		 * caps (200 members by default, `archive_max_members`).
 		 */
 		it('records nothing for a delivery unless the policy asks for it', () => {
 			// The shipped default. Delivery triggers render per fetch, so recording them
-			// is what grows the log without bound — an archive of 200 members downloaded
+			// is what grows the log without bound - an archive of 200 members downloaded
 			// twice a day is 400 rows a day, forever.
 			cy.wmSetPolicy({ trigger: 'on_share', logDelivery: false })
 
@@ -226,7 +226,7 @@ describe('Archive (ZIP) downloads', () => {
 					password: recipient.password,
 					headers: zipHeaders,
 				}).then((response) => {
-					// The watermark still happens — the switch governs the record, never
+					// The watermark still happens - the switch governs the record, never
 					// the file.
 					expect(response.status).to.eq(200)
 					probeArchive(response.base64).then((members) => {

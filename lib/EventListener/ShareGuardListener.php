@@ -16,7 +16,7 @@ use OCP\Share\Events\BeforeShareCreatedEvent;
  * share walks straight past it: share creation resolves a *path* through the Files API,
  * so no DAV hook ever sees it, and the share is then served from the **public** endpoint,
  * where the shared node is re-rooted so that its path no longer names the folder at all.
- * Registering the DAV plugin on the public server does not help for that reason — it was
+ * Registering the DAV plugin on the public server does not help for that reason - it was
  * measured. Refusing the share is what closes it.
  *
  * Core acts on this only when **both** the error and the propagation stop are set:

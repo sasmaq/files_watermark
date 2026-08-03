@@ -2,7 +2,7 @@
  * Images, judged by their pixels.
  *
  * There is no marker in an image the way an embedded subset font marks a watermarked
- * PDF, so "the file changed" is all a byte comparison can say — and it says it just as
+ * PDF, so "the file changed" is all a byte comparison can say - and it says it just as
  * loudly when the renderer re-encodes the file and draws nothing. The fixture is
  * therefore a flat white field, `inkRatio` is the fraction of pixels that are no
  * longer that colour, and a clean control upload has to measure zero.

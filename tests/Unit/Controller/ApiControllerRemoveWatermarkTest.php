@@ -137,7 +137,7 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 	}
 
 	public function testReturnsUnprocessableWhenNoOriginalPreserved(): void {
-		// A file watermarked before backups existed has nothing to restore — an error
+		// A file watermarked before backups existed has nothing to restore - an error
 		// the UI shows verbatim, not a silent success.
 		$this->loginAlice();
 		$node = $this->mockFile(readable: true, updateable: true);

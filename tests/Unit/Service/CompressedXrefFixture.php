@@ -8,8 +8,8 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
  * Builds a PDF 1.5 fixture whose cross-reference table is a compressed stream.
  *
  * Shared by {@see PdfWatermarkerTest} and {@see PdfNormalizerTest} because the two
- * assert opposite halves of one story — refused without `qpdf`, watermarked with
- * it — and a fixture that drifted between them would let both pass while the
+ * assert opposite halves of one story - refused without `qpdf`, watermarked with
+ * it - and a fixture that drifted between them would let both pass while the
  * feature was broken.
  */
 trait CompressedXrefFixture {
@@ -50,7 +50,7 @@ trait CompressedXrefFixture {
 		}
 
 		// The xref stream is itself an indirect object, so it has to record its own
-		// offset — which is only known once everything before it has been written.
+		// offset - which is only known once everything before it has been written.
 		$xrefNum = count($objects) + 1;
 		$xrefOffset = strlen($pdf);
 

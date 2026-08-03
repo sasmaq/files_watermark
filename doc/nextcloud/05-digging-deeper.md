@@ -25,8 +25,8 @@ the sections below detail the ones most relevant to apps like files_watermark.
 
 Two modern, type-safe services (NC 29+) replace much of the older `IConfig`:
 
-- **`IAppConfig`** — app-wide config values (admin scope).
-- **`IUserConfig` / user preferences** — per-user values.
+- **`IAppConfig`** - app-wide config values (admin scope).
+- **`IUserConfig` / user preferences** - per-user values.
 
 ```php
 use OCP\IAppConfig;
@@ -54,17 +54,17 @@ still available. System config (`config.php`) via `IConfig::getSystemValue(...)`
 
 `OCP\FilesMetadata\IFilesMetadataManager`:
 
-- `refreshMetadata(Node $node, int $process)` — trigger a refresh.
+- `refreshMetadata(Node $node, int $process)` - trigger a refresh.
 - `getMetadata(int $fileId, bool $generate)` → `IFilesMetadata`.
-- `saveMetadata(IFilesMetadata $metadata)` — persist + build indexes.
+- `saveMetadata(IFilesMetadata $metadata)` - persist + build indexes.
 - `deleteMetadata(int $fileId)`.
-- `initMetadata(string $key, string $type, bool $indexed, bool $remotelyEditable)` —
+- `initMetadata(string $key, string $type, bool $indexed, bool $remotelyEditable)` -
   pre-register a key (call before files are examined, e.g. in `boot()`).
 
 Generate metadata via two events:
 
-- **`MetadataLiveEvent`** — fires on the main process after upload/modify (fast work).
-- **`MetadataBackgroundEvent`** — fires from cron for heavy work.
+- **`MetadataLiveEvent`** - fires on the main process after upload/modify (fast work).
+- **`MetadataBackgroundEvent`** - fires from cron for heavy work.
 
 ```php
 // register both to the same listener
@@ -87,7 +87,7 @@ metadata is queryable via `IMetadataQuery` (`joinIndex()`, `getMetadataValueFiel
 
 ## HTTP Client
 
-> Use `OCP\Http\Client\IClientService` — it honors proxy config and blocks SSRF to
+> Use `OCP\Http\Client\IClientService` - it honors proxy config and blocks SSRF to
 > internal hosts automatically.
 
 ```php
@@ -108,7 +108,7 @@ $response = $client->post('https://api.example.tld/endpoint', [
 ]);
 ```
 
-Also supports `head/put/delete/options`. Errors surface as exceptions — wrap in
+Also supports `head/put/delete/options`. Errors surface as exceptions - wrap in
 try/catch. The client is synchronous.
 
 ---
@@ -195,7 +195,7 @@ $this->manager->notify($n);
 Beyond the `ISettings`/`IIconSection` template approach
 ([02-basic-concepts.md](02-basic-concepts.md#settings)), NC offers **declarative
 settings**: define a schema (fields, types, defaults, storage = internal/external) and the
-server renders & persists the form for you — no Vue/template needed for simple forms.
+server renders & persists the form for you - no Vue/template needed for simple forms.
 Register a class implementing `OCP\Settings\IDeclarativeSettingsForm` (or provide the
 schema via the dedicated event) describing `id`, `section_type`, `priority`, and `fields`.
 

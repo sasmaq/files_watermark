@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Test-only stubs for Nextcloud *server* classes that lib/Dav/ depends on.
  *
- * Sabre itself is NOT stubbed here — sabre/dav is a real require-dev dependency, so
+ * Sabre itself is NOT stubbed here - sabre/dav is a real require-dev dependency, so
  * `Sabre\DAV\{Server, ServerPlugin, Tree, PropFind, INode}`, `Sabre\HTTP\{Request,
  * Response}` and the exception hierarchy are the genuine articles under test. Only
  * classes that live in the Nextcloud server tree (and are therefore not installable
@@ -15,7 +15,7 @@ declare(strict_types=1);
  * autoload(-dev) so they can never shadow the real classes at Nextcloud runtime.
  *
  * ---------------------------------------------------------------------------
- * FIDELITY — re-check on every Nextcloud upgrade.
+ * FIDELITY - re-check on every Nextcloud upgrade.
  *
  * Hand-written stubs can drift from the real classes and turn a green test into a
  * false negative. The signatures below were transcribed verbatim from Nextcloud
@@ -44,7 +44,7 @@ namespace OCA\DAV\Connector\Sabre {
 	if (!class_exists(Node::class)) {
 		/** Mirrors `abstract class Node implements \Sabre\DAV\INode` (Node.php:26). */
 		abstract class Node implements \Sabre\DAV\INode {
-			/** Node.php:219 — untyped in core. */
+			/** Node.php:219 - untyped in core. */
 			abstract public function getId();
 
 			/** Node.php:391 */
@@ -55,7 +55,7 @@ namespace OCA\DAV\Connector\Sabre {
 	if (!class_exists(File::class)) {
 		/** Mirrors `class File extends Node implements IFile` (File.php:48). */
 		abstract class File extends Node implements \Sabre\DAV\IFile {
-			/** File.php:627 — narrows Node::getNode(). */
+			/** File.php:627 - narrows Node::getNode(). */
 			abstract public function getNode(): \OCP\Files\File;
 		}
 	}
@@ -66,14 +66,14 @@ namespace OCA\DAV\Connector\Sabre {
 		 * IMoveTarget, ICopyTarget` (Directory.php:39).
 		 *
 		 * Only ICollection is reproduced: the quota / move / copy interfaces are
-		 * never touched by lib/Dav/, and omitting them cannot mask a failure — the
+		 * never touched by lib/Dav/, and omitting them cannot mask a failure - the
 		 * plugins only ever `instanceof` this class and call the two methods below.
 		 */
 		abstract class Directory extends Node implements \Sabre\DAV\ICollection {
-			/** Directory.php:173 — note the three optional args core adds to ICollection's. */
+			/** Directory.php:173 - note the three optional args core adds to ICollection's. */
 			abstract public function getChild($name, $info = null, ?IRequest $request = null, ?IL10N $l10n = null);
 
-			/** Directory.php:469 — narrows Node::getNode(). */
+			/** Directory.php:469 - narrows Node::getNode(). */
 			abstract public function getNode(): \OCP\Files\Folder;
 		}
 	}
@@ -90,7 +90,7 @@ namespace OC {
 		 *
 		 * ZipInterceptorPlugin constructs this directly (`new Streamer(...)`) rather
 		 * than taking it as a dependency, so it cannot be injected as a mock. This
-		 * stub therefore records every call into a static log that tests read back —
+		 * stub therefore records every call into a static log that tests read back -
 		 * which is what makes the archive's *shape* (member set, names, sizes)
 		 * assertable at all.
 		 */
@@ -153,7 +153,7 @@ namespace OC {
 			}
 
 			public function addFileFromStream($stream, string $internalName, int|float $size, $time): bool {
-				// Drain the stream so a test can assert *which* bytes were archived —
+				// Drain the stream so a test can assert *which* bytes were archived -
 				// the whole point of the watermark substitution.
 				$contents = is_resource($stream) ? (string)stream_get_contents($stream) : '';
 				if (is_resource($stream)) {
@@ -200,7 +200,7 @@ namespace OCA\DAV\Events {
 				parent::__construct();
 			}
 
-			/** SabrePluginAddEvent.php:34 — not nullable here, unlike SabrePluginEvent's. */
+			/** SabrePluginAddEvent.php:34 - not nullable here, unlike SabrePluginEvent's. */
 			public function getServer(): \Sabre\DAV\Server {
 				return $this->server;
 			}

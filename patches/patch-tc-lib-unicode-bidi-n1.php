@@ -19,7 +19,7 @@ declare(strict_types=1);
  *     if ($this->getItem($idx)['type'] === 'NI') {      // N2
  *
  * **No character is ever given that type.** `NI` is not a bidirectional character type at
- * all — UAX #9 defines it as the *class* of neutral and isolate formatting types, `B`, `S`,
+ * all - UAX #9 defines it as the *class* of neutral and isolate formatting types, `B`, `S`,
  * `WS`, `ON`, `FSI`, `LRI`, `RLI` and `PDI`. `Bidi\StepX::pushChar()` stores the concrete
  * type (`'WS'` for a space, `'ON'` for punctuation) and uses `'NI'` only as a sentinel in
  * the *directional status stack*, never as a character type. Verified by instrumenting the
@@ -37,20 +37,20 @@ declare(strict_types=1);
  * It bites exactly the default template with an Arabic prefix and a multi-word display
  * name. A watermark exists to identify someone, so naming them backwards is not cosmetic.
  *
- * As with the lam-alef defect, both renderers reach this code — `ShapedText::shape()`
+ * As with the lam-alef defect, both renderers reach this code - `ShapedText::shape()`
  * directly, and `tc-lib-pdf`'s `getTextCell()` through its own `Bidi` instance.
  *
  * ## The fix
  *
  * Test membership of the NI class instead of equality to `'NI'`.
  *
- * N2 comes back to life with the same change. That is intended and is a no-op in effect —
- * it assigns the embedding direction, which leaves the level unchanged under I1/I2 — but it
+ * N2 comes back to life with the same change. That is intended and is a no-op in effect -
+ * it assigns the embedding direction, which leaves the level unchanged under I1/I2 - but it
  * is what makes the remaining neutrals strongly typed, as the rules require.
  *
  * Cross-checked against `python-bidi` on thirteen mixed Arabic/Latin strings: twelve agree
  * exactly, and the thirteenth (`سري - John Doe (Acme)`) differs only because that reference
- * implements no bracket pairs at all — tc-lib's own N0 is right and the reference is wrong.
+ * implements no bracket pairs at all - tc-lib's own N0 is right and the reference is wrong.
  * Guarded by `ShapedTextTest::testLatinRunsAreNotReorderedInsideRtl()`.
  */
 
@@ -61,17 +61,17 @@ return [
 	'name' => 'tc-lib-unicode bidi N1/N2',
 	'file' => 'vendor/tecnickcom/tc-lib-unicode/src/Bidi/StepN.php',
 	'replacements' => [
-		// N1 — entry check.
+		// N1 - entry check.
 		[
 			'from' => "if (\$this->getItem(\$idx)['type'] !== 'NI') {",
 			'to' => "if (!\\in_array(\$this->getItem(\$idx)['type'], $ni, true)) {",
 		],
-		// N1 — scanning to the end of a run of neutrals.
+		// N1 - scanning to the end of a run of neutrals.
 		[
 			'from' => "while (\$jdx < \$this->seq['length'] && \$this->getItem(\$jdx)['type'] === 'NI') {",
 			'to' => "while (\$jdx < \$this->seq['length'] && \\in_array(\$this->getItem(\$jdx)['type'], $ni, true)) {",
 		],
-		// N2 — any remaining neutrals take the embedding direction.
+		// N2 - any remaining neutrals take the embedding direction.
 		[
 			'from' => "if (\$this->getItem(\$idx)['type'] === 'NI') {",
 			'to' => "if (\\in_array(\$this->getItem(\$idx)['type'], $ni, true)) {",

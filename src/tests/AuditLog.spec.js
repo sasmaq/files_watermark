@@ -9,7 +9,7 @@ const SAMPLE = [
 	{ id: 2, createdAt: '2026-06-29 11:00:00', userId: 'bob', filePath: '/b.png', trigger: 'on_upload' },
 ]
 
-// A full page of entries — the "Next" button is only enabled when the
+// A full page of entries - the "Next" button is only enabled when the
 // returned page is full (entries.length >= limit).
 const FULL_PAGE = Array.from({ length: 50 }, (_, i) => ({
 	id: i + 1, createdAt: '2026-06-29 10:00:00', userId: `user${i}`, filePath: `/f${i}.pdf`, trigger: 'on_demand',

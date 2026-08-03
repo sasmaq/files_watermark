@@ -15,14 +15,14 @@ use OCP\Preview\BeforePreviewFetchedEvent;
  * policy is `on_share`.
  *
  * On-share watermarking is applied at download time (a streamed watermarked copy),
- * but previews are rendered from the clean original and cached globally — so without
+ * but previews are rendered from the clean original and cached globally - so without
  * this a recipient could read the unwatermarked content straight from its thumbnail,
  * bypassing the watermark entirely.
  *
  * Preview caches are keyed by file + size, never by viewer, so a watermarked preview
  * cannot be shown to recipients alone. Instead we block the preview outright for
  * non-owners (they get the generic file-type icon); the owner's own previews are left
- * untouched. Blocking is the one thing {@see BeforePreviewFetchedEvent} supports — it
+ * untouched. Blocking is the one thing {@see BeforePreviewFetchedEvent} supports - it
  * runs per request, so it can tell owner from recipient, and throwing
  * NotFoundException aborts the preview.
  *
@@ -48,7 +48,7 @@ class BeforePreviewFetchedListener implements IEventListener {
 			return;
 		}
 
-		// Only restrict share recipients / public-link visitors — the owner viewing
+		// Only restrict share recipients / public-link visitors - the owner viewing
 		// their own file keeps normal previews. Detected from the storage backend plus
 		// the anonymous-request signal, not by comparing user ids (which is unreliable
 		// in the preview request context). The anonymous half is what covers the public

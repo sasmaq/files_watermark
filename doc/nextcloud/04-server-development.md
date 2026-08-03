@@ -22,7 +22,7 @@ npm run lint               # eslint
 npm run stylelint
 ```
 
-- **Commit the compiled assets** (`js/`) for released apps — the App Store package must
+- **Commit the compiled assets** (`js/`) for released apps - the App Store package must
   run without a build step.
 
 ## Back-end code
@@ -77,7 +77,7 @@ public function readUserFile(string $uid, string $path): string {
 }
 ```
 
-This abstracts local, S3/object, SMB, and other external storage backends transparently —
+This abstracts local, S3/object, SMB, and other external storage backends transparently -
 so a watermark download controller that uses the Node API works on S3-backed instances
 without changes.
 
@@ -95,14 +95,14 @@ and generated artifacts that shouldn't appear in user folders.
 
 The manual documents how to stand up dependencies for realistic testing:
 
-- **Email** — local SMTP (e.g. MailHog) for mail features.
-- **Redis / Redis Cluster** — distributed caching & file locking.
-- **S3** — as primary storage and as external storage (relevant for the watermark
+- **Email** - local SMTP (e.g. MailHog) for mail features.
+- **Redis / Redis Cluster** - distributed caching & file locking.
+- **S3** - as primary storage and as external storage (relevant for the watermark
   download path).
-- **SMB** — external Windows/Samba storage.
-- **SAML** — SSO authentication.
-- **Collabora / OnlyOffice** — office document integration.
-- **WebAuthn** — hardware-key/passkey auth.
+- **SMB** - external Windows/Samba storage.
+- **SAML** - SSO authentication.
+- **Collabora / OnlyOffice** - office document integration.
+- **WebAuthn** - hardware-key/passkey auth.
 
 For files_watermark, the most relevant are the **S3 (primary & external)** setups to
 verify watermark generation and download against object storage.

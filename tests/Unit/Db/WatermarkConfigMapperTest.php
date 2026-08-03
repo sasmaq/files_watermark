@@ -23,7 +23,7 @@ use PHPUnit\Framework\TestCase;
  *
  * - `setMaxResults(1)` on {@see WatermarkConfigMapper::findGlobal} is what keeps
  *   `findEntity()` from throwing `MultipleObjectsReturnedException` on an install that ended
- *   up with two rows — and every watermarked request goes through it;
+ *   up with two rows - and every watermarked request goes through it;
  * - the parameter *type* each column is bound with comes from `WatermarkConfig::addType()`,
  *   so a column added without a matching `addType` is written as a string. PostgreSQL
  *   refuses an integer column bound that way; MySQL and SQLite take it, which is what makes
@@ -107,7 +107,7 @@ class WatermarkConfigMapperTest extends TestCase {
 	}
 
 	/**
-	 * There is meant to be exactly one row, and nothing in the schema enforces it — the
+	 * There is meant to be exactly one row, and nothing in the schema enforces it - the
 	 * column that scoped configs to a user was dropped, not replaced with a unique key. Left
 	 * unbounded, `findEntity()` answers a second row with `MultipleObjectsReturnedException`,
 	 * which would surface on every watermarked request rather than in the settings page.
@@ -136,7 +136,7 @@ class WatermarkConfigMapperTest extends TestCase {
 	public function testFindByIdBindsTheIdAsAnInteger(): void {
 		$qb = $this->queryReturning([$this->row()]);
 		// Bound as a string this works on SQLite and MySQL and fails on PostgreSQL, which
-		// will not compare integer to text — the classic mapper bug that only one of the
+		// will not compare integer to text - the classic mapper bug that only one of the
 		// three supported databases reports.
 		$qb->expects($this->once())
 			->method('createNamedParameter')
@@ -217,7 +217,7 @@ class WatermarkConfigMapperTest extends TestCase {
 	public function testHasDeliveryTriggerIsFalseWhenNoPolicyDeliversOnFetch(): void {
 		$result = $this->createMock(IResult::class);
 		$result->method('fetch')->willReturn(false);
-		// Closed on the empty path too — this is the common case on most instances, so a
+		// Closed on the empty path too - this is the common case on most instances, so a
 		// leaked statement here would be the one that leaks constantly.
 		$result->expects($this->once())->method('closeCursor');
 
@@ -242,7 +242,7 @@ class WatermarkConfigMapperTest extends TestCase {
 	 * page binds to is not: `logDelivery` has to be a JSON boolean, because `"0"` is truthy
 	 * in JavaScript and would tick a checkbox on an instance that has delivery logging off.
 	 *
-	 * The coercion is the entity's *typed properties* rather than `addType()` — dropping the
+	 * The coercion is the entity's *typed properties* rather than `addType()` - dropping the
 	 * `addType` line for `logDelivery` changes nothing here, which is worth knowing before
 	 * reaching for it as the fix. `addType()` governs the write path instead, pinned below.
 	 */
@@ -269,7 +269,7 @@ class WatermarkConfigMapperTest extends TestCase {
 	/**
 	 * The same map, on the way in. `QBMapper::insert()` asks the entity for each property's
 	 * type, so a column added to `WatermarkConfig` without a matching `addType()` is bound as
-	 * a string — silently, and only on the databases that tolerate it.
+	 * a string - silently, and only on the databases that tolerate it.
 	 */
 	public function testInsertBindsEachColumnWithTheTypeTheEntityDeclares(): void {
 		$bound = [];
@@ -277,7 +277,7 @@ class WatermarkConfigMapperTest extends TestCase {
 
 		$qb = $this->createMock(IQueryBuilder::class);
 		$qb->method('insert')->with('watermark_config')->willReturnSelf();
-		// `setValue($column, $qb->createNamedParameter($value, $type))` — the inner call runs
+		// `setValue($column, $qb->createNamedParameter($value, $type))` - the inner call runs
 		// first, so the type recorded here is the one belonging to the column that follows.
 		$qb->method('createNamedParameter')->willReturnCallback(
 			static function ($value, $type) use (&$lastType): string {

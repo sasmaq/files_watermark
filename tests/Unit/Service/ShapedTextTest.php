@@ -8,12 +8,12 @@ use OCA\FilesWatermark\Service\ShapedText;
 use PHPUnit\Framework\TestCase;
 
 /**
- * {@see ShapedText} — the shared answer to "can Helvetica draw this?" and "what does this
+ * {@see ShapedText} - the shared answer to "can Helvetica draw this?" and "what does this
  * text look like once Arabic is shaped?".
  *
  * The assertions are on **code points**, not on "a string came back". Arabic that is
  * unshaped, or shaped but left in logical order, is still a perfectly valid PHP string and
- * still renders into a perfectly valid image — just one no reader can make sense of. Every
+ * still renders into a perfectly valid image - just one no reader can make sense of. Every
  * cheaper check passes on that.
  */
 class ShapedTextTest extends TestCase {
@@ -62,7 +62,7 @@ class ShapedTextTest extends TestCase {
 	 * character of any string containing a lam-alef pair (see
 	 * `patches/tc-lib-unicode-lam-alef.php` for the defect). The probe word hid it perfectly:
 	 * its first letter *is* an alef, so losing it still left seven code points, still all in
-	 * Presentation Forms-B, still starting at reh — every assertion above is satisfied by
+	 * Presentation Forms-B, still starting at reh - every assertion above is satisfied by
 	 * output that reads `الاختبار` minus a letter, with a stray lam where the alef should be.
 	 *
 	 * Only pinning the exact sequence catches it, so that is what this does. The cases are
@@ -86,7 +86,7 @@ class ShapedTextTest extends TestCase {
 			'probe word' => [
 				self::PROBE,
 				[0xFEAD, 0xFE8E, 0xFE92, 0xFE98, 0xFEA7, 0xFEFB, 0xFE8D],
-				'reh, alef, beh, teh, khah, lam-alef, alef — the leading alef must survive',
+				'reh, alef, beh, teh, khah, lam-alef, alef - the leading alef must survive',
 			],
 			'ligature after an unrelated first letter' => [
 				'سلام',
@@ -111,15 +111,15 @@ class ShapedTextTest extends TestCase {
 	 *
 	 * UAX #9 rule N1: a neutral between two same-direction characters takes that direction,
 	 * so the space inside `John Doe` is `L` and the name is **one** left-to-right run.
-	 * `tc-lib-unicode` never ran N1 at all — it gated the rule on a character type that the
-	 * library never assigns — so each Latin word became its own run and a two-word name came
+	 * `tc-lib-unicode` never ran N1 at all - it gated the rule on a character type that the
+	 * library never assigns - so each Latin word became its own run and a two-word name came
 	 * out backwards: `سري - John Doe` drew as `Doe John - سري`. See
 	 * `patches/patch-tc-lib-unicode-bidi-n1.php`.
 	 *
 	 * That is the default template shape (`سري - {displayname}`) for an Arabic deployment,
 	 * and a watermark naming the wrong person is the one thing it exists not to do.
 	 *
-	 * Asserted on the **ASCII projection** — the non-Arabic characters of the shaped string,
+	 * Asserted on the **ASCII projection** - the non-Arabic characters of the shaped string,
 	 * in the order they are drawn. It is the whole of what this rule governs, and unlike a
 	 * full expected string it stays readable in source: the Arabic half would have to be
 	 * written as presentation-form escapes, which
@@ -174,7 +174,7 @@ class ShapedTextTest extends TestCase {
 
 	/**
 	 * Arabic reads right to left, so the *last* letter of the source is the *first* glyph
-	 * drawn. Without this the text renders backwards — which is exactly what GD does when
+	 * drawn. Without this the text renders backwards - which is exactly what GD does when
 	 * handed the raw string, and it looks like a font problem rather than an ordering one.
 	 */
 	public function testTextIsReorderedIntoVisualOrder(): void {
@@ -207,7 +207,7 @@ class ShapedTextTest extends TestCase {
 
 	/**
 	 * The image renderers draw through FreeType and need real bytes on disk. Those bytes
-	 * are the *same* ones the PDF renderer embeds — inflated from the one archive in
+	 * are the *same* ones the PDF renderer embeds - inflated from the one archive in
 	 * `resources/fonts` rather than committed a second time, so the two cannot drift.
 	 */
 	public function testTheBundledFontIsAUsableTrueTypeFile(): void {

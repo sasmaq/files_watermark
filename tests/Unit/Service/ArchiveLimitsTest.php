@@ -92,7 +92,7 @@ class ArchiveLimitsTest extends TestCase {
 
 	/**
 	 * `occ config:app:set` stores untyped values as mixed, which reads back as an int
-	 * fine — but `--type=string` does not, and this runs on the delivery path. A typo in
+	 * fine - but `--type=string` does not, and this runs on the delivery path. A typo in
 	 * an admin's command must not become an HTTP 500 on every folder download; the app
 	 * has shipped that exact shape of bug once, from a mistyped system tag.
 	 */

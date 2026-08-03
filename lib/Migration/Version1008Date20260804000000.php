@@ -27,7 +27,7 @@ use OCP\Migration\SimpleMigrationStep;
  * One-way, as all Nextcloud migrations are. Nothing is lost: the only value it held is the
  * one the renderers do unconditionally.
  *
- * Guarded on `hasColumn`, so a fresh install — where 1003 no longer creates the column —
+ * Guarded on `hasColumn`, so a fresh install - where 1003 no longer creates the column -
  * passes through untouched.
  */
 class Version1008Date20260804000000 extends SimpleMigrationStep {

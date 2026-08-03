@@ -49,7 +49,7 @@ Features:
         <nextcloud min-version="31" max-version="31"/>
     </dependencies>
     <commands>
-        <!-- occ files_watermark:prune-log — retention for the audit table. -->
+        <!-- occ files_watermark:prune-log - retention for the audit table. -->
         <command>OCA\FilesWatermark\Command\PruneLog</command>
     </commands>
     <settings>

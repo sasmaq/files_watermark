@@ -26,8 +26,8 @@ use Psr\Log\LoggerInterface;
  *
  * This job runs under cron with **no session and no request**, against a file that was
  * written some time ago, so everything it needs has to survive in two ints' worth of
- * argument: a file id and a uid. Both can have gone stale by the time cron gets here — the
- * account deleted, the file deleted, moved or replaced — and neither may take the cron run
+ * argument: a file id and a uid. Both can have gone stale by the time cron gets here - the
+ * account deleted, the file deleted, moved or replaced - and neither may take the cron run
  * down with it. `Job::start()` swallows throwables, but only after logging them as a cron
  * failure; a job that routinely throws would bury real failures in that noise.
  *
@@ -143,7 +143,7 @@ class WatermarkOnUploadJobTest extends TestCase {
 	}
 
 	/**
-	 * File ids are unique across nodes, so a stale id can come back as a directory — a file
+	 * File ids are unique across nodes, so a stale id can come back as a directory - a file
 	 * deleted and a folder created in its place. `watermarkInPlace()` takes a File.
 	 */
 	public function testAFolderUnderTheSameIdIsSkipped(): void {
@@ -172,7 +172,7 @@ class WatermarkOnUploadJobTest extends TestCase {
 				$this->stringContains('GD could not decode'),
 				// The context is what makes the line actionable: which file, whose.
 				$this->callback(static fn (array $context): bool
-					=> $context['fileId'] === 42 && $context['uid'] === 'alice'),
+				=> $context['fileId'] === 42 && $context['uid'] === 'alice'),
 			);
 
 		$this->runJob();
@@ -181,7 +181,7 @@ class WatermarkOnUploadJobTest extends TestCase {
 	/**
 	 * The burn writes the file, which fires `NodeWrittenEvent` again. Without the suppression
 	 * window that second write queues another job for the file being watermarked right now,
-	 * and that job's burn queues a third — this is the loop `suppressFor()` exists to break.
+	 * and that job's burn queues a third - this is the loop `suppressFor()` exists to break.
 	 *
 	 * Asserted by driving a real {@see NodeWrittenListener} from inside the write, which is
 	 * the only way to observe the window from outside: the suppression list is private
@@ -206,7 +206,7 @@ class WatermarkOnUploadJobTest extends TestCase {
 		);
 
 		// Nothing may be queued for this file while its own watermark is being written, and
-		// the listener must bail at the suppression check — before it decides the user has
+		// the listener must bail at the suppression check - before it decides the user has
 		// replaced the content, which is what noteContentReplaced() would record.
 		$jobList->expects($this->never())->method('add');
 		$listenerService->expects($this->never())->method('noteContentReplaced');
@@ -221,8 +221,8 @@ class WatermarkOnUploadJobTest extends TestCase {
 	}
 
 	/**
-	 * ...and the window closes. A later write to the same file — the user overwriting it
-	 * themselves — has to be seen, or the app stops noticing that its watermark is gone.
+	 * ...and the window closes. A later write to the same file - the user overwriting it
+	 * themselves - has to be seen, or the app stops noticing that its watermark is gone.
 	 */
 	public function testTheWindowClosesWhenTheJobIsDone(): void {
 		$file = $this->expectResolvable();

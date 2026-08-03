@@ -16,14 +16,14 @@ use PHPUnit\Framework\TestCase;
  *
  * It also pins the two file formats against each other. Nextcloud reads `l10n/ar.json`
  * from PHP and `l10n/ar.js` from the browser, and nothing in the platform checks that
- * they agree — so a string fixed in one and not the other yields a settings page whose
+ * they agree - so a string fixed in one and not the other yields a settings page whose
  * server messages and interface are in different languages.
  */
 class L10nCatalogueTest extends TestCase {
 
 	/**
 	 * The app root, *resolved*. `__DIR__ . '/../..'` would do for reading files, but it
-	 * leaves `/tests/` in the middle of every path built from it — which quietly matched
+	 * leaves `/tests/` in the middle of every path built from it - which quietly matched
 	 * the "skip test files" filter below and excluded the entire source tree, leaving a
 	 * coverage check that compared the catalogue against nothing and passed.
 	 */
@@ -65,7 +65,7 @@ class L10nCatalogueTest extends TestCase {
 	}
 
 	/**
-	 * A plural entry short of a form is not a partial translation — the lookup indexes
+	 * A plural entry short of a form is not a partial translation - the lookup indexes
 	 * into the array by form number, so a missing sixth form is a missing string for
 	 * every count of 100 or more.
 	 */
@@ -83,7 +83,7 @@ class L10nCatalogueTest extends TestCase {
 	 * Every substitution in the source has to survive into the translation.
 	 *
 	 * This is the failure that hurts most and shows least: `System tag ID "%s" does not
-	 * exist` translated without its `%s` still renders as a fluent Arabic sentence — one
+	 * exist` translated without its `%s` still renders as a fluent Arabic sentence - one
 	 * that has quietly dropped the only part telling the admin *which* tag is wrong.
 	 *
 	 * @dataProvider translationProvider
@@ -112,7 +112,7 @@ class L10nCatalogueTest extends TestCase {
 	 * Plural forms are held to a weaker rule, and the difference is grammatical rather
 	 * than a relaxation for convenience.
 	 *
-	 * Arabic inflects the noun for one and for two — "ثانية واحدة", "ثانيتين" — so the
+	 * Arabic inflects the noun for one and for two - "ثانية واحدة", "ثانيتين" - so the
 	 * count is carried by the word itself and printing the numeral as well reads as a
 	 * mistake ("نحو 2 ثانيتين"). Those forms are allowed to drop `%n`. What no form may
 	 * do is *introduce* a placeholder the source cannot fill, which would render as a
@@ -132,7 +132,7 @@ class L10nCatalogueTest extends TestCase {
 	}
 
 	/**
-	 * Above two, Arabic states the numeral outright, so those forms *must* keep `%n` —
+	 * Above two, Arabic states the numeral outright, so those forms *must* keep `%n` -
 	 * without it "about 47 seconds" becomes an unqualified "about seconds".
 	 *
 	 * @dataProvider pluralFormProvider
@@ -196,7 +196,7 @@ class L10nCatalogueTest extends TestCase {
 	 *
 	 * Regex rather than a parser on purpose: this has to see the same thing Nextcloud's
 	 * own extractor does, which is also a scan for the literal call. A string built by
-	 * concatenation inside `t()` is invisible to both, and stays invisible here — which
+	 * concatenation inside `t()` is invisible to both, and stays invisible here - which
 	 * is why the one place that used to do it does not any more.
 	 *
 	 * @return string[]
@@ -243,8 +243,10 @@ class L10nCatalogueTest extends TestCase {
 			/** @var \SplFileInfo $file */
 			// The Jest specs and their mocks carry t() calls of their own, and they are
 			// not interface text.
-			if (!$file->isFile() || !in_array($file->getExtension(), $extensions, true)
-				|| str_contains($file->getPathname(), '/tests/')) {
+			if (
+				!$file->isFile() || !in_array($file->getExtension(), $extensions, true)
+				|| str_contains($file->getPathname(), '/tests/')
+			) {
 				continue;
 			}
 			$files[] = $file->getPathname();

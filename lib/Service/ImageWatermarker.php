@@ -18,7 +18,7 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  * could produce visibly different files, and which one you got was an accident of packaging.
  *
  * Imagick is not deprecated here and is not merely a fallback for a missing extension: it is
- * selected whenever GD cannot decode the input — today that means **WebP on a GD built
+ * selected whenever GD cannot decode the input - today that means **WebP on a GD built
  * without libwebp**, which used to be a hard error telling the admin to install Imagick even
  * when Imagick was sitting right there. See {@see engineForMime()} for the whole rule.
  *
@@ -61,7 +61,7 @@ class ImageWatermarker {
 	}
 
 	/**
-	 * Which engine will handle `$mime`, and why — GD first, Imagick where GD cannot go.
+	 * Which engine will handle `$mime`, and why - GD first, Imagick where GD cannot go.
 	 *
 	 * Public because it is the one piece of behaviour worth asserting directly: everything
 	 * else about engine choice is only observable through rendered pixels, which cannot tell
@@ -165,9 +165,9 @@ class ImageWatermarker {
 			$lineHeight = max(1.0, (float)$metrics['textHeight']);
 			// annotateImage anchors at the left end of the baseline, so the centre of the
 			// text sits half its width to the right and rather less than half its height
-			// above — ascender up, descender down.
+			// above - ascender up, descender down.
 			$anchorToCentreX = $textWidth / 2;
-			$anchorToCentreY = -((float)$metrics['ascender'] + (float)$metrics['descender']) / 2;
+			$anchorToCentreY = - ((float)$metrics['ascender'] + (float)$metrics['descender']) / 2;
 
 			foreach (TileLattice::positions($width, $height, $textWidth, $lineHeight, $rotation, $fontSize) as [$cx, $cy]) {
 				[$offsetX, $offsetY] = TileLattice::rotateOffset($anchorToCentreX, $anchorToCentreY, $rotation);
@@ -179,8 +179,10 @@ class ImageWatermarker {
 		}
 
 		$imagePath = $config->getImagePath();
-		if (in_array($config->getType(), ['image', 'combined'], true)
-			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)) {
+		if (
+			in_array($config->getType(), ['image', 'combined'], true)
+			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)
+		) {
 			$watermark = new \Imagick($imagePath);
 			$wmW = intval($width * 0.3);
 			$wmH = intval($watermark->getImageHeight() * ($wmW / $watermark->getImageWidth()));
@@ -244,7 +246,7 @@ class ImageWatermarker {
 			// relative to the baseline origin, with y negative above the baseline.
 			$box = imagettfbbox($fontSize, 0, $fontPath, $text);
 			// False when FreeType cannot open the face. fontFor() has already established the
-			// file is there, so this is a font that is present but unreadable — measuring it
+			// file is there, so this is a font that is present but unreadable - measuring it
 			// as nothing would tile the whole page at one point.
 			if ($box === false) {
 				throw new \RuntimeException('FreeType could not measure the bundled font; the file is present but unusable.');
@@ -276,12 +278,14 @@ class ImageWatermarker {
 		}
 
 		$imagePath = $config->getImagePath();
-		if (in_array($config->getType(), ['image', 'combined'], true)
-			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)) {
+		if (
+			in_array($config->getType(), ['image', 'combined'], true)
+			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)
+		) {
 			$watermarkMime = mime_content_type($imagePath);
 			// False for a type GD does not read here, and false again if it does read the
 			// type but cannot decode this particular file. The logo is dropped either way and
-			// the text half still renders — the same thing an unsupported type has always
+			// the text half still renders - the same thing an unsupported type has always
 			// done, rather than a new failure mode for a corrupt one.
 			$wm = match ($watermarkMime) {
 				'image/png' => imagecreatefrompng($imagePath),
@@ -297,7 +301,7 @@ class ImageWatermarker {
 				$scaled = imagescale($wm, $wmW, $wmH);
 				imagedestroy($wm);
 
-				// imagescale() fails on a zero target dimension — a logo scaled below one
+				// imagescale() fails on a zero target dimension - a logo scaled below one
 				// pixel by a very narrow source image. Nothing to composite, so the source
 				// image goes out with its text watermark and without the logo.
 				if ($scaled !== false) {
@@ -321,15 +325,15 @@ class ImageWatermarker {
 	/**
 	 * The TrueType file every watermark is drawn with.
 	 *
-	 * **One face, whatever the text.** This used to walk a list of system fonts — DejaVu,
-	 * Liberation, macOS Arial — chosen by *name*, and a name cannot express "has the glyphs
+	 * **One face, whatever the text.** This used to walk a list of system fonts - DejaVu,
+	 * Liberation, macOS Arial - chosen by *name*, and a name cannot express "has the glyphs
 	 * this string needs": two of those three carry no Arabic at all, so the result depended
 	 * on what the host happened to have installed. The bundled face removes the host from
 	 * the question entirely and matches what the PDF renderer embeds, so a JPEG and a PDF of
 	 * the same file carry the same letterforms.
 	 *
 	 * **Refuses rather than drawing something wrong.** The font is committed to the
-	 * repository, so its absence means a broken install, not a routine condition — and every
+	 * repository, so its absence means a broken install, not a routine condition - and every
 	 * alternative is worse than failing: GD's bitmap font would draw Arabic as mojibake, a
 	 * Latin TTF would draw a row of empty boxes. Both produce a *valid image file that no one
 	 * can read*, which is the outcome worth ruling out. Throwing puts it on the app's existing
@@ -341,7 +345,7 @@ class ImageWatermarker {
 		if ($bundled === null) {
 			throw new \RuntimeException(
 				'Cannot draw this watermark: the bundled font (resources/fonts) could not be read. '
-				. 'Drawing with a substitute would produce an unreadable image rather than a missing one.',
+					. 'Drawing with a substitute would produce an unreadable image rather than a missing one.',
 			);
 		}
 

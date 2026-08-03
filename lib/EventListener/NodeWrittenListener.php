@@ -20,7 +20,7 @@ use Psr\Log\LoggerInterface;
  *
  * This listener deliberately does not watermark inline. `NodeWrittenEvent` fires while the
  * triggering write still holds a lock on the node, so writing the watermarked bytes back
- * from here throws `LockedException` — on WebDAV uploads and plain Files-API writes alike.
+ * from here throws `LockedException` - on WebDAV uploads and plain Files-API writes alike.
  * The actual burn happens in {@see WatermarkOnUploadJob}, once the lock is gone.
  *
  * @template-implements IEventListener<NodeWrittenEvent>
@@ -67,7 +67,7 @@ class NodeWrittenListener implements IEventListener {
 			return;
 		}
 
-		// Past this point the write is the *user's*, not one of ours — which is the only
+		// Past this point the write is the *user's*, not one of ours - which is the only
 		// moment an overwrite of watermarked content can be recognised for what it is.
 		// Ahead of every policy check below on purpose: the watermarked bytes are gone
 		// whatever the current trigger is, and a badge that outlives them is a lie the
@@ -91,7 +91,7 @@ class NodeWrittenListener implements IEventListener {
 			return;
 		}
 
-		// Already burned in — the job would only skip it again. Cheap filter for the
+		// Already burned in - the job would only skip it again. Cheap filter for the
 		// common case of a file being written repeatedly after its first watermark.
 		if ($this->watermarkService->isAlreadyWatermarked($fileId)) {
 			return;
@@ -105,7 +105,7 @@ class NodeWrittenListener implements IEventListener {
 	 *
 	 * The job's own `putContent()` fires another `NodeWrittenEvent`, which would queue a
 	 * second job for the same file. That second job would skip harmlessly (the audit row
-	 * exists by then), but it is a wasted cron cycle per upload — and the audit row is
+	 * exists by then), but it is a wasted cron cycle per upload - and the audit row is
 	 * written *after* the content, so there is a window where it would not skip.
 	 */
 	public static function suppressFor(int $fileId, callable $callback): mixed {

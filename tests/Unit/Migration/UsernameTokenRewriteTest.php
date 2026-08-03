@@ -15,21 +15,21 @@ use PHPUnit\Framework\TestCase;
 /**
  * {@see Version1004Date20260731000000}: rewriting stored `{username}` to `{displayname}`.
  *
- * The token changed meaning — it used to resolve to the display name and now resolves to
- * the account name — so what this migration protects is that **no existing watermark
+ * The token changed meaning - it used to resolve to the display name and now resolves to
+ * the account name - so what this migration protects is that **no existing watermark
  * changes on upgrade**. Getting it wrong is silent: the files still render, they just say
  * `asmith3` where they used to say `Alice Smith`, and nothing in the UI or the audit log
  * would explain it.
  *
  * The QueryBuilder is mocked, as in {@see LegacyImagePathCleanupTest}, so this pins the
- * decisions — which rows are rewritten and to what — rather than the SQL.
+ * decisions - which rows are rewritten and to what - rather than the SQL.
  */
 class UsernameTokenRewriteTest extends TestCase {
 
 	public function testOnlyTemplatesNamingTheTokenAreRewritten(): void {
 		$rows = [
 			['id' => 1, 'text_template' => '{username} - {date}'],
-			['id' => 2, 'text_template' => 'Confidential — {email}'],
+			['id' => 2, 'text_template' => 'Confidential - {email}'],
 			['id' => 3, 'text_template' => '{username}/{filename} ({username})'],
 			['id' => 4, 'text_template' => ''],
 		];

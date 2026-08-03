@@ -11,20 +11,20 @@ use Com\Tecnick\Pdf\Tcpdf;
  *
  * **The defect deletes the user's content.** An imported page becomes a Form XObject
  * whose dictionary the library assembles with `sprintf`, and its resource cloner
- * returns an empty *string* — not `<< >>` — for a page that resolves to no resources
+ * returns an empty *string* - not `<< >>` - for a page that resolves to no resources
  * (`ResourceCloner::cloneResources()`, `Importer::importPage()`). The dictionary then
  * reads
  *
  *     /Resources /Group << /Type /Group /S /Transparency >> /Filter /FlateDecode /Length 96
  *
  * where `/Resources` has swallowed `/Group` as its value, the group dictionary is left
- * standing where a *key* belongs, and every entry after it pairs with the wrong name —
+ * standing where a *key* belongs, and every entry after it pairs with the wrong name -
  * `/Filter` included. A reader that trusts the dictionary hands deflate bytes to the
  * content interpreter and draws nothing, so the page arrives **blank with only the
  * watermark on it**, every original byte still in the file and none of it visible.
  *
  * A page resolves to no resources when it declares none and inherits none. That is
- * legal — a page whose content names no font, image or graphics state needs none — and
+ * legal - a page whose content names no font, image or graphics state needs none - and
  * it is also what happens when a `/Resources` object cannot be found.
  *
  * ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ use Com\Tecnick\Pdf\Tcpdf;
  *
  * Repairing the written file instead **corrupts it**: the insertion shifts every byte
  * after it, the xref still points at the old offsets, and the document stops parsing
- * altogether — traded one broken file for another. That was tried first and is what
+ * altogether - traded one broken file for another. That was tried first and is what
  * `testAPageWithoutResourcesKeepsAUsableFormDictionary` re-reading the output caught.
  * ---------------------------------------------------------------------------
  *

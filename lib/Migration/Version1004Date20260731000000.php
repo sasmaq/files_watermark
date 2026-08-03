@@ -13,7 +13,7 @@ use OCP\Migration\SimpleMigrationStep;
 /**
  * Rewrite stored `{username}` tokens to `{displayname}`, preserving what they rendered.
  *
- * `{username}` used to resolve to the *display* name — `$user->getDisplayName()` — which
+ * `{username}` used to resolve to the *display* name - `$user->getDisplayName()` - which
  * left the account name unreachable and the token misleading. It now resolves to the uid,
  * and `{displayname}` carries the human-readable name.
  *
@@ -25,7 +25,7 @@ use OCP\Migration\SimpleMigrationStep;
  * No schema change: this is a data step only, hence no `changeSchema()`.
  *
  * **Not idempotent in the strict sense, and it does not need to be.** Re-running it would
- * rewrite a `{username}` an admin had deliberately typed *after* the upgrade — but
+ * rewrite a `{username}` an admin had deliberately typed *after* the upgrade - but
  * Nextcloud records applied migrations and never re-runs one, and unlike
  * {@see Version1003Date20260730120000} this file does not have to meet several starting
  * states. It is stated here so nobody "fixes" it by making the rewrite unconditional
@@ -65,7 +65,7 @@ class Version1004Date20260731000000 extends SimpleMigrationStep {
 
 		// One statement per row rather than a chunked IN(): each row gets a *different*
 		// value, so there is nothing to batch. The row count is bounded by the number of
-		// configured policies, which is small by construction — one global plus one per
+		// configured policies, which is small by construction - one global plus one per
 		// user who has personalised theirs.
 		foreach ($rewrites as $id => $template) {
 			$update = $this->db->getQueryBuilder();
@@ -77,7 +77,7 @@ class Version1004Date20260731000000 extends SimpleMigrationStep {
 
 		$output->info(sprintf(
 			'files_watermark: rewrote %s to %s in %d watermark template(s); they render exactly '
-			. 'what they rendered before. %s now resolves to the account name.',
+				. 'what they rendered before. %s now resolves to the account name.',
 			self::LEGACY_TOKEN,
 			self::REPLACEMENT,
 			count($rewrites),

@@ -9,7 +9,7 @@ use OCA\FilesWatermark\Service\ImageWatermarker;
 /**
  * An {@see ImageWatermarker} whose extension availability is dictated rather than probed.
  *
- * Engine selection has to be assertable for hosts this suite will never run on — a GD built
+ * Engine selection has to be assertable for hosts this suite will never run on - a GD built
  * without libwebp, a server with no Imagick, a server with neither. Probing the real machine
  * would make the covered branches depend on how PHP was compiled, which is exactly the
  * host-dependent coverage this app has spent its history removing.

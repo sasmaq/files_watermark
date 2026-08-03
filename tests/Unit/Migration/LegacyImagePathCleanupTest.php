@@ -16,13 +16,13 @@ use PHPUnit\Framework\TestCase;
  * The data half of {@see Version1003Date20260730120000}: clearing `image_path` values
  * that predate upload validation.
  *
- * Those rows are the residue of a fixed vulnerability — `saveConfig` once stored whatever
+ * Those rows are the residue of a fixed vulnerability - `saveConfig` once stored whatever
  * the client sent, so a config could name any file the web server could read. They still
  * look valid in the admin form while resolving to no image.
  *
  * What is worth testing here is the *decisions*: which rows are selected for clearing,
  * and that no write happens when there is nothing to clear. The QueryBuilder is mocked,
- * so this does not prove the SQL runs — it proves the migration asks for the right thing
+ * so this does not prove the SQL runs - it proves the migration asks for the right thing
  * and skips the write when it should.
  */
 class LegacyImagePathCleanupTest extends TestCase {
@@ -43,7 +43,7 @@ class LegacyImagePathCleanupTest extends TestCase {
 	}
 
 	/**
-	 * The ids handed to the update must be exactly the offending rows — clearing a valid
+	 * The ids handed to the update must be exactly the offending rows - clearing a valid
 	 * reference would destroy a working configuration.
 	 */
 	public function testOnlyLegacyRowsAreCleared(): void {
@@ -69,8 +69,8 @@ class LegacyImagePathCleanupTest extends TestCase {
 	}
 
 	/**
-	 * Builds a connection whose select yields `$rows`, and whose update — if one is
-	 * expected — records the id list it was given into `$captured`.
+	 * Builds a connection whose select yields `$rows`, and whose update - if one is
+	 * expected - records the id list it was given into `$captured`.
 	 *
 	 * @param list<array{id: int, image_path: string}> $rows
 	 * @param list<list<int>> $captured

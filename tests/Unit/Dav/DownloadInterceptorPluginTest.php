@@ -170,7 +170,7 @@ class DownloadInterceptorPluginTest extends TestCase {
 	public function testASabreHeadSubRequestIsLeftToCore(): void {
 		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
 		// Not merely "no row": no render either. A HEAD has no body, so rendering for one
-		// is pure waste — and it is the expensive half.
+		// is pure waste - and it is the expensive half.
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
 		$request = $this->request();
@@ -221,7 +221,7 @@ class DownloadInterceptorPluginTest extends TestCase {
 		// CorePlugin streams file bodies at priority 100; this must run before it, and on
 		// `method:GET` rather than `beforeMethod:GET` so afterMethod still flushes the body.
 		$this->assertNotEmpty($this->server->listeners('method:GET'));
-		// Nothing may be registered on beforeMethod:GET — returning false there returns
+		// Nothing may be registered on beforeMethod:GET - returning false there returns
 		// before sendResponse and would ship a 0-byte download.
 		$this->assertSame([], $this->server->listeners('beforeMethod:GET'));
 	}

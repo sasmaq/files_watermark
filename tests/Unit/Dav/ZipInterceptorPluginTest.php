@@ -169,7 +169,7 @@ class ZipInterceptorPluginTest extends TestCase {
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
 
-		// The container answers "no trigger" — the old gate stopped right here.
+		// The container answers "no trigger" - the old gate stopped right here.
 		$this->watermarkService->method('deliveryTriggerFor')
 			->willReturnCallback(static fn ($node) => $node->getId() === 1 ? 'on_share' : null);
 		$this->watermarkService->method('watermarkForDownload')
@@ -185,7 +185,7 @@ class ZipInterceptorPluginTest extends TestCase {
 
 	/**
 	 * Every member's declared size must be the size of the bytes that member actually
-	 * carries — the watermarked length for a substituted member, its own for one
+	 * carries - the watermarked length for a substituted member, its own for one
 	 * streamed untouched.
 	 *
 	 * **Tar is the case this exists for**, and it is why the archive type is a
@@ -234,9 +234,9 @@ class ZipInterceptorPluginTest extends TestCase {
 	 *
 	 * Each render is what writes an audit row, so this is where the archive's audit
 	 * granularity is decided: a `watermark_log` row per *member*, not per archive. That
-	 * is the intended behaviour — an entry that recorded only "an archive was
+	 * is the intended behaviour - an entry that recorded only "an archive was
 	 * downloaded" could not answer which documents were in it, which is the question a
-	 * watermark exists to answer — so it is pinned here rather than left to whoever next
+	 * watermark exists to answer - so it is pinned here rather than left to whoever next
 	 * reads the loop and thinks to batch it.
 	 */
 	public function testEachWatermarkedMemberIsRenderedOnceAndSkippedMembersNotAtAll(): void {
@@ -347,7 +347,7 @@ class ZipInterceptorPluginTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	/**
-	 * Only an archive-accepting GET is claimed — and the negative rows are set up
+	 * Only an archive-accepting GET is claimed - and the negative rows are set up
 	 * with a member that *would* be substituted, so "not claimed" cannot pass merely
 	 * because there was no work to do.
 	 *
@@ -392,8 +392,8 @@ class ZipInterceptorPluginTest extends TestCase {
 
 	/**
 	 * Sabre serves a HEAD by re-dispatching the request as a GET, so without this guard a
-	 * HEAD on a folder would build the whole archive — rendering every member, and
-	 * recording an audit row for each — to answer a request that carries no body.
+	 * HEAD on a folder would build the whole archive - rendering every member, and
+	 * recording an audit row for each - to answer a request that carries no body.
 	 */
 	public function testASabreHeadSubRequestIsLeftToCore(): void {
 		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
@@ -499,7 +499,7 @@ class ZipInterceptorPluginTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	/**
-	 * The caps are configuration, so the tests below fix them by hand — but that is only
+	 * The caps are configuration, so the tests below fix them by hand - but that is only
 	 * worth anything if a *configured* value actually moves the ceiling. Both directions
 	 * are asserted, because a plugin that ignored the config and kept its old constants
 	 * would still pass every default-valued test in this file.
@@ -535,7 +535,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(fn () => $this->renderedCopy());
 
-		// 201 members is a 403 at the default of 200 — see the test below.
+		// 201 members is a 403 at the default of 200 - see the test below.
 		$handled = $this->plugin(limits: $this->limits(maxMembers: 250))
 			->httpGet($this->zipRequest(), new Response());
 
@@ -595,7 +595,7 @@ class ZipInterceptorPluginTest extends TestCase {
 
 	/**
 	 * The member cap needs its own degradation test, and not because it is symmetrical
-	 * with the byte cap — because it is not reached the same way. The byte cap trips on
+	 * with the byte cap - because it is not reached the same way. The byte cap trips on
 	 * `getSize()` before anything is rendered; the member cap trips **mid-render**, with
 	 * temp copies already on disk. Falling back to core there has to clean them up, or a
 	 * best-effort download leaves 200 plaintext copies of user content in the temp dir.

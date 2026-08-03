@@ -19,7 +19,7 @@ function mountModal(fileSize) {
 describe('WatermarkModal', () => {
 	// The estimate is this app's only plural call, and it is the reason the l10n files
 	// carry a `pluralForm` line at all. Arabic has six forms and inflects the noun
-	// differently in each, so "second(s)" — which is what this string used to say — is
+	// differently in each, so "second(s)" - which is what this string used to say - is
 	// untranslatable there: the parenthesised plural is an English-only shortcut.
 	describe('processing-time estimate', () => {
 		it('is hidden for files under a megabyte, where it would be noise', () => {

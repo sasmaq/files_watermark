@@ -5,7 +5,7 @@
  *
  *  - **the app's own `/api/v1/*` endpoints run through the browser session.** None of
  *    them carries `#[NoCSRFRequired]`, so a basic-auth call gets HTTP 412 "CSRF check
- *    failed" — which is correct of the app and means every config change, apply and
+ *    failed" - which is correct of the app and means every config change, apply and
  *    remove here goes through a logged-in session with a request token, exactly as
  *    the settings page does;
  *  - **everything carrying file bytes runs through Node tasks** (`cypress/tasks/`),
@@ -99,7 +99,7 @@ Cypress.Commands.add('wmRemove', (path, options = {}) =>
  * `GET /api/v1/download`, which streams a watermarked copy of one file.
  *
  * It goes through `cy.request` rather than a task because it is session-authenticated
- * like the rest of the app API — and unlike an upload, a GET has no request body to
+ * like the rest of the app API - and unlike an upload, a GET has no request body to
  * be mangled, so `encoding: 'base64'` brings the bytes back intact.
  */
 Cypress.Commands.add('wmApiDownload', (path) => {
@@ -202,7 +202,7 @@ Cypress.Commands.add('wmShare', ({ path, shareWith, shareType = 0, permissions =
 		// error that is not JSON says nothing on its own.
 		expect(
 			response.json?.ocs?.meta?.statuscode,
-			`share ${path} — HTTP ${response.status}, body: ${response.text.slice(0, 300)}`,
+			`share ${path} - HTTP ${response.status}, body: ${response.text.slice(0, 300)}`,
 		).to.be.oneOf([100, 200])
 
 		return response.json.ocs.data

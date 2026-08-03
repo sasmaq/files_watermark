@@ -99,7 +99,7 @@ class UploadWatermarkPluginTest extends TestCase {
 	}
 
 	// ---------------------------------------------------------------------
-	// Hook registration — the chunked-upload regression.
+	// Hook registration - the chunked-upload regression.
 	// ---------------------------------------------------------------------
 
 	public function testHooksBothPutAndMove(): void {

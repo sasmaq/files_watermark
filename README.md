@@ -4,12 +4,12 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 
 ## Features
 
-- **Text watermarks** with customizable templates — `{displayname}`, `{username}`, `{email}`,
+- **Text watermarks** with customizable templates - `{displayname}`, `{username}`, `{email}`,
   `{date}`, `{datetime}`, `{filename}`
   - `{displayname}` is the name shown in Nextcloud (*John Doe*); `{username}` is the account
     name used to sign in (*john.doe*). Display names are neither unique nor permanent, so use
     the account name when the watermark has to identify exactly one account
-- **Image watermarks** — overlay a logo or image on files
+- **Image watermarks** - overlay a logo or image on files
 - **Combined** text + image watermarks
 - Diagonal tiled placement at 45° rotation, mid grey (`#808080`) and 40% opacity by default
 - Three trigger modes: **on download**, **on demand** (file action menu), **on share**
@@ -35,7 +35,7 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 
 JPEG, PNG and WEBP are watermarked with **GD**, which ships with essentially every PHP
 build and which Nextcloud server already requires. **Imagick is used when GD cannot decode
-the file** — in practice that means WebP on a GD compiled without libwebp — and when GD is
+the file** - in practice that means WebP on a GD compiled without libwebp - and when GD is
 not installed at all. Nothing to configure either way.
 
 The preference used to run the other way round, and it was flipped for the same reason the
@@ -49,8 +49,8 @@ system fonts and fall back to GD's built-in bitmap font when it found none.
 
 ### No external binaries
 
-The app runs entirely inside PHP. It spawns no processes — no `exec()`, no shelling out
-to `qpdf`, `pdftoppm`, Ghostscript or anything else — so there is nothing to install
+The app runs entirely inside PHP. It spawns no processes - no `exec()`, no shelling out
+to `qpdf`, `pdftoppm`, Ghostscript or anything else - so there is nothing to install
 beyond the PHP extensions above, and nothing that behaves differently because a host is
 missing a package.
 
@@ -65,21 +65,21 @@ Two consequences worth knowing:
   are not really protected and open without prompting. Such a file is left exactly as it
   was, an entry is written to the audit log, and an on-demand apply returns an error naming
   it. Nothing is corrupted and no unwatermarked copy is served in place of a watermarked
-  one — the watermark simply does not get applied.
+  one - the watermark simply does not get applied.
 
 The watermark is a real content stream, so **the text layer survives**: selection, copy,
 search and screen-reader access all keep working. The user's file is never modified.
 
 ### Fonts and Arabic text
 
-**One font draws every watermark** — IBM Plex Sans Arabic Bold (SIL Open Font License),
+**One font draws every watermark** - IBM Plex Sans Arabic Bold (SIL Open Font License),
 committed in `resources/fonts`. Latin and Arabic render in the same face, so a watermark
 looks the same whatever the text contains.
 
 **Arabic is shaped and reordered** before it is drawn: letters take their contextual forms,
 lam-alef becomes a single ligature, and the text runs right to left. That happens for PDFs
 and images alike, in PHP rather than in the image backend, so output does not depend on
-whether the host's ImageMagick was built with Raqm/HarfBuzz — or on which fonts the host
+whether the host's ImageMagick was built with Raqm/HarfBuzz - or on which fonts the host
 has installed at all.
 
 The font is embedded **subsetted**: only the glyphs actually drawn. A watermarked PDF is
@@ -87,12 +87,12 @@ about 31 KB rather than the 125 KB a whole embedded face would cost, and `/ToUni
 still written so the watermark stays searchable and selectable.
 
 If the bundled font cannot be read, the file is **skipped with an audit-log entry** rather
-than watermarked with substitute glyphs — an unreadable watermark is worse than a missing
+than watermarked with substitute glyphs - an unreadable watermark is worse than a missing
 one, because it looks like it worked.
 
 See `resources/fonts/README.md` for why this face and not another (the constraint is Arabic
 Presentation Forms-B coverage, which rules out most modern Arabic fonts including Cairo),
-and before moving anything in that directory — the path reaches the renderer through the
+and before moving anything in that directory - the path reaches the renderer through the
 global `K_PATH_FONTS`.
 
 ## Project Structure
@@ -123,7 +123,7 @@ files_watermark/
 │   └── tasks/        # Node side: binary-safe HTTP, PDF/image/zip probes
 └── doc/
     ├── sdd.md          # Software Development Document
-    ├── tasks.md        # what is left to do — the checklist
+    ├── tasks.md        # what is left to do - the checklist
     ├── development.md  # the engineering record: why each piece is the way it is
     └── patch.md        # optional Nextcloud core patches, and what they cost
 ```
@@ -145,7 +145,7 @@ dependency tree resolves cleanly:
 npm install
 ```
 
-> **Note:** avoid `--legacy-peer-deps` — it skips auto-installing the peer
+> **Note:** avoid `--legacy-peer-deps` - it skips auto-installing the peer
 > dependencies that `@nextcloud/eslint-config` needs (e.g. `eslint-plugin-import`)
 > and will break `npm run lint`.
 
@@ -186,7 +186,7 @@ composer cs:check       # Nextcloud coding standard (composer cs:fix applies it)
 composer psalm          # Static analysis of lib/
 ```
 
-`composer psalm` type-checks `lib/` against core's public API — the `nextcloud/ocp`
+`composer psalm` type-checks `lib/` against core's public API - the `nextcloud/ocp`
 package supplies the typed OCP interfaces, and `tests/stubs/CoreStubs.php` the server
 classes that are not installable from packagist (`OCA\DAV\Connector\Sabre\*`,
 `OC\Streamer`, the two events). It is clean with no baseline; the configuration, and
@@ -201,7 +201,7 @@ npm run test:e2e        # Cypress, against a running instance (see below)
 ```
 
 The end-to-end suite drives the Docker instance described under
-[Docker (local test environment)](#docker-local-test-environment) — start it and enable the app
+[Docker (local test environment)](#docker-local-test-environment) - start it and enable the app
 first, then `npm run test:e2e`. It judges each scenario on the delivered file's bytes rather
 than on the UI: what it covers, and how it tells a watermarked file from a clean one, is in
 [`cypress/README.md`](cypress/README.md).
@@ -213,8 +213,8 @@ not only history: they are how the Files list knows to show the "watermarked" ba
 the app avoids stamping a file twice.
 
 **Downloads are not recorded unless you ask for them.** `on_download` and `on_share` render a
-watermarked copy on *every fetch*, so recording them writes one entry per file per download —
-including every file inside a downloaded folder — and nothing expires on its own. Turn it on
+watermarked copy on *every fetch*, so recording them writes one entry per file per download -
+including every file inside a downloaded folder - and nothing expires on its own. Turn it on
 under **Settings → Administration → Watermark → When to apply** with *"Record every download
 in the activity log"*; the option appears only for those two triggers, since it does nothing
 for the others.
@@ -228,14 +228,14 @@ occ files_watermark:prune-log --all            # every download entry, any age
 occ files_watermark:prune-log --all --dry-run  # what would go, and nothing else
 ```
 
-It removes **download entries only** — there is no option to take the apply/remove entries,
+It removes **download entries only** - there is no option to take the apply/remove entries,
 because those are what the watermarked badge is drawn from. Retention shortens the history of
 who downloaded what; it never makes the app forget that a file is already watermarked.
 
 ## Server settings (`occ`)
 
 The watermark itself is configured in the admin UI. These two are host tuning rather than
-policy — they bound what one folder download may cost, and they change nothing about the
+policy - they bound what one folder download may cost, and they change nothing about the
 watermark that comes out, so they live in the app config instead of on the form:
 
 | Key | Default | What it bounds |
@@ -249,8 +249,8 @@ occ config:app:set files_watermark archive_max_bytes   --value 1073741824
 occ config:app:delete files_watermark archive_max_members   # back to the default
 ```
 
-An archive is rendered member by member **before** any bytes are sent — that is what lets a
-share that must be watermarked fail with a clean 403 instead of a truncated download — so
+An archive is rendered member by member **before** any bytes are sent - that is what lets a
+share that must be watermarked fail with a clean 403 instead of a truncated download - so
 these bound the temp disk and CPU one request can use. Past the cap, `on_share` denies and
 `on_download` falls back to a plain unwatermarked archive.
 
@@ -271,7 +271,7 @@ has the temp space; lower them on a small host. There is no unlimited setting: a
 
 ## Usage
 
-- **On demand:** right-click any supported file in the Files app → **Apply Watermark** — overwrites the original
+- **On demand:** right-click any supported file in the Files app → **Apply Watermark** - overwrites the original
 - **On download:** use the `/apps/files_watermark/download/{fileId}` endpoint to serve a watermarked copy without touching the original
 - **On share:** when a share is created, a watermarked copy (`{name}_shared.{ext}`) is saved in the same folder
 - **Admin settings:** configure the global policy under **Settings → Additional → Watermark Settings**
@@ -281,13 +281,13 @@ has the temp space; lower them on a small host. There is no unlimited setting: a
 An in-place watermark (`on_demand`, `on_upload`) burns into the stored bytes and cannot be
 undone by re-rendering, so before overwriting a file the app keeps a copy of it. That copy
 lives in the **owner's** storage, at `.files_watermark/originals/{fileId}`, and is written
-through the Files API — which is what puts it under **server-side encryption**: with SSE
+through the Files API - which is what puts it under **server-side encryption**: with SSE
 enabled it is encrypted by whichever module the admin selected, with the server's own keys.
 The app neither holds a key nor knows which module is in use.
 
 It has to be there to get that. The selected module decides what is encrypted, and the
 default module encrypts only what lives under a user's `files`, `files_versions` and
-`files_trashbin` — app storage (appdata) is outside its remit, which is where these copies
+`files_trashbin` - app storage (appdata) is outside its remit, which is where these copies
 used to sit, in the clear, beside the ciphertext of the very same bytes.
 
 The folder is **hidden from clients**: it is dropped from every WebDAV listing, its paths
@@ -302,10 +302,10 @@ What still costs something, and what to tell users:
   cannot be undone
 - the folder's *name* still appears in unified search results and the activity feed. Both
   need a small Nextcloud core patch, which is written out in `doc/patch.md` and left to the
-  admin — they leak the name, never the contents
+  admin - they leak the name, never the contents
 - `occ` and server-side tooling still see the folder, as they must: that is how a restore
   reads the copy back
-- the app keeps its own triggers off these copies — they are never watermarked in place,
+- the app keeps its own triggers off these copies - they are never watermarked in place,
   and never watermarked on delivery
 
 Copies written by earlier versions remain in appdata and are still restorable; nothing
@@ -315,7 +315,7 @@ migrates them, and new copies always go to the owner.
 
 A [`docker-compose.yml`](docker-compose.yml) is provided to run the app against a
 real Nextcloud 31 instance. It bind-mounts this repo into Nextcloud's
-`custom_apps/`, so **build the app on the host first** — the container runs the
+`custom_apps/`, so **build the app on the host first** - the container runs the
 compiled output, not the sources.
 
 ```bash
@@ -354,9 +354,9 @@ RDBMS) is documented inline at the bottom of the file.
 The app is storage-agnostic: it reads/writes file content through the Nextcloud
 Files API (`getContent()` / `putContent()` / `newFile()`) and only touches the
 local filesystem for short-lived temp copies. So watermarking works unchanged on
-S3 — this stack lets you verify it.
+S3 - this stack lets you verify it.
 
-**1. S3 as primary object storage** (every file lives on S3) — use the dedicated
+**1. S3 as primary object storage** (every file lives on S3) - use the dedicated
 [`docker-compose.s3.yml`](docker-compose.s3.yml), which runs Nextcloud + RustFS:
 
 ```bash
@@ -378,7 +378,7 @@ Open <http://localhost:8081> (admin / admin). Then verify:
 Tear down: `docker compose -p fw_s3 -f docker-compose.s3.yml down -v`.
 
 **2. External S3 storage mount** (S3 mounted as a folder on an otherwise-local
-instance) — on the default stack, point an external mount at the same RustFS:
+instance) - on the default stack, point an external mount at the same RustFS:
 
 ```bash
 docker compose exec -u www-data nextcloud php occ app:enable files_external

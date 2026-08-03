@@ -52,7 +52,7 @@ class WatermarkConfig extends Entity {
 	/** Nextcloud system-tag ID for per-folder targeting; null means global */
 	protected ?string $folderTag = null;
 	/**
-	 * Whether to write an audit row for every *delivery* — `on_download` / `on_share`,
+	 * Whether to write an audit row for every *delivery* - `on_download` / `on_share`,
 	 * which render per fetch. Off by default: those rows are the ones that grow without
 	 * bound (a row per member of every archive, every time it is downloaded), and they
 	 * are pure audit. The in-place events are recorded regardless of this: they are not

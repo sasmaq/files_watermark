@@ -1,6 +1,6 @@
 # Software Development Document
 
-## files_watermark — Nextcloud 31 File Watermarking App
+## files_watermark - Nextcloud 31 File Watermarking App
 
 **Version:** 1.0.0  
 **Date:** 2026-06-27  
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks can be applied through several triggers — on demand, on upload, on download, and on share — and the app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define a single, server-wide policy through a management panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
+`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks can be applied through several triggers - on demand, on upload, on download, and on share - and the app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define a single, server-wide policy through a management panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
 
 ---
 
@@ -113,10 +113,10 @@
 
 ### 5.3 Trigger Modes
 
-- **On demand** — user or admin triggers watermarking via the file action menu
-- **On upload** — watermark applied automatically when a matching file is written (`NodeWrittenEvent`)
-- **On download** — watermark applied to a temporary copy served to the downloader; original file untouched
-- **On share** — watermark applied when a public link or internal share is created (`ShareCreatedEvent`)
+- **On demand** - user or admin triggers watermarking via the file action menu
+- **On upload** - watermark applied automatically when a matching file is written (`NodeWrittenEvent`)
+- **On download** - watermark applied to a temporary copy served to the downloader; original file untouched
+- **On share** - watermark applied when a public link or internal share is created (`ShareCreatedEvent`)
 
 ### 5.4 Scope Configuration (Admin)
 
@@ -182,9 +182,9 @@ All endpoints require a valid Nextcloud session or app password. Admin-only endp
 
 ## 8. Frontend (Vue.js)
 
-- **Admin Settings** (`/settings/admin/watermark`) — global policy, default template, MIME/tag scope, audit log viewer.
+- **Admin Settings** (`/settings/admin/watermark`) - global policy, default template, MIME/tag scope, audit log viewer.
 
-- **File Action** — context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
+- **File Action** - context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
 
 Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component library and **@nextcloud/axios** for API calls, consistent with Nextcloud 31 app standards.
 
@@ -198,11 +198,11 @@ Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component libra
 | `tecnickcom/tc-lib-pdf-parser` (PHP) | PDF parsing, including PDF 1.5+ compressed cross-reference streams |
 | `ext-bcmath` (PHP) | Required by `tc-lib-pdf`; the app will not enable without it |
 
-No external binaries. The app spawns no processes — no `exec()` and no shelling out to
-`qpdf`, `pdftoppm` or Ghostscript — so a host needs nothing beyond PHP and the extensions
+No external binaries. The app spawns no processes - no `exec()` and no shelling out to
+`qpdf`, `pdftoppm` or Ghostscript - so a host needs nothing beyond PHP and the extensions
 above. The PDF flattening feature, which rasterised each page through an external
 renderer, was removed for this reason.
-| PHP `GD` extension | Image watermarking — the default engine |
+| PHP `GD` extension | Image watermarking - the default engine |
 | PHP `Imagick` extension | Optional; used for formats GD cannot decode (WebP without libwebp) |
 | LibreOffice / Collabora (headless) | Office document conversion/rendering for watermarking |
 | PHP `exif` / metadata libraries | Reading/writing invisible metadata watermarks |

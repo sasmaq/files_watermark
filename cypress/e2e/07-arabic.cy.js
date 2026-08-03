@@ -8,12 +8,12 @@
  * say whether the text was shaped.
  *
  * The app shapes once, itself, through `tc-lib-unicode`, and writes the embedded face
- * with two-byte code units — so the operand of the text-showing operator *is* the
+ * with two-byte code units - so the operand of the text-showing operator *is* the
  * shaped string. Two facts follow, and both are asserted:
  *
  *  - every Arabic code unit drawn is in **Arabic Presentation Forms-B** (U+FE70–FEFF).
  *    An unshaped watermark would carry U+0600-block code points instead;
- *  - `الاختبار` — eight letters — comes out as **seven** glyphs, because lam+alef
+ *  - `الاختبار` - eight letters - comes out as **seven** glyphs, because lam+alef
  *    ligates. A renderer that drew the letters one by one would emit eight.
  */
 
@@ -82,7 +82,7 @@ describe('Arabic watermarks', () => {
 	 * names the wrong person, which is the one thing a watermark exists not to do.
 	 *
 	 * Asserting the *current* output would cement the bug into the suite, so this
-	 * stays pending until the shaper is fixed — at which point deleting `.skip` is
+	 * stays pending until the shaper is fixed - at which point deleting `.skip` is
 	 * the whole change.
 	 */
 	it.skip('keeps Latin words in reading order inside an RTL watermark', () => {
@@ -115,7 +115,7 @@ describe('Arabic watermarks', () => {
 			cy.task('probe:image', { base64 }).then((image) => {
 				expect(image.width, 'the renderer resized the image').to.eq(600)
 				expect(image.height).to.eq(400)
-				// Pixels cannot say whether the glyphs joined — that is the PDF's job
+				// Pixels cannot say whether the glyphs joined - that is the PDF's job
 				// above. What they can say is that the image path did not throw, skip,
 				// or draw an empty string when handed Arabic.
 				expect(image.inkRatio, 'nothing was drawn on the image').to.be.greaterThan(0)

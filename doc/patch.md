@@ -1,7 +1,7 @@
 <!--
 	MD010 (no hard tabs) is off for this file alone. Every code block here is either PHP
 	held to the Nextcloud coding standard or a diff hunk meant to apply to tab-indented
-	core files — converting those tabs to spaces would produce patches that do not apply.
+	core files - converting those tabs to spaces would produce patches that do not apply.
 -->
 <!-- markdownlint-disable MD010 -->
 
@@ -15,11 +15,11 @@ the copy is ciphertext exactly like the file it was taken from. See
 
 The cost of that location is visibility, and most of it is already paid for **in the app**:
 `HideOriginalsPlugin` takes the folder off WebDAV entirely and `ShareGuardListener` refuses
-to share a copy. Nothing to do for those — they ship, they are registered, and their tests
+to share a copy. Nothing to do for those - they ship, they are registered, and their tests
 fail if either guard is weakened. Read the class docblocks for why each hook is where it is.
 
 **This document is what is left: two patches to Nextcloud's own code**, which close the two
-places the app cannot reach from outside. They are deliberately *not* applied — patching
+places the app cannot reach from outside. They are deliberately *not* applied - patching
 shipped code has consequences that belong to whoever runs the instance, see
 [What these patches cost](#what-these-patches-cost).
 
@@ -31,7 +31,7 @@ produced each result are included so you can repeat them.
 
 | Surface | Closed by |
 | --- | --- |
-| WebDAV `PROPFIND` listing — desktop, mobile, any client | `HideOriginalsPlugin` (app) |
+| WebDAV `PROPFIND` listing - desktop, mobile, any client | `HideOriginalsPlugin` (app) |
 | Web UI file list (goes through the same WebDAV endpoint) | `HideOriginalsPlugin` (app) |
 | Legacy `/remote.php/webdav/` endpoint | `HideOriginalsPlugin` (app) |
 | `PROPFIND` addressed straight at the folder | `HideOriginalsPlugin` (app) |
@@ -40,7 +40,7 @@ produced each result are included so you can repeat them.
 | A public link created **by path**, serving the bytes | `ShareGuardListener` (app) |
 | Unified search (OCS, never touches WebDAV) | **Patch 1**, below |
 | Activity feed and its API | **Patch 2**, below |
-| Thumbnails / previews | nothing needed — see [below](#what-none-of-this-hides) |
+| Thumbnails / previews | nothing needed - see [below](#what-none-of-this-hides) |
 | Quota and parent folder size | **nothing** |
 
 The app-side guards already cover every route that serves the **bytes**. The two patches
@@ -50,7 +50,7 @@ filters, and no app-side hook reaches them.
 
 ---
 
-## Patch 1 — unified search
+## Patch 1 - unified search
 
 Search is built from the file cache by the Files app's search provider and never touches
 the WebDAV response, so the app's DAV guard does not reach it. Unpatched, the folder and its contents
@@ -66,7 +66,7 @@ curl -s -u admin:admin -H "OCS-APIRequest: true" -H "Accept: application/json" \
 ```
 
 **File:** `apps/files/lib/Search/FilesSearchProvider.php` (in `search()`, the array the
-results are mapped over — line 134 in 31.0.14)
+results are mapped over - line 134 in 31.0.14)
 
 ```diff
  			$searchResultEntry->addAttribute('fileId', (string)$result->getId());
@@ -94,14 +94,14 @@ curl -s -u admin:admin -H "OCS-APIRequest: true" -H "Accept: application/json" \
 
 curl -s -u admin:admin -H "OCS-APIRequest: true" -H "Accept: application/json" \
   "http://localhost:8080/ocs/v2.php/search/providers/files/search?term=Readme"
-# unaffected — ordinary results still come back
+# unaffected - ordinary results still come back
 ```
 
 ---
 
-## Patch 2 — activity feed
+## Patch 2 - activity feed
 
-Activity is written from hooks, so it announces the copies as they are made — in the web
+Activity is written from hooks, so it announces the copies as they are made - in the web
 UI feed and through the activity API that mobile clients read:
 
 ```text
@@ -141,7 +141,7 @@ curl -s -u admin:admin -H "OCS-APIRequest: true" -H "Accept: application/json" \
 # "You created control.txt" is there; nothing for 9001
 ```
 
-Entries written before the patch stay in the feed — this stops new ones, it does not
+Entries written before the patch stay in the feed - this stops new ones, it does not
 rewrite history.
 
 ---
@@ -168,7 +168,7 @@ Consequences to plan for:
   own cadence. Keep both as `.patch` files in your deployment and re-apply after each
   upgrade, with a post-upgrade check that fails loudly if an anchor no longer matches
 - the anchors are pinned to Nextcloud 31.0.14 and activity 4.0.0. Re-read both hunks
-  before applying to any other version — a patch that applies to shifted context is worse
+  before applying to any other version - a patch that applies to shifted context is worse
   than one that fails
 - do **not** reach for `'integrity.check.disabled' => true`. It silences the warning by
   disabling the check for the whole instance, which is a real protection traded away for a
@@ -188,7 +188,7 @@ patches close the two that leak the name. What neither touches:
 - **quota and folder sizes still include it.** The owner's usage reflects the copies, and
   nothing in the WebDAV response is rewritten to pretend otherwise. This is the honest
   behaviour: the space really is used
-- **`occ` and server-side tooling** see the folder normally — `files:scan`,
+- **`occ` and server-side tooling** see the folder normally - `files:scan`,
   `files:cleanup`, and any app reading the file cache directly. It has to: the app's own
   restore path reads these files through the same Files API
 - **shares that already exist.** `ShareGuardListener` refuses new ones; it does not revoke
@@ -197,7 +197,7 @@ patches close the two that leak the name. What neither touches:
   than from WebDAV needs the same treatment as Patch 1 here. Search and activity are the
   two that surfaced on a default install; an instance with more apps may have others
 - **anyone with the account and shell or database access.** None of this is an
-  access-control boundary — it is about what clients are shown. The copies hold the same
+  access-control boundary - it is about what clients are shown. The copies hold the same
   bytes as the user's own file, which that user can read anyway
 
 ### Previews are not a leak here, but not by design
@@ -212,7 +212,7 @@ Nextcloud.png                     mime=image/png                  previewable=tr
 ```
 
 Both files hold identical PNG bytes. This falls out of the naming scheme rather than from
-anything in these patches — change how copies are named and previews start working, at
+anything in these patches - change how copies are named and previews start working, at
 which point `/core/preview?fileId=…` becomes a route worth closing.
 
 ## The no-patch option
@@ -225,7 +225,7 @@ upgrade.
 It is weaker than what the app already does, in two ways worth stating plainly: it covers
 only the clients you control, and it does nothing about the web UI, the mobile apps, search
 or activity. The app's own guards need no client cooperation at all, so this is at most a
-belt-and-braces measure for managed desktops — never a substitute.
+belt-and-braces measure for managed desktops - never a substitute.
 
-> Unlike everything above, this section is **not** measured — it describes client-side
+> Unlike everything above, this section is **not** measured - it describes client-side
 > configuration that was not exercised against a real desktop client here.

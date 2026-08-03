@@ -33,7 +33,7 @@ class LoadAdditionalScriptsListener implements IEventListener {
 		}
 
 		// The Apply/Remove file actions only make sense when watermarking happens
-		// on demand — in on_upload / on_download / on_share modes the app applies
+		// on demand - in on_upload / on_download / on_share modes the app applies
 		// watermarks itself, so the manual action is hidden. Expose the resolved
 		// trigger (global → default) so `main-files.js` can gate on it.
 		$trigger = $this->watermarkService->resolveConfig()->getTrigger();

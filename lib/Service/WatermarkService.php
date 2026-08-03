@@ -59,7 +59,7 @@ class WatermarkService {
 	 * Caller is responsible for deleting the temp file after use.
 	 *
 	 * For the streaming triggers the render *is* the deliverable, so the audit row is
-	 * recorded here. The in-place triggers must not use this — their deliverable is the
+	 * recorded here. The in-place triggers must not use this - their deliverable is the
 	 * persisted write, so they render via {@see renderToTemp} and log only once that
 	 * write lands. See {@see watermarkInPlace}.
 	 */
@@ -94,7 +94,7 @@ class WatermarkService {
 		file_put_contents($srcTmp, $file->getContent());
 
 		// The renderers open the logo as a plain file path, but the config only holds an
-		// opaque reference to an uploaded image — resolve it to a temp copy for the render
+		// opaque reference to an uploaded image - resolve it to a temp copy for the render
 		// and hand them a config pointing at that. Anything the store does not recognise
 		// (notably a legacy hand-typed absolute path) resolves to null and renders as
 		// text-only rather than reading the server's filesystem.
@@ -112,7 +112,7 @@ class WatermarkService {
 			// $srcTmp holds a plaintext copy of the file. A render failure is routine
 			// (unparseable PDFs, and every on_share deny path goes through one), so
 			// without this it accumulates readable copies of user content in the temp
-			// dir indefinitely — the caller only ever gets an exception, never a path
+			// dir indefinitely - the caller only ever gets an exception, never a path
 			// it could clean up itself.
 			$this->discardTemp($tmpPath, $srcTmp);
 			throw $e;
@@ -130,11 +130,13 @@ class WatermarkService {
 	private function recordLog(File $file, string $trigger, WatermarkConfig $config, ?IUser $actor = null): void {
 		// Delivery rows are pure audit and are recorded only when the policy asks for
 		// them: they are written per *fetch*, so an archive of 200 members downloaded
-		// twice a day is 400 rows a day, forever. The in-place rows fall through — they
+		// twice a day is 400 rows a day, forever. The in-place rows fall through - they
 		// are not history, they are the app's record that a file's stored bytes carry a
 		// watermark, and the badge and the double-burn guard both read them.
-		if (!$config->getLogDelivery()
-			&& in_array($trigger, WatermarkLogMapper::NON_DESTRUCTIVE_TRIGGERS, true)) {
+		if (
+			!$config->getLogDelivery()
+			&& in_array($trigger, WatermarkLogMapper::NON_DESTRUCTIVE_TRIGGERS, true)
+		) {
 			return;
 		}
 
@@ -153,13 +155,13 @@ class WatermarkService {
 	 * to serve the clean original. This is the single gate for both non-destructive
 	 * delivery triggers:
 	 *
-	 *  - `on_download` — watermark on every download, whoever fetches the file.
-	 *  - `on_share`    — watermark only when the file is fetched by someone other than
+	 *  - `on_download` - watermark on every download, whoever fetches the file.
+	 *  - `on_share`    - watermark only when the file is fetched by someone other than
 	 *                    its owner (a share recipient, or an anonymous public-link
 	 *                    visitor). The owner reading their own file is left untouched.
 	 *
-	 * The applicable policy is the file *owner's* — they own the watermark rule for
-	 * their file — not the downloader's, who may be a recipient with an unrelated
+	 * The applicable policy is the file *owner's* - they own the watermark rule for
+	 * their file - not the downloader's, who may be a recipient with an unrelated
 	 * personal config. Null is returned for an unsupported type, a trigger that does
 	 * not apply to this access, or any rendering failure (which must degrade to the
 	 * untouched original rather than break the download). On success the path of a
@@ -204,7 +206,7 @@ class WatermarkService {
 	}
 
 	/**
-	 * Whether $file is being accessed through a share mount — i.e. the current user is
+	 * Whether $file is being accessed through a share mount - i.e. the current user is
 	 * a share recipient (internal share) or an anonymous public-link visitor, not the
 	 * file's owner.
 	 *
@@ -222,19 +224,19 @@ class WatermarkService {
 	}
 
 	/**
-	 * Whether $file is being accessed by someone other than its owner — the full
+	 * Whether $file is being accessed by someone other than its owner - the full
 	 * `on_share` audience: internal share recipients *and* public-link visitors.
 	 *
 	 * {@see isReceivedShare} alone does not cover public links. A public link is served
 	 * from the *owner's* own storage (`public.php/dav` resolves the node through
 	 * `getUserFolder($shareOwner)` and only wraps it in PermissionsMask /
 	 * PublicOwnerWrapper), so the mount is never an ISharedStorage and the storage test
-	 * reports "owner access" for an anonymous visitor — which would hand them the clean
+	 * reports "owner access" for an anonymous visitor - which would hand them the clean
 	 * original. Two further signals close that hole:
 	 *
-	 *  - $publicContext — set by the caller that *knows* it is serving a public link
+	 *  - $publicContext - set by the caller that *knows* it is serving a public link
 	 *    (the interceptor instance registered on the public DAV server).
-	 *  - no session user — an anonymous request can only be reaching a file through a
+	 *  - no session user - an anonymous request can only be reaching a file through a
 	 *    public link, so it is never owner access. This also covers callers that have no
 	 *    context flag to pass, such as public preview requests. Background jobs with no
 	 *    session (e.g. preview pre-generation) fall in here too and are treated as share
@@ -278,7 +280,7 @@ class WatermarkService {
 		}
 
 		// A file the config would skip (excluded mime, missing folder tag) is not a
-		// watermark candidate — report "not applicable" so it is served untouched.
+		// watermark candidate - report "not applicable" so it is served untouched.
 		try {
 			$this->assertMimeAllowed($mime, $config);
 			$this->assertFolderTagMatches($file, $config);
@@ -339,10 +341,10 @@ class WatermarkService {
 	}
 
 	/**
-	 * Apply watermark in-place — replaces the file content inside Nextcloud.
+	 * Apply watermark in-place - replaces the file content inside Nextcloud.
 	 *
 	 * Skips (and returns false) when the file has already been watermarked, so an
-	 * in-place burn is never applied twice — this is the authoritative guard for the
+	 * in-place burn is never applied twice - this is the authoritative guard for the
 	 * in-place triggers (`on_demand`, `on_upload`). Copy/stream triggers
 	 * (`on_share`, `on_download`) go through {@see watermarkFile} against the clean
 	 * original and are intentionally not guarded here.
@@ -354,7 +356,7 @@ class WatermarkService {
 		// The app's own preserved originals live in the owner's storage, where they are
 		// ordinary supported files as far as every trigger is concerned. Watermarking one
 		// would burn a watermark into the copy kept to undo watermarks, and store a copy
-		// of *that* — so this is the choke point every in-place path goes through, not
+		// of *that* - so this is the choke point every in-place path goes through, not
 		// only the listener that would queue it.
 		if ($this->originalStore->isBackup($file)) {
 			return false;
@@ -371,7 +373,7 @@ class WatermarkService {
 		[$tmpPath, $resolved] = $this->renderToTemp($file, $trigger, $config, $actor);
 
 		try {
-			// Preserve the pre-watermark bytes before they are overwritten — this burn is
+			// Preserve the pre-watermark bytes before they are overwritten - this burn is
 			// destructive and irreversible, so this copy is the only route back. Read the
 			// original *now*, while the stored content is still clean. A failed backup is
 			// logged and does not abort the watermark; the user simply won't be able to undo
@@ -379,7 +381,7 @@ class WatermarkService {
 			$this->originalStore->store($file, $file->getContent());
 
 			// Read before writing, and checked: false here would otherwise reach putContent()
-			// as the empty string and replace the file with nothing — the one outcome this
+			// as the empty string and replace the file with nothing - the one outcome this
 			// burn cannot be allowed to have, since the original is already overwritten by
 			// the time anyone notices.
 			$watermarked = file_get_contents($tmpPath);
@@ -391,7 +393,7 @@ class WatermarkService {
 		} finally {
 			// $tmpPath holds a plaintext watermarked copy of the file. putContent() can
 			// throw (a locked node, a full quota), and without this the copy is left
-			// readable in the temp dir — the same leak discardTemp() exists to prevent on
+			// readable in the temp dir - the same leak discardTemp() exists to prevent on
 			// the render path.
 			$this->discardTemp($tmpPath);
 		}
@@ -412,7 +414,7 @@ class WatermarkService {
 	 * restored the backup is discarded and a `removed` row is recorded, which makes
 	 * {@see isAlreadyWatermarked} report false again so the file can be re-watermarked.
 	 *
-	 * The removal is logged rather than the original rows being deleted — this is an audit
+	 * The removal is logged rather than the original rows being deleted - this is an audit
 	 * log, so the apply and the undo both belong in the history.
 	 *
 	 * @return bool true when the original was restored, false when none is preserved
@@ -458,7 +460,7 @@ class WatermarkService {
 	 *
 	 * **This is what makes an overwrite behave.** The double-burn guard asks the log
 	 * whether this *file id* has a standing watermark, and a file id survives having its
-	 * content replaced — so without this, re-uploading over a watermarked file left the
+	 * content replaced - so without this, re-uploading over a watermarked file left the
 	 * new bytes clean while the badge, the guard and the audit row all still described the
 	 * bytes that had just been thrown away. Two uploads of the same path were enough to
 	 * store an unwatermarked file under a policy whose whole purpose is preventing that.
@@ -472,7 +474,7 @@ class WatermarkService {
 	 *
 	 * The preserved original goes with it. It belongs to content that no longer exists, and
 	 * keeping it would let "remove watermark" restore *the previous file* over the one the
-	 * user just uploaded — losing their data to a feature that exists to protect it.
+	 * user just uploaded - losing their data to a feature that exists to protect it.
 	 * {@see OriginalStore::store()} never overwrites, so discarding here is also what lets
 	 * the next burn preserve the right bytes.
 	 *
@@ -508,7 +510,7 @@ class WatermarkService {
 	/**
 	 * Whether any configured policy uses a delivery trigger.
 	 *
-	 * Coarse, owner-agnostic gate for the archive interceptor — see
+	 * Coarse, owner-agnostic gate for the archive interceptor - see
 	 * {@see WatermarkConfigMapper::hasDeliveryTrigger}.
 	 */
 	public function hasDeliveryTriggerConfigured(): bool {
@@ -518,13 +520,13 @@ class WatermarkService {
 	/**
 	 * The policy in force: the admin's global config, or the built-in default.
 	 *
-	 * It takes no user, deliberately. The policy is server-wide, so every caller — every
-	 * trigger, every access path, owner and recipient alike — resolves the same one, and
+	 * It takes no user, deliberately. The policy is server-wide, so every caller - every
+	 * trigger, every access path, owner and recipient alike - resolves the same one, and
 	 * there is no "whose config is this" question to get wrong.
 	 */
 	public function resolveConfig(): WatermarkConfig {
 		// Memoised for the request: a folder download resolves the policy once per member,
-		// which is a query a file without this. Configs are not mutated mid-request —
+		// which is a query a file without this. Configs are not mutated mid-request -
 		// the settings endpoints write and return, they do not then re-read through here.
 		if ($this->configCache !== null) {
 			return $this->configCache;
@@ -575,7 +577,7 @@ class WatermarkService {
 
 		// A tag that is not a numeric id raises InvalidArgumentException, and one that
 		// no longer exists raises TagNotFoundException. `saveConfig` rejects both now,
-		// but a config stored before it did — or edited straight in the database — must
+		// but a config stored before it did - or edited straight in the database - must
 		// still degrade to this app's ordinary "cannot watermark" path. Left uncaught,
 		// InvalidArgumentException is not a RuntimeException, so it sailed past every
 		// caller's handling and turned each watermark request into an HTTP 500.
@@ -588,7 +590,7 @@ class WatermarkService {
 		} catch (TagNotFoundException|\InvalidArgumentException $e) {
 			$this->logger->warning(
 				'files_watermark: config {config} targets system tag {tag}, which is not a usable tag id; '
-				. 'no file matches it. Re-pick the tag in the watermark settings.',
+					. 'no file matches it. Re-pick the tag in the watermark settings.',
 				['app' => 'files_watermark', 'config' => $config->getId(), 'tag' => $tagId, 'exception' => $e],
 			);
 			throw new \RuntimeException(
@@ -626,7 +628,7 @@ class WatermarkService {
 			// Two different identities, and the difference matters in a watermark. The
 			// account name is the uid: unique, stable, and what an admin greps the audit
 			// log or the user list for. The display name is what a human recognises, and
-			// is neither unique nor fixed — a user can change it, and two people can share
+			// is neither unique nor fixed - a user can change it, and two people can share
 			// one. `{username}` used to render the *display* name, which made the account
 			// name unreachable and the token a lie; both are now available under the name
 			// that describes them. Existing templates were rewritten to `{displayname}` by

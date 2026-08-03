@@ -45,7 +45,7 @@ class WatermarkLogMapperTest extends TestCase {
 			->method('in')
 			->with('file_id', 'param')
 			->willReturn('file_id IN (:param)');
-		// Non-destructive delivery rows (on_download, on_share) are filtered out —
+		// Non-destructive delivery rows (on_download, on_share) are filtered out -
 		// they stream a copy and never watermark stored content. `removed` is *not*
 		// filtered: it is an in-place event that cancels an earlier apply.
 		$expr->expects($this->once())
@@ -170,7 +170,7 @@ class WatermarkLogMapperTest extends TestCase {
 	 * A query-builder mock for the prune pair, recording the `WHERE` clauses it is given.
 	 *
 	 * The clauses are what the tests assert on, because the destructive mistake here is
-	 * not a wrong row count — it is a `DELETE` that reaches rows it was never meant to.
+	 * not a wrong row count - it is a `DELETE` that reaches rows it was never meant to.
 	 *
 	 * @param array<string, string> $clauses filled in with the clauses applied
 	 */
@@ -226,7 +226,7 @@ class WatermarkLogMapperTest extends TestCase {
 	}
 
 	/**
-	 * The in-place rows cannot be deleted from here **at all** — no parameter, no default
+	 * The in-place rows cannot be deleted from here **at all** - no parameter, no default
 	 * to get wrong. They are what the Files-list badge and the double-burn guard read, so
 	 * a caller that could reach them could make the app forget a file it has stamped.
 	 */
@@ -234,7 +234,7 @@ class WatermarkLogMapperTest extends TestCase {
 		$this->assertSame(
 			1,
 			(new \ReflectionMethod($this->mapper, 'deleteBefore'))->getNumberOfParameters(),
-			'deleteBefore grew a parameter — the only one it may take is the cutoff',
+			'deleteBefore grew a parameter - the only one it may take is the cutoff',
 		);
 		$this->assertSame(
 			1,

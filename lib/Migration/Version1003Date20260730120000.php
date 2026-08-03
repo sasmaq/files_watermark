@@ -19,7 +19,7 @@ use OCP\Migration\SimpleMigrationStep;
  * This replaces the previous chain (1000 created the tables, 1001 added the PDF
  * flattening columns, 1002 dropped them again). Every one of those files is gone. That
  * is safe because Nextcloud only runs migrations it has not seen and ignores rows in the
- * `migrations` table whose file no longer exists — which is how core squashes its own —
+ * `migrations` table whose file no longer exists - which is how core squashes its own -
  * but it makes one demand of this file in exchange:
  *
  * **Every step here must be idempotent**, because it runs against three different
@@ -30,7 +30,7 @@ use OCP\Migration\SimpleMigrationStep;
  * 3. an instance that applied 1000 and 1001, so the tables exist *with* them.
  *
  * `SchemaConvergenceTest` drives all three and asserts they converge. Anything added
- * here later must keep that true — an `addColumn` without a `hasColumn` guard, or a data
+ * here later must keep that true - an `addColumn` without a `hasColumn` guard, or a data
  * fix that is not safe to re-run, breaks only the upgrade paths, which are exactly the
  * ones nobody develops against.
  */
@@ -56,7 +56,7 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 	 * Clear `image_path` values that are not store-issued references.
 	 *
 	 * The upload path once stored whatever the client sent, so a config could point at
-	 * any file the web server could read — the vulnerability fixed by validating in
+	 * any file the web server could read - the vulnerability fixed by validating in
 	 * `saveConfig`. Those rows survived the fix and still *look* valid in the admin form
 	 * while resolving to no image, so an admin sees a configured logo that never renders.
 	 *
@@ -65,7 +65,7 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 	 *
 	 * The test is {@see WatermarkImageStore::isReference()} rather than a SQL pattern, so
 	 * there is exactly one definition of a valid reference and it is the one the renderers
-	 * use. It also keeps this portable — the regex involved is not something MySQL,
+	 * use. It also keeps this portable - the regex involved is not something MySQL,
 	 * PostgreSQL and SQLite would agree on.
 	 */
 	public function postSchemaChange(IOutput $output, Closure $schemaClosure, array $options): void {
@@ -104,7 +104,7 @@ class Version1003Date20260730120000 extends SimpleMigrationStep {
 
 		$output->info(sprintf(
 			'files_watermark: cleared %d watermark image reference(s) that predate upload validation; '
-			. 'those configs now have no image and need one re-uploading.',
+				. 'those configs now have no image and need one re-uploading.',
 			count($legacy),
 		));
 	}

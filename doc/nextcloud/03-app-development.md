@@ -52,10 +52,10 @@ the `nextcloud/app-tutorial` repo.
 The framework auto-loads `\OCA\<AppNamespace>\AppInfo\Application`. It extends
 `OCP\AppFramework\App` and (NC 20+) implements `IBootstrap`, which provides two phases:
 
-- **`register(IRegistrationContext $context)`** — runs first for *all* apps. Only prime
+- **`register(IRegistrationContext $context)`** - runs first for *all* apps. Only prime
   the DI container here: register services, event listeners, middlewares, capabilities,
   notifiers (via context). No other app/server component is guaranteed ready.
-- **`boot(IBootContext $context)`** — runs after all registrations. Safe to query the
+- **`boot(IBootContext $context)`** - runs after all registrations. Safe to query the
   container and run once-per-process code.
 
 ```php
@@ -199,7 +199,7 @@ const config = loadState('files_watermark', 'config')
 ```
 
 - Register **file actions** (context-menu entries) from your Files script using
-  `@nextcloud/files` `registerFileAction(new FileAction({...}))` — see
+  `@nextcloud/files` `registerFileAction(new FileAction({...}))` - see
   [07-client-apis.md](07-client-apis.md) and the project's `main-files.js`.
 
 ---

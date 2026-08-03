@@ -3,7 +3,7 @@
  * `cy.request`.
  *
  * `cy.request` serialises its body as a UTF-8 string, which mangles any byte above
- * 0x7F — so a PDF uploaded through it arrives corrupt and the assertion that comes
+ * 0x7F - so a PDF uploaded through it arrives corrupt and the assertion that comes
  * back is about the corruption, not about the watermark. Node's `fetch` gives us
  * `ArrayBuffer` in both directions, so fixtures upload byte-exact and downloads can
  * be probed byte-exact.
@@ -34,9 +34,9 @@ const encodePath = (path) =>
 /**
  * One request, with the body and the response both handled as bytes.
  *
- * Redirects are *not* followed by default. A 303 is information — the share page's
+ * Redirects are *not* followed by default. A 303 is information - the share page's
  * download button being a redirect onto the public DAV endpoint is the reason it is
- * covered at all — and a task that quietly followed it would report the destination's
+ * covered at all - and a task that quietly followed it would report the destination's
  * status as if it were the origin's.
  */
 async function raw({ url, method = 'GET', auth, headers = {}, body, follow = false }) {
@@ -152,7 +152,7 @@ const davPropfind = ({ user, password, path, depth = '0', body }) =>
  * parts PUT into `uploads/<user>/<id>/`, then one MOVE onto the destination.
  *
  * The final path is never PUT, which is exactly why `UploadWatermarkPlugin` hooks
- * `afterMethod:MOVE` as well — a PUT-only hook skips every chunked upload silently.
+ * `afterMethod:MOVE` as well - a PUT-only hook skips every chunked upload silently.
  */
 async function davChunkedUpload({ user, password, path, base64, parts = 2 }) {
 	const bytes = Buffer.from(base64, 'base64')

@@ -8,15 +8,15 @@ namespace OCA\FilesWatermark\Service;
  * Where the repetitions of a tiled watermark go.
  *
  * Extracted from {@see PdfWatermarker}, which had this right, so that
- * {@see ImageWatermarker} stops having it wrong. The image path used to step a fixed grid —
- * `max(210, fontSize * 10)` across and `max(225, fontSize * 11)` down — that never looked at
- * the text at all, so the default `{username} — {date}` template already overlapped its
+ * {@see ImageWatermarker} stops having it wrong. The image path used to step a fixed grid -
+ * `max(210, fontSize * 10)` across and `max(225, fontSize * 11)` down - that never looked at
+ * the text at all, so the default `{username} - {date}` template already overlapped its
  * neighbour by 30px at the default font size, and a realistic name with a timestamp ran 329px
  * into it, straight through the tile beyond. The PDF renderer had lived through the same bug
  * and been rebuilt around measured text; the image renderer never got that fix.
  *
- * Pure geometry, in whatever unit the caller measures in — points for PDF pages, pixels for
- * images — with the origin top-left and y downwards, which both coordinate systems share.
+ * Pure geometry, in whatever unit the caller measures in - points for PDF pages, pixels for
+ * images - with the origin top-left and y downwards, which both coordinate systems share.
  *
  * `PdfWatermarker::tilePositions()` remains the entry point its own 22 assertions are pinned
  * to and now delegates here; those tests passing unchanged is the evidence that moving the
@@ -25,7 +25,7 @@ namespace OCA\FilesWatermark\Service;
 final class TileLattice {
 
 	/**
-	 * Breathing room between repetitions, as a multiple of the type size — so the pattern
+	 * Breathing room between repetitions, as a multiple of the type size - so the pattern
 	 * keeps the same density at every font size instead of crowding as the text grows.
 	 *
 	 * Raised from 2.0, which packed the tiles tighter than anyone wanted once they stopped
@@ -44,12 +44,12 @@ final class TileLattice {
 
 	/**
 	 * Centres of the tiles needed to cover one page or image. Centres outside the
-	 * canvas are expected and required — they are what covers the edges and corners.
+	 * canvas are expected and required - they are what covers the edges and corners.
 	 *
 	 * The lattice is built in the text's *own* rotated frame rather than as a grid
 	 * of rows and columns: spacing runs `textWidth + gap` along the direction the
 	 * text reads and `lineHeight + gap` across it. That keeps neighbouring tiles
-	 * clear of each other at any angle and puts the gap where it is meaningful —
+	 * clear of each other at any angle and puts the gap where it is meaningful -
 	 * between adjacent lines of text. Stepping a row/column grid by the text's
 	 * unrotated width and height, as both renderers did at different points in their
 	 * history, instead spaces tiles by a bounding box that inflates with rotation, so
@@ -108,8 +108,8 @@ final class TileLattice {
 	/**
 	 * A tile-local offset, rotated into canvas coordinates.
 	 *
-	 * Both renderers place text by an anchor that is *not* its centre — GD and Imagick
-	 * both take the left end of the baseline — so centring a rotated tile means rotating
+	 * Both renderers place text by an anchor that is *not* its centre - GD and Imagick
+	 * both take the left end of the baseline - so centring a rotated tile means rotating
 	 * the anchor-to-centre offset by the same angle and stepping back along it. Positive
 	 * rotation reads uphill on a y-downwards canvas, matching the settings preview and
 	 * the convention `PdfWatermarkerTest` pins.

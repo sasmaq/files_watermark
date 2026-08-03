@@ -25,7 +25,7 @@ use PHPUnit\Framework\TestCase;
  * `GET /api/v1/log`, which feeds the activity table in the admin settings.
  *
  * The rows name **who downloaded what and when**, across every account on the server, so
- * the admin gate is the whole of this endpoint's security — there is no per-user view to
+ * the admin gate is the whole of this endpoint's security - there is no per-user view to
  * fall back to. It is checked before the query rather than after, which is also what keeps a
  * non-admin from measuring the table's size through the response time.
  */
@@ -113,7 +113,7 @@ class ApiControllerLogTest extends TestCase {
 
 	/**
 	 * Paging reaches the query. The delivery triggers write a row per fetch, so this table
-	 * is the one that grows without bound — a limit that silently stayed at its default
+	 * is the one that grows without bound - a limit that silently stayed at its default
 	 * would mean the admin page could never show anything past the first hundred rows.
 	 */
 	public function testLimitAndOffsetArePassedThrough(): void {

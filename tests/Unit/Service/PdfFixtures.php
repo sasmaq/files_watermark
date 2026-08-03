@@ -13,7 +13,7 @@ use OCA\FilesWatermark\Service\PdfFontPath;
  * want to read a rendered one back.
  *
  * Shared because all three PDF suites were doing this with FPDI + TCPDF, which the
- * migration removed — and because two details are easy to get wrong in every copy.
+ * migration removed - and because two details are easy to get wrong in every copy.
  * Sizes are in **points** throughout, matching the renderer, and every document
  * declares the temp directory in `allowedPaths`: tc-lib-pdf refuses local reads
  * outside an allowlist, and supplying one replaces the defaults rather than extending
@@ -98,7 +98,7 @@ trait PdfFixtures {
 
 	/**
 	 * Write an encrypted PDF, using the renderer's own encryption rather than an
-	 * external tool — this suite spawns no processes either.
+	 * external tool - this suite spawns no processes either.
 	 *
 	 * An empty `$userPassword` is the permission-flags-only case: not real protection,
 	 * since a reader opens it without prompting, but still an encrypted document as far

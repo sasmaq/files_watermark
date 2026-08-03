@@ -2,8 +2,8 @@
  * The file actions, driven through the Files app.
  *
  * The API half of on-demand is covered in `01-on-demand.cy.js`; what only a browser
- * can show is the gating around it. The two actions mirror each other — a row must
- * never offer both — and the badge has to appear on the row that was just
+ * can show is the gating around it. The two actions mirror each other - a row must
+ * never offer both - and the badge has to appear on the row that was just
  * watermarked, which is precisely where this app has been wrong before: Nextcloud
  * memoises `FileAction.enabled()` per node, so the just-watermarked file kept
  * offering Apply until the code started emitting `files:node:updated` itself.
@@ -99,7 +99,7 @@ describe('Files app actions', () => {
 
 	it('hides both actions when the policy is not on_demand', () => {
 		// The actions are gated on the effective trigger, which reaches the client as
-		// initial state — so this needs a fresh page load to take effect.
+		// initial state - so this needs a fresh page load to take effect.
 		cy.wmSetPolicy({ trigger: 'on_download' })
 		cy.visit(`/apps/files/files?dir=/${folder}`)
 

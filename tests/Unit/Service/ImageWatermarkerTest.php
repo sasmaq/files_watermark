@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
  * Functional tests for {@see ImageWatermarker}. They run against the real image stack.
  *
  * **GD is the default engine**, so that is what these exercise on any host with the
- * extension — which is every host, in practice. Imagick is not left untested for that
+ * extension - which is every host, in practice. Imagick is not left untested for that
  * reason: {@see testBothEnginesProduceAWatermarkedImage} drives it explicitly wherever it is
  * installed, and the selection rules themselves are covered exhaustively and
  * host-independently through {@see FakeImageStack}.
@@ -119,7 +119,7 @@ class ImageWatermarkerTest extends TestCase {
 	 * A truncated upload reaches the renderer: the MIME type is read from the first bytes, so
 	 * `engineForMime()` sees a PNG and hands it to GD, which cannot decode it and answers
 	 * false. That handle used to be passed straight to `imagesx()`, `imagettftext()` and
-	 * `imagepng()` — a run of warnings ending in an output file that is not an image. The
+	 * `imagepng()` - a run of warnings ending in an output file that is not an image. The
 	 * failure has to be named, because this is the path an interrupted upload takes.
 	 */
 	public function testTruncatedSourceImageIsRefusedByName(): void {
@@ -146,7 +146,7 @@ class ImageWatermarkerTest extends TestCase {
 	/**
 	 * The logo is the half that can be dropped: an unreadable one has always been skipped
 	 * when its *type* was unsupported, and a corrupt file of a supported type now takes the
-	 * same route rather than compositing a false handle. The text still has to arrive — a
+	 * same route rather than compositing a false handle. The text still has to arrive - a
 	 * `combined` policy that silently produced an unwatermarked file would be the worst of
 	 * the three outcomes.
 	 */
@@ -175,8 +175,8 @@ class ImageWatermarkerTest extends TestCase {
 	/**
 	 * The regression test for tiles landing on top of each other.
 	 *
-	 * The image renderer used to step a fixed grid — `max(210, fontSize * 10)` across —
-	 * that never measured the text, so the *default* `{username} — {date}` template
+	 * The image renderer used to step a fixed grid - `max(210, fontSize * 10)` across -
+	 * that never measured the text, so the *default* `{username} - {date}` template
 	 * already ran 30px into its neighbour at the default font size, and a realistic name
 	 * with a timestamp overran by 329px, straight through the tile beyond it.
 	 *
@@ -216,8 +216,8 @@ class ImageWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * Type size drives the lattice as well as the glyphs — the gap between repetitions
-	 * scales with it — so a larger font means larger text in *fewer*, more widely spaced
+	 * Type size drives the lattice as well as the glyphs - the gap between repetitions
+	 * scales with it - so a larger font means larger text in *fewer*, more widely spaced
 	 * tiles. Total ink is therefore not monotonic in font size, and this used to assert
 	 * that it was: under the old fixed grid the tile count barely moved (12 tiles at both
 	 * 12pt and 20pt on a 600×400 image), so bigger type could only mean more ink. It now
@@ -268,7 +268,7 @@ class ImageWatermarkerTest extends TestCase {
 	}
 
 	public function testRotationChangesOutput(): void {
-		// GD is the default engine, and its bitmap-font fallback cannot rotate at all — so a
+		// GD is the default engine, and its bitmap-font fallback cannot rotate at all - so a
 		// host with no TrueType font cannot exercise rotation, whether or not Imagick is
 		// installed. Before GD became the default, Imagick's presence was enough.
 		if ($this->findSystemFont() === null) {
@@ -296,7 +296,7 @@ class ImageWatermarkerTest extends TestCase {
 	 * An image carries no text, so there is no glyph list to read back the way
 	 * {@see PdfWatermarkerTest::testArabicIsDrawnAsShapedGlyphs} reads one. The assertion
 	 * has to come from pixels, and it has to be one that *only* a shaping renderer can
-	 * satisfy — "the output changed" is not, because unshaped Arabic renders differently
+	 * satisfy - "the output changed" is not, because unshaped Arabic renders differently
 	 * too, just wrongly.
 	 *
 	 * The discriminator uses shaping's own non-idempotency. A second pass reads visual
@@ -352,7 +352,7 @@ class ImageWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * The shaped form is narrower than the raw one — lam-alef fuses two letters into one
+	 * The shaped form is narrower than the raw one - lam-alef fuses two letters into one
 	 * glyph and joined letters overlap where isolated ones do not. That difference is what
 	 * the tile lattice is spaced from, so measuring the unshaped string would leave gaps.
 	 */
@@ -458,7 +458,7 @@ class ImageWatermarkerTest extends TestCase {
 
 	/**
 	 * Imagick is an alternative engine, not dead code: where it is installed it must still
-	 * watermark, and its output must be interchangeable with GD's — same dimensions, same
+	 * watermark, and its output must be interchangeable with GD's - same dimensions, same
 	 * format, ink actually drawn. The two are not pixel-identical by design, so the assertion
 	 * is on equivalence rather than on a checksum.
 	 */
@@ -484,8 +484,8 @@ class ImageWatermarkerTest extends TestCase {
 
 	/**
 	 * GD announces a file it cannot decode twice over: an E_WARNING as well as a false
-	 * return. The warning is GD's and is not what the two tests above are about — they are
-	 * about what the app does with the return value — so it is swallowed here rather than
+	 * return. The warning is GD's and is not what the two tests above are about - they are
+	 * about what the app does with the return value - so it is swallowed here rather than
 	 * left to litter every run.
 	 */
 	private function withImageWarningsSilenced(callable $fn): void {
@@ -564,7 +564,7 @@ class ImageWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * Longest unbroken horizontal run of inked pixels — a proxy for how physically large
+	 * Longest unbroken horizontal run of inked pixels - a proxy for how physically large
 	 * the drawn glyphs are, which total ink no longer is now that the tile count falls as
 	 * the type size rises.
 	 */

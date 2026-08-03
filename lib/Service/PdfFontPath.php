@@ -17,7 +17,7 @@ namespace OCA\FilesWatermark\Service;
  * rather than lazily at draw time.
  *
  * Guarded with `defined()` because a constant cannot be redefined and another app on the
- * same server may have got there first — in which case that app's directory wins and
+ * same server may have got there first - in which case that app's directory wins and
  * fonts silently come from elsewhere. {@see isUsingOwnFonts()} is how the renderer
  * notices instead of failing obscurely later.
  *
@@ -25,7 +25,7 @@ namespace OCA\FilesWatermark\Service;
  * constant and looked for `helvetica.php` where tc-lib-pdf looks for `helvetica.json`, so
  * while both stacks coexisted the directory had to carry both formats, and the path had to
  * end in a separator because TCPDF concatenated it with the filename directly. Neither
- * applies now — tc-lib-pdf joins with `DIRECTORY_SEPARATOR` itself.
+ * applies now - tc-lib-pdf joins with `DIRECTORY_SEPARATOR` itself.
  */
 final class PdfFontPath {
 
@@ -49,7 +49,7 @@ final class PdfFontPath {
 	/**
 	 * Whether the constant actually points at this app's fonts. False means another app
 	 * defined it first, so `helvetica.json` will not be found and text rendering will
-	 * throw — worth logging rather than leaving as a mystery.
+	 * throw - worth logging rather than leaving as a mystery.
 	 */
 	public static function isUsingOwnFonts(): bool {
 		if (!defined(self::CONSTANT)) {

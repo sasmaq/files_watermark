@@ -9,7 +9,7 @@ use OCP\DB\ISchemaWrapper;
 /**
  * The slice of {@see ISchemaWrapper} the migrations actually touch.
  *
- * Doctrine is not a dependency of this app — Nextcloud supplies it at runtime — so the
+ * Doctrine is not a dependency of this app - Nextcloud supplies it at runtime - so the
  * real schema objects are unavailable in unit tests. The interface has to be implemented
  * rather than duck-typed, because `changeSchema()` declares `?ISchemaWrapper` as its
  * return type; the methods no migration here calls throw instead of pretending.
@@ -29,14 +29,14 @@ class FakeSchema implements ISchemaWrapper {
 	 *
 	 * This is the fidelity that makes the convergence test worth having. An earlier
 	 * version of this fake replaced the table silently, and a mutation removing the
-	 * `hasTable()` guard from the migration passed every test — the recreated table
+	 * `hasTable()` guard from the migration passed every test - the recreated table
 	 * happened to have the right columns, so nothing noticed that a real upgrade would
 	 * have aborted.
 	 */
 	public function createTable($tableName): FakeTable {
 		if (isset($this->tables[$tableName])) {
 			throw new \RuntimeException(
-				"table already exists: $tableName — the migration is missing a hasTable() guard",
+				"table already exists: $tableName - the migration is missing a hasTable() guard",
 			);
 		}
 		return $this->tables[$tableName] = new FakeTable();

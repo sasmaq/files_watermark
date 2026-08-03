@@ -114,7 +114,7 @@ public function register(IRegistrationContext $context): void {
         return new AuthorService($c->get(AuthorMapper::class));
     });
 
-    // Interfaces & primitives can't be auto-wired — register explicitly:
+    // Interfaces & primitives can't be auto-wired - register explicitly:
     $context->registerParameter('TableName', 'my_app_table');
     $context->registerServiceAlias(IAuthorMapper::class, AuthorMapper::class);
 }
@@ -192,11 +192,11 @@ public function process(int $id, bool $doMore, float $value): DataResponse { /* 
 
 ### Security attributes
 
-- `#[NoAdminRequired]` — allow non-admin logged-in users
-- `#[PublicPage]` — allow unauthenticated access
-- `#[NoCSRFRequired]` — skip CSRF token check (needed for non-browser API calls)
-- `#[NoTwoFactorRequired]` — bypass 2FA
-- `#[UseSession]` — keep the PHP session open for writes
+- `#[NoAdminRequired]` - allow non-admin logged-in users
+- `#[PublicPage]` - allow unauthenticated access
+- `#[NoCSRFRequired]` - skip CSRF token check (needed for non-browser API calls)
+- `#[NoTwoFactorRequired]` - bypass 2FA
+- `#[UseSession]` - keep the PHP session open for writes
 
 ### Rate limiting & brute-force protection
 
@@ -302,8 +302,8 @@ $this->dispatcher->dispatchTyped(new UserCreatedEvent($user));
 
 Two job types extend `OCP\BackgroundJob\Job`:
 
-- **`TimedJob`** — recurring; call `setInterval(seconds)`.
-- **`QueuedJob`** — one-shot, triggered by code.
+- **`TimedJob`** - recurring; call `setInterval(seconds)`.
+- **`QueuedJob`** - one-shot, triggered by code.
 
 ```php
 namespace OCA\MyApp\BackgroundJob;
@@ -347,9 +347,9 @@ $this->jobList->scheduleAfter(RevokeShare::class, $args, $timestamp);
 
 Three cache tiers via `OCP\ICacheFactory`:
 
-- `createInMemory()` — per-request memory cache.
-- `createLocal()` — local server cache (APCu).
-- `createDistributed()` — shared across servers (Redis/Memcached).
+- `createInMemory()` - per-request memory cache.
+- `createLocal()` - local server cache (APCu).
+- `createDistributed()` - shared across servers (Redis/Memcached).
 
 ```php
 $cache = $this->cacheFactory->createDistributed('myapp');
@@ -382,7 +382,7 @@ use function OCP\Log\logger;
 logger('myapp')->warning('no DI here');
 ```
 
-**Admin audit log** — emit a critical-action event:
+**Admin audit log** - emit a critical-action event:
 
 ```php
 use OCP\Log\Audit\CriticalActionPerformedEvent;
@@ -549,7 +549,7 @@ class AuthorServiceTest extends \Test\TestCase {
     private $container;
 
     protected function setUp(): void {
-        parent::setUp();                      // REQUIRED — sets up env + cleanup
+        parent::setUp();                      // REQUIRED - sets up env + cleanup
         $app = new \OCA\MyApp\AppInfo\Application();
         $this->container = $app->getContainer();
     }

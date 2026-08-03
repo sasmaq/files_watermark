@@ -4,14 +4,14 @@
  * Everything else in this suite talks to the API the page talks to, which proves the
  * server and proves nothing about the page: a form that fails to mount, loses the
  * stored policy on reload, or posts a field the server rejects is invisible to all of
- * it. So this spec only asserts things that require a browser — that the Vue app
+ * it. So this spec only asserts things that require a browser - that the Vue app
  * mounts into the server-rendered section, that a saved policy comes back on reload,
  * and that the live preview shows the text an admin is approving.
  *
  * Elements are asserted to *exist* rather than to be visible, and interactions are
  * forced. Nextcloud's settings layout puts the content in a `position: fixed`
  * scrolling ancestor, which Cypress's visibility rule reports as hidden however far
- * the page is scrolled — asserting visibility here would be testing the harness's
+ * the page is scrolled - asserting visibility here would be testing the harness's
  * opinion of the layout, not the app.
  */
 

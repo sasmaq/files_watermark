@@ -7,9 +7,9 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 /**
  * Builds a PDF whose page declares no `/Resources` and inherits none.
  *
- * That is legal — `/Resources` is required only in the sense that a page's content
+ * That is legal - `/Resources` is required only in the sense that a page's content
  * cannot name what is not there, and a page drawing nothing but paths needs no font,
- * image or graphics state — and it is what tc-lib-pdf's import turns into a Form
+ * image or graphics state - and it is what tc-lib-pdf's import turns into a Form
  * XObject with a `/Resources` entry that has **no value at all**. See
  * {@see \OCA\FilesWatermark\Service\PdfWatermarker::repairEmptyFormResources()} for
  * what that does to the rest of the dictionary.
@@ -22,7 +22,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 trait ResourcelessPageFixture {
 
 	/**
-	 * A one-page PDF drawing a filled rectangle — content that names no resource —
+	 * A one-page PDF drawing a filled rectangle - content that names no resource -
 	 * on a page with no `/Resources` key and a `/Pages` node that has none to inherit.
 	 *
 	 * The content stream is **compressed**, which is what makes the consequence

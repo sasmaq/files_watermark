@@ -8,7 +8,7 @@ const zlib = require('zlib')
  * field, and a watermark is ink on it. `inkRatio` is the fraction of pixels that
  * differ from the image's own corner pixel, which is what "something was drawn"
  * means for a tiled watermark and what "nothing was drawn" means for a clean
- * original — the failure that "the file changed" would happily pass.
+ * original - the failure that "the file changed" would happily pass.
  *
  * Dimensions come back too: the renderer must not resize what it stamps.
  */

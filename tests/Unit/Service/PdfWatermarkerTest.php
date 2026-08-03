@@ -48,14 +48,14 @@ class PdfWatermarkerTest extends TestCase {
 	 *
 	 * A source page whose visible area is a `/CropBox` offset from the origin was imported
 	 * without that offset being cancelled. The new page is created at the box's *size* with
-	 * its origin at (0, 0), but the imported form keeps the source's coordinates — so
+	 * its origin at (0, 0), but the imported form keeps the source's coordinates - so
 	 * content living at x≥300 was drawn at x≥300 on a page only 312 wide, i.e. off the
 	 * right-hand edge. Measured before the fix: **2% of the content still on the page** for
 	 * a `[300 300 612 792]` crop, and none of it once the page was also rotated.
 	 *
 	 * That failure is invisible to every cheaper check. The output is a valid PDF of the
 	 * right page count, the image bytes are still in the file, and the watermark itself
-	 * renders perfectly — the original content is simply drawn where nothing can see it.
+	 * renders perfectly - the original content is simply drawn where nothing can see it.
 	 * So this asserts on *geometry*: where the imported form actually lands once its own
 	 * matrix and its placement are composed. See
 	 * {@see CroppedPageFixture::visibleFractionOfImportedPage()}.
@@ -96,7 +96,7 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * Arabic reaches the page as shaped, reordered glyphs — asserted against the bytes the
+	 * Arabic reaches the page as shaped, reordered glyphs - asserted against the bytes the
 	 * PDF actually carries, not against the file being valid.
 	 *
 	 * A PDF full of `?` is a valid PDF of the right page count with a watermark on every
@@ -134,7 +134,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * because **this renderer does its own Bidi**: `getTextCell()` builds a `Bidi` internally
 	 * from the logical string, so it reaches the rule N1 defect
 	 * (`patches/patch-tc-lib-unicode-bidi-n1.php`) by a different route than
-	 * {@see ShapedText::shape()} does. Unpatched, this drew `Doe John - سري` — the watermark
+	 * {@see ShapedText::shape()} does. Unpatched, this drew `Doe John - سري` - the watermark
 	 * naming the wrong person, in the format most likely to be handed to a court.
 	 */
 	public function testLatinNameKeepsItsOrderInsideAnArabicLine(): void {
@@ -152,7 +152,7 @@ class PdfWatermarkerTest extends TestCase {
 		));
 
 		$this->assertSame('John Doe - ', $ascii, 'the two words of the name must not swap');
-		// The Arabic half must still be there, shaped — a fix that dropped it would satisfy
+		// The Arabic half must still be there, shaped - a fix that dropped it would satisfy
 		// the assertion above.
 		$this->assertSame(
 			$this->codepointsOf(ShapedText::shape('سري - John Doe')),
@@ -186,7 +186,7 @@ class PdfWatermarkerTest extends TestCase {
 			// The subset prefix ("AAAAAB+") varies, so match the family rather than the
 			// whole name. The source fixture draws its own text in Helvetica, which is why
 			// this looks for the watermark's face being present rather than Helvetica being
-			// absent — the imported page legitimately carries it.
+			// absent - the imported page legitimately carries it.
 			$this->assertMatchesRegularExpression(
 				'#/BaseFont\s*/[A-Z]{6}\+IBMPlexSansArabic#',
 				$pdf,
@@ -227,7 +227,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * The code points of the first text-showing run in the file.
 	 *
 	 * The embedded face is written with two-byte code units, so the operand of `Tj` is the
-	 * shaped text verbatim — which is what makes this assertable at all.
+	 * shaped text verbatim - which is what makes this assertable at all.
 	 *
 	 * @return list<int>
 	 */
@@ -253,7 +253,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * `$text` as the embedded face writes it: two bytes per code unit.
 	 *
 	 * Every watermark now draws through an embedded Unicode font, so even pure ASCII no
-	 * longer appears as ASCII in the content stream — `Alice` is `\0A\0l\0i\0c\0e`.
+	 * longer appears as ASCII in the content stream - `Alice` is `\0A\0l\0i\0c\0e`.
 	 */
 	private function utf16be(string $text): string {
 		return (string)mb_convert_encoding($text, 'UTF-16BE', 'UTF-8');
@@ -273,7 +273,7 @@ class PdfWatermarkerTest extends TestCase {
 		$dest = $this->tmpDir . '/text.pdf';
 
 		$config = $this->makeConfig('text');
-		$config->setTextTemplate('{username} — {date}');
+		$config->setTextTemplate('{username} - {date}');
 
 		$this->watermarker->apply($source, $dest, $config, [
 			'username' => 'Alice',
@@ -309,7 +309,7 @@ class PdfWatermarkerTest extends TestCase {
 		$dest = $this->tmpDir . '/combined.pdf';
 
 		$config = $this->makeConfig('combined');
-		$config->setTextTemplate('Confidential — {username}');
+		$config->setTextTemplate('Confidential - {username}');
 		$config->setImagePath($logo);
 
 		$this->watermarker->apply($source, $dest, $config, ['username' => 'Bob']);
@@ -320,13 +320,13 @@ class PdfWatermarkerTest extends TestCase {
 
 	public function testLongWatermarkTextRendersWithoutError(): void {
 		// Note: this asserts only that a long string renders at all. The geometry
-		// it was originally written to protect is pinned by the tile tests below —
+		// it was originally written to protect is pinned by the tile tests below -
 		// producing a valid PDF was never evidence that the tiles were legible.
 		$source = $this->createSourcePdf(1);
 		$dest = $this->tmpDir . '/long.pdf';
 
 		$config = $this->makeConfig('text');
-		$config->setTextTemplate('{username} — Confidential — {date} — Do Not Distribute');
+		$config->setTextTemplate('{username} - Confidential - {date} - Do Not Distribute');
 
 		$this->watermarker->apply($source, $dest, $config, [
 			'username' => 'Alexandra Featherstonehaugh',
@@ -343,7 +343,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * Pins the spacing invariant: no tile may encroach on its neighbours in the
 	 * text's own frame, whatever angle the user picks.
 	 *
-	 * This is a guard, not the regression test for the smear — the old row/column
+	 * This is a guard, not the regression test for the smear - the old row/column
 	 * spacing satisfied it too. What actually collided is covered by
 	 * {@see testOffPageTilesKeepTheirNegativeOffsets}.
 	 *
@@ -425,11 +425,11 @@ class PdfWatermarkerTest extends TestCase {
 	 * The regression test for the smear, and the reason the tile lattice must not be
 	 * touched by a renderer change.
 	 *
-	 * The original bug was TCPDF-specific — it read a negative `SetX`/`SetY` as an
+	 * The original bug was TCPDF-specific - it read a negative `SetX`/`SetY` as an
 	 * offset from the *opposite* page edge, so tiles meant to hang off the top or left
 	 * were teleported to the bottom or right and piled onto the tiles already there.
 	 * tc-lib-pdf has no such special case: positions are matrix operands. That is a
-	 * claim about the new stack, so it is asserted rather than assumed — the negative
+	 * claim about the new stack, so it is asserted rather than assumed - the negative
 	 * offsets still have to reach the page, or the margins go uncovered exactly as
 	 * before.
 	 *
@@ -470,7 +470,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * The contract that has to survive is the one the settings live preview shows: a
 	 * positive rotation tilts the text **uphill**, reading up and to the right. In the
 	 * emitted matrix `[a b c d tx ty]` that means the text's own x-axis, `(a, b)`, must
-	 * point right and *up* — both positive — since PDF y increases upwards.
+	 * point right and *up* - both positive - since PDF y increases upwards.
 	 *
 	 * Get the sign wrong and every watermark tilts the opposite way to the preview the
 	 * admin configured it with, which no other assertion here would catch.
@@ -507,7 +507,7 @@ class PdfWatermarkerTest extends TestCase {
 				0,
 				$b,
 				'a positive rotation must tilt the text uphill; a negative b means it '
-				. 'reads downhill, i.e. mirrored against the settings preview',
+					. 'reads downhill, i.e. mirrored against the settings preview',
 			);
 		}
 	}
@@ -528,7 +528,7 @@ class PdfWatermarkerTest extends TestCase {
 	/**
 	 * The text's own axes in page coordinates: the direction it reads, and that
 	 * turned 90°. A positive rotation reads counter-clockwise while the page's y
-	 * runs downwards, hence the negated sine — the same convention
+	 * runs downwards, hence the negated sine - the same convention
 	 * `tilePositions()` builds its lattice in, and unchanged by the move off TCPDF.
 	 *
 	 * @return array{array{float, float}, array{float, float}}
@@ -573,7 +573,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * file used to assert.
 	 *
 	 * PDF 1.5+ documents that store their cross-reference table as a compressed stream
-	 * were **skipped entirely** under FPDI, whose free parser refuses them — not an
+	 * were **skipped entirely** under FPDI, whose free parser refuses them - not an
 	 * exotic case, since two of the three skeleton PDFs Nextcloud drops into every new
 	 * account are such files, so it was the first thing many admins tried. Then they
 	 * worked only where `qpdf` was installed to rewrite them first.
@@ -607,7 +607,7 @@ class PdfWatermarkerTest extends TestCase {
 
 	/**
 	 * The fixture has to keep reproducing the case it is named after, or the test above
-	 * proves nothing at all — a fixture that quietly became an ordinary PDF 1.4 file
+	 * proves nothing at all - a fixture that quietly became an ordinary PDF 1.4 file
 	 * would sail through and assert only that the renderer can read easy documents.
 	 *
 	 * This used to be pinned by feeding the fixture to FPDI and catching its
@@ -624,7 +624,7 @@ class PdfWatermarkerTest extends TestCase {
 			'/Type /XRef',
 			$fixture,
 			'the fixture no longer contains a cross-reference stream, so it no longer '
-			. 'reproduces the case this suite exists to cover',
+				. 'reproduces the case this suite exists to cover',
 		);
 		// A classic table is the token `xref` alone on its own line. Matching the bare
 		// word instead would hit the fixture's own page text ("Compressed xref
@@ -640,8 +640,8 @@ class PdfWatermarkerTest extends TestCase {
 	 * A page with no resources must still come out as a *readable* form dictionary.
 	 *
 	 * This is the "the watermark deleted my content" case. tc-lib-pdf writes the imported
-	 * page's dictionary with `sprintf` and its resource cloner returns an empty string —
-	 * not `<< >>` — when a page resolves to no resources, so the dictionary reads
+	 * page's dictionary with `sprintf` and its resource cloner returns an empty string -
+	 * not `<< >>` - when a page resolves to no resources, so the dictionary reads
 	 * `/Resources /Group << … >> /Filter /FlateDecode`: `/Resources` swallows `/Group`,
 	 * the group dictionary stands where a key belongs, and **every entry after it pairs
 	 * with the wrong name**. `/Filter` is one of them, so a reader takes deflate bytes for
@@ -666,7 +666,7 @@ class PdfWatermarkerTest extends TestCase {
 			'<<',
 			$form['Resources'],
 			'/Resources holds a name instead of a dictionary, so it has swallowed the '
-			. 'entry that follows it',
+				. 'entry that follows it',
 		);
 
 		// The entry that actually costs the user their content: with the value missing,
@@ -697,7 +697,7 @@ class PdfWatermarkerTest extends TestCase {
 	 * The imported page's Form XObject dictionary, as a reader sees it: keys in order,
 	 * mapped to the token that follows each one.
 	 *
-	 * Deliberately a flat token pairing rather than a parsed structure — the defect being
+	 * Deliberately a flat token pairing rather than a parsed structure - the defect being
 	 * pinned *is* a key/value misalignment, and a parser that helpfully re-pairs the
 	 * entries would hide it.
 	 *
@@ -749,8 +749,8 @@ class PdfWatermarkerTest extends TestCase {
 	 * partial failure here would deliver a half-written document.
 	 *
 	 * Both fixtures matter. A real user password is protection the app has no business
-	 * bypassing. An **empty** user password is not protection at all — it only sets
-	 * permission flags, and a reader opens the file without ever prompting — but it is
+	 * bypassing. An **empty** user password is not protection at all - it only sets
+	 * permission flags, and a reader opens the file without ever prompting - but it is
 	 * refused just the same, because the parser declines every encrypted document.
 	 * That case used to be rescued by shelling out to `qpdf --decrypt`; removing the
 	 * external binaries removed the rescue with it, which is the trade this test pins.

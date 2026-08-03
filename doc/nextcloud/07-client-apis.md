@@ -17,18 +17,18 @@ events, Login Flow, Activity, and Remote Wipe.
 
 ## OCS API
 
-Open Collaboration Services — REST-ish endpoints under
+Open Collaboration Services - REST-ish endpoints under
 `/ocs/v1.php/...` (legacy) or `/ocs/v2.php/...` (preferred). Apps expose their own OCS
 endpoints via `OCSController` + an `ocs` block in `routes.php`
 (see [02-basic-concepts.md](02-basic-concepts.md#routing)).
 
 Built-in OCS surfaces include:
 
-- **Sharing** — `/ocs/v2.php/apps/files_sharing/api/v1/shares` (create/list/update/delete
+- **Sharing** - `/ocs/v2.php/apps/files_sharing/api/v1/shares` (create/list/update/delete
   shares; public links, user/group shares, permissions, expiration).
-- **User preferences / provisioning** — `/ocs/v2.php/cloud/users`, `/cloud/user`.
-- **Capabilities** — `/ocs/v2.php/cloud/capabilities` (feature/version discovery).
-- **Text processing, translation, search, task processing** — AI and unified-search
+- **User preferences / provisioning** - `/ocs/v2.php/cloud/users`, `/cloud/user`.
+- **Capabilities** - `/ocs/v2.php/cloud/capabilities` (feature/version discovery).
+- **Text processing, translation, search, task processing** - AI and unified-search
   endpoints.
 
 Example (create a public share):
@@ -44,7 +44,7 @@ curl -u user:app-password \
 
 File access lives under `/remote.php/dav/`:
 
-- **Files:** `/remote.php/dav/files/<userid>/<path>` — GET/PUT/DELETE/MKCOL/MOVE/COPY,
+- **Files:** `/remote.php/dav/files/<userid>/<path>` - GET/PUT/DELETE/MKCOL/MOVE/COPY,
   PROPFIND/PROPPATCH for properties (including `nc:metadata-*`, see
   [05-digging-deeper.md](05-digging-deeper.md#files-metadata)).
 - **Chunked / bulk upload** for large files.
@@ -81,7 +81,7 @@ Obtain an app password without exposing the user's real credentials:
 ## Activity
 
 The Activity app exposes a feed via OCS
-(`/ocs/v2.php/apps/activity/api/v2/activity`) — list recent events (filters, since/limit),
+(`/ocs/v2.php/apps/activity/api/v2/activity`) - list recent events (filters, since/limit),
 useful for clients showing a timeline.
 
 ## Remote Wipe

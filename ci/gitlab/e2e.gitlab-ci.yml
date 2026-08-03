@@ -1,18 +1,18 @@
-# E2E job — the GitLab equivalent of .github/workflows/e2e.yml.
+# E2E job - the GitLab equivalent of .github/workflows/e2e.yml.
 #
 # **This one cannot run in a container.** It brings up `docker-compose.yml`, which
 # bind-mounts the checkout into Nextcloud's `custom_apps/`; a bind mount issued from
 # inside a container job (including one talking to docker:dind) resolves against the
-# *daemon's* filesystem, not the job's, so the mount silently lands on the wrong — or an
-# empty — directory and every spec fails on a missing app. The Jenkinsfile runs its E2E
+# *daemon's* filesystem, not the job's, so the mount silently lands on the wrong - or an
+# empty - directory and every spec fails on a missing app. The Jenkinsfile runs its E2E
 # stage on the agent itself for exactly this reason.
 #
 # So it needs a **shell runner** on a host with `php`, `composer`, `node`, `npm` and
 # `docker compose` on PATH, and port 8080 free while it runs.
 #
 # It is therefore opt-in: set the CI/CD variable `E2E_RUNNER_TAG` to that runner's tag
-# and the job appears. Left unset — the default, and the only sane one on shared runners
-# — the job does not exist, rather than sitting pending forever waiting for a runner that
+# and the job appears. Left unset - the default, and the only sane one on shared runners
+# - the job does not exist, rather than sitting pending forever waiting for a runner that
 # will never pick it up.
 
 e2e:cypress:
@@ -48,7 +48,7 @@ e2e:cypress:
       exit 1
     - docker compose exec -T -u www-data nextcloud php occ app:enable files_watermark
     # Core allows 20 shares per 10 minutes per user, and this suite rebuilds its
-    # fixtures — users, folders, shares — on every run, which legitimately looks like
+    # fixtures - users, folders, shares - on every run, which legitimately looks like
     # abuse. Two runs inside the window exhaust the budget and the share specs fail in
     # their setup with an empty 429. Off on a throwaway test instance only.
     - >
@@ -57,7 +57,7 @@ e2e:cypress:
     - npm run test:e2e
   after_script:
     # The instance's own log is the only account of a server-side failure, and the
-    # containers go either way — a leftover stack would block the next run's port 8080.
+    # containers go either way - a leftover stack would block the next run's port 8080.
     - if [ "$CI_JOB_STATUS" != "success" ]; then docker compose exec -T nextcloud tail -n 200 /var/www/html/data/nextcloud.log || true; fi
     - docker compose down -v || true
   artifacts:

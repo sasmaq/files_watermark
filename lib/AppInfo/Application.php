@@ -30,11 +30,11 @@ class Application extends App implements IBootstrap {
 	/**
 	 * The only vendor/ packages the app needs while running inside Nextcloud.
 	 * Everything else there is dev-only (phpunit, php-cs-fixer, sabre/dav, ...)
-	 * and must stay invisible to the runtime — see registerVendorAutoloader().
+	 * and must stay invisible to the runtime - see registerVendorAutoloader().
 	 *
 	 * Every transitive dependency has to be listed, not just the two packages named
 	 * in `composer.json`, because this allowlist is what the runtime loader is built
-	 * from — a missing entry is a "Class not found" fatal that only appears inside
+	 * from - a missing entry is a "Class not found" fatal that only appears inside
 	 * Nextcloud, never in the test suite, which uses Composer's own autoloader.
 	 * `RuntimeVendorPackagesTest` guards that drift in both directions, and it is
 	 * what caught these entries outliving FPDI and TCPDF.
@@ -65,14 +65,14 @@ class Application extends App implements IBootstrap {
 
 		// Claimed during app bootstrap, before anything can touch the renderer.
 		// K_PATH_FONTS is a global constant and cannot be redefined, so whoever
-		// defines it first wins — see PdfFontPath.
+		// defines it first wins - see PdfFontPath.
 		PdfFontPath::register();
 	}
 
 	/**
 	 * Make the bundled third-party libraries (the tc-lib-pdf stack) loadable at
 	 * runtime. Nextcloud autoloads OCA\FilesWatermark\ classes from lib/, but not
-	 * the vendor/ dependencies — without this, using the PDF watermarker throws
+	 * the vendor/ dependencies - without this, using the PDF watermarker throws
 	 * "Class Com\Tecnick\Pdf\Tcpdf not found" (a fatal Error → HTTP 500).
 	 *
 	 * Deliberately *not* `require vendor/autoload.php`: Composer registers that
@@ -138,7 +138,7 @@ class Application extends App implements IBootstrap {
 		// `files` entry, while the dev ones do (phpunit's global assertion functions,
 		// sabre's helpers) and those must not be pulled in.
 
-		// register() appends. Never prepend — that is what caused the shadowing.
+		// register() appends. Never prepend - that is what caused the shadowing.
 		$loader->register();
 	}
 
@@ -147,11 +147,11 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
 		$context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
 		// Public links are served by a *separate* Sabre server that never fires
-		// SabrePluginAddEvent — it needs its own registration to be watermarked.
+		// SabrePluginAddEvent - it needs its own registration to be watermarked.
 		$context->registerEventListener(BeforeSabrePubliclyLoadedEvent::class, SabrePublicPluginAddListener::class);
 		$context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
 		// A share is created from a path through the Files API, so it never passes the DAV
-		// guard that hides the preserved originals — this is what keeps one from being
+		// guard that hides the preserved originals - this is what keeps one from being
 		// handed out through a public link.
 		$context->registerEventListener(BeforeShareCreatedEvent::class, ShareGuardListener::class);
 	}

@@ -17,7 +17,7 @@ const SUPPORTED_MIME = [
 
 // WebDAV property served by our PROPFIND plugin. Requesting it here makes the Files
 // client fetch it with every listing, so a node carries its watermarked status by
-// the time its row renders — letting `enabled()` decide synchronously on the first
+// the time its row renders - letting `enabled()` decide synchronously on the first
 // (and, in Nextcloud, memoized) evaluation instead of racing an async lookup.
 const DAV_WATERMARKED_PROP = 'is-watermarked'
 registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns' })
@@ -25,7 +25,7 @@ registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns
 /**
  * Whether a Files `Node` is already watermarked, read from the WebDAV property
  * delivered with the listing. The plugin returns '1' for watermarked, '0' otherwise
- * — but the webdav client parses tag values (`parseTagValue: true`), so the value
+ * - but the webdav client parses tag values (`parseTagValue: true`), so the value
  * reaches us as the *number* 1/0, not a string. Accept both to be safe.
  * @param {object} node - a Files `Node`
  * @return {boolean} true when the node is marked watermarked
@@ -96,7 +96,7 @@ export function isSingleSupportedFile(files) {
  * WebDAV property PROPFIND delivers with the listing, OR the badge id-set (which
  * also holds files just watermarked via `markWatermarked` and any folded in by the
  * REST reconcile). So whenever a file shows the indicator, its Apply action is
- * hidden — even in the window where the node's DAV attribute is still stale.
+ * hidden - even in the window where the node's DAV attribute is still stale.
  * @param {object[]} files - selected Files `Node` objects
  * @return {boolean} true when the action should be shown
  */
@@ -131,15 +131,15 @@ export function isRemoveActionEnabled(files) {
 // Small badge SVG (distinct from the action icon: a filled tag/seal mark).
 const INDICATOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z"/></svg>'
 
-// Inline content of img/app.svg — a filled document with a watermark droplet
+// Inline content of img/app.svg - a filled document with a watermark droplet
 // knocked out via the even-odd rule. `fill="currentColor"` lets it inherit the
 // menu text colour (Nextcloud's `.icon-vue svg { fill: currentColor }` rule).
 const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm6 7c-1.6 2-3 4.3-3 6a3 3 0 0 0 6 0c0-1.7-1.4-4-3-6Z"/></svg>'
 
 /**
  * Mounts WatermarkModal and returns a Promise that resolves with:
- *   true  — watermark was applied successfully
- *   null  — user cancelled before applying
+ *   true  - watermark was applied successfully
+ *   null  - user cancelled before applying
  *
  * Keeping exec() awaiting this Promise lets Nextcloud Files show a spinner
  * on the file row and auto-refresh the file when exec resolves with true.
@@ -182,7 +182,7 @@ registerFileAction(new FileAction({
 	id: 'files_watermark_apply',
 	// Nextcloud uses `title` as the menu label when present and only falls back
 	// to `displayName`, so the action name lives in `displayName` with no
-	// `title` — otherwise the long description would show as the button text.
+	// `title` - otherwise the long description would show as the button text.
 	displayName: () => t('files_watermark', 'Apply watermark'),
 	iconSvgInline: () => APP_ICON_SVG,
 	enabled: isApplyActionEnabled,
@@ -190,7 +190,7 @@ registerFileAction(new FileAction({
 		const result = await mountModal(file.path, file.basename, file.size ?? 0)
 		// The file was just watermarked, so record its id ourselves and redraw the
 		// badge. We can't rely on the post-exec node refresh to re-deliver our custom
-		// `is-watermarked` DAV property — it often doesn't — which is why the badge
+		// `is-watermarked` DAV property - it often doesn't - which is why the badge
 		// used to be missing right after an apply. The set persists across the row's
 		// re-render, so the observer keeps the badge painted afterwards.
 		if (result === true) {
@@ -209,14 +209,14 @@ registerFileAction(new FileAction({
 	},
 }))
 
-// Undo/restore icon — a counter-clockwise arrow over a document, deliberately distinct
+// Undo/restore icon - a counter-clockwise arrow over a document, deliberately distinct
 // from the Apply action's icon so the two are not confused in the menu.
 const RESTORE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3Zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8H12Z"/></svg>'
 
 /**
  * Mounts RemoveWatermarkModal and returns a Promise that resolves with:
- *   true  — original was restored
- *   null  — user cancelled
+ *   true  - original was restored
+ *   null  - user cancelled
  * @param {string} filePath - Path of the file to restore
  * @param {string} fileName - Display name shown in the modal
  * @return {Promise<boolean|null>} true when restored, null when cancelled
@@ -277,7 +277,7 @@ registerFileAction(new FileAction({
 // both list AND grid view: `inline` actions are drawn by NcActions with
 // `force-name`, so they show a text label, and `renderInline` custom elements are
 // list-view only (`gridMode ? [] : …`). So the badge is drawn directly onto the
-// row/tile icon — `.files-list__row-icon`, the one element present in both views —
+// row/tile icon - `.files-list__row-icon`, the one element present in both views -
 // driven entirely by the WebDAV `is-watermarked` property the listing already
 // carries. No extra HTTP lookup, no text, works in grid.
 
@@ -345,7 +345,7 @@ export function unmarkWatermarked(id) {
 
 /**
  * Fallback status lookup for a listing whose nodes carry NO `is-watermarked`
- * attribute at all — which happens when our DAV property was registered after the
+ * attribute at all - which happens when our DAV property was registered after the
  * Files app built its initial PROPFIND (a hard-refresh race), so the property is
  * simply missing rather than present-and-false. For those ids only, ask the REST
  * endpoint and fold any watermarked ones into the set. A present-but-0 value is
@@ -383,7 +383,7 @@ export async function reconcileMissingStatus(nodes) {
 				watermarkedIds.add(id)
 				changed = true
 				// The Apply action's enabled() was already evaluated (and memoized by
-				// Nextcloud) as true for this node during the initial render — because
+				// Nextcloud) as true for this node during the initial render - because
 				// the DAV property was missing at that point. Stamp the now-known status
 				// onto the node and emit a node update so the action re-evaluates to
 				// false and the button disappears; without this it lingers until the
@@ -456,7 +456,7 @@ export function decorateRows(root = document) {
  * scroller and view switches (list ⇄ grid) create rows.
  */
 export function startIndicator() {
-	// Full folder listing — the authoritative source of watermarked ids.
+	// Full folder listing - the authoritative source of watermarked ids.
 	subscribe('files:list:updated', ({ contents } = {}) => {
 		if (!Array.isArray(contents)) {
 			return
@@ -469,7 +469,7 @@ export function startIndicator() {
 	})
 
 	// A freshly-watermarked file's node is refreshed (property flips to '1') without a
-	// full list reload — fold it into the set so its badge appears immediately. A removal
+	// full list reload - fold it into the set so its badge appears immediately. A removal
 	// flips it to '0' and must take the id back out, otherwise the badge would survive
 	// the restore. Only an explicit 0 clears: a node with the property *missing* is
 	// unknown, not clean, and must leave the set alone.
@@ -499,7 +499,7 @@ export function startIndicator() {
 			childList: true,
 			subtree: true,
 			// The Files list virtual scroller recycles a <tr> for a different file
-			// by patching its fileid attribute in place — no child add/remove — so a
+			// by patching its fileid attribute in place - no child add/remove - so a
 			// childList-only observer never fires for it and a watermarked file that
 			// scrolls into a recycled row silently loses its badge. Watching the
 			// fileid attribute makes those in-place recycles re-trigger decoration.

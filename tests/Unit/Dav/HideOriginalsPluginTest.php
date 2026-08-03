@@ -76,7 +76,7 @@ class HideOriginalsPluginTest extends TestCase {
 			'an ordinary file' => ['files/alice/report.pdf'],
 			'the user root' => ['files/alice'],
 			// Only the exact folder name is sealed, not anything that merely starts the
-			// same way — a user's own "files_watermark_notes" folder is their business.
+			// same way - a user's own "files_watermark_notes" folder is their business.
 			'a similarly named folder' => ['files/alice/files_watermark_notes/report.pdf'],
 			'a dotted lookalike' => ['files/alice/.files_watermarkish/report.pdf'],
 		];

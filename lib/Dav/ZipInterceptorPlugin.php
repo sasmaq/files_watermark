@@ -29,7 +29,7 @@ use Sabre\HTTP\ResponseInterface;
  *
  * {@see DownloadInterceptorPlugin} covers single-file GETs, but downloading a folder (or a
  * multi-file selection) is served by core's `ZipFolderPlugin`, which streams each member
- * straight from `$node->fopen('rb')` — the interceptor never sees those reads, so every
+ * straight from `$node->fopen('rb')` - the interceptor never sees those reads, so every
  * archive shipped clean originals regardless of trigger. This plugin claims the archive
  * request first (priority 95 against core's 100) and rebuilds the same archive with a
  * watermarked copy substituted for each member the policy applies to.
@@ -41,11 +41,11 @@ use Sabre\HTTP\ResponseInterface;
  *
  * `on_share` must never leak a clean original, so members are rendered *before* any bytes
  * go out: a failed render can then abort with a real 403 instead of a truncated archive.
- * That costs a bounded amount of temp disk, which is what {@see ArchiveLimits} caps —
+ * That costs a bounded amount of temp disk, which is what {@see ArchiveLimits} caps -
  * defaults an admin can raise or lower per host. `on_download` keeps its best-effort
  * contract and degrades to core's plain archive when the caps are exceeded.
  *
- * Registered on both DAV servers, with $publicContext set on the public one — see
+ * Registered on both DAV servers, with $publicContext set on the public one - see
  * {@see DownloadInterceptorPlugin} for why that flag is needed.
  */
 class ZipInterceptorPlugin extends ServerPlugin {
@@ -71,8 +71,8 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		// Ahead of core's ZipFolderPlugin (100); returning false there keeps it from
 		// streaming its own unwatermarked archive.
 		$server->on('method:GET', [$this, 'httpGet'], 95);
-		// The archive is written straight to the output buffer, so — exactly as
-		// ZipFolderPlugin does — Sabre must be told not to send a response on top of it.
+		// The archive is written straight to the output buffer, so - exactly as
+		// ZipFolderPlugin does - Sabre must be told not to send a response on top of it.
 		$server->on('afterMethod:GET', [$this, 'afterGet'], 900);
 	}
 
@@ -85,7 +85,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		}
 
 		// Sabre serves HEAD by re-dispatching the request as a GET, so a HEAD on a folder
-		// would build the entire archive — rendering every member — for a response with no
+		// would build the entire archive - rendering every member - for a response with no
 		// body, and record an audit row per member while doing it. See
 		// DownloadInterceptorPlugin::isHeadRequest().
 		if ($request->getHeader('X-Sabre-Original-Method') === 'HEAD') {
@@ -109,7 +109,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 		$files = $this->memberFilter($request);
 		if ($files === null) {
-			// Malformed filter — let core parse it and produce the same complaint.
+			// Malformed filter - let core parse it and produce the same complaint.
 			return true;
 		}
 
@@ -122,7 +122,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		// This deliberately does *not* test the container. `deliveryApplies($folder)` was
 		// the gate here and it leaked: a shared *single file* is mounted in the recipient's
 		// own home, so the folder reports "owner access" under on_share while the member
-		// itself is a received share — every "download selected" on a single-file share
+		// itself is a received share - every "download selected" on a single-file share
 		// shipped the clean original. Only members can answer this, and preRender asks them
 		// one by one; when it finds nothing to substitute we hand the request back to core
 		// below, so being permissive here costs nothing.
@@ -149,7 +149,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		}
 
 		// Full-folder downloads nest everything under the folder's own name, selections
-		// are flat — same rule as core, so archives keep their familiar shape.
+		// are flat - same rule as core, so archives keep their familiar shape.
 		$wholeFolder = $files === [];
 		$archiveName = $wholeFolder ? $folder->getName() : 'download';
 		$rootPath = $wholeFolder ? dirname($folder->getPath()) : $folder->getPath();
@@ -176,7 +176,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		}
 
 		if ($rendered === []) {
-			// No member needed substituting — every one would be streamed from its own
+			// No member needed substituting - every one would be streamed from its own
 			// bytes, so core's archive is identical to the one we would build. Hand it
 			// back rather than duplicating the work. (on_share never reaches here with a
 			// member it failed to render: preRender denies first.)
@@ -216,7 +216,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	 * 'zip' / 'tar' when the request asks for an archive, null otherwise.
 	 *
 	 * The `accept` query parameter overrides the header because a plain browser link
-	 * cannot set headers — this is how core's folder-download URLs are built.
+	 * cannot set headers - this is how core's folder-download URLs are built.
 	 */
 	private function archiveType(RequestInterface $request): ?string {
 		$accept = $request->getHeaderAsArray('Accept');
@@ -251,7 +251,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 		// Rebuilt entry by entry rather than handed back with array_values(): the source is
 		// either a header array or whatever json_decode() made of a query parameter, so
-		// "every entry is a string" is only true once each one has been looked at — which is
+		// "every entry is a string" is only true once each one has been looked at - which is
 		// exactly what BeforeZipCreatedEvent's list<string> asks for.
 		$members = [];
 		foreach ($files as $file) {
@@ -311,7 +311,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		foreach ($this->flatten($content) as $file) {
 			$trigger = $this->watermarkService->deliveryTriggerFor($file, $this->publicContext);
 			if ($trigger === null || !$this->watermarkService->isSupported($file->getMimeType())) {
-				// Never a candidate — streamed untouched, and not counted against the caps.
+				// Never a candidate - streamed untouched, and not counted against the caps.
 				continue;
 			}
 
@@ -328,7 +328,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 			$tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
 			if ($tmpPath === null) {
-				// Either the config excludes this file (fine — stream it as-is) or the
+				// Either the config excludes this file (fine - stream it as-is) or the
 				// render failed. Under on_share the two are indistinguishable here, and
 				// shipping the original on a failed render is exactly the leak we guard
 				// against, so deny; watermarkForDownload has already logged the cause.
@@ -395,7 +395,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 		// `filesize()` returns false when the rendered temp file has gone missing between
 		// preRender and here. Tar writes the length into the header before the bytes, so a
-		// wrong one corrupts the archive silently — refused on the same path as a stream
+		// wrong one corrupts the archive silently - refused on the same path as a stream
 		// that will not open, rather than shipped as a broken download.
 		if ($stream === false || $size === false) {
 			if ($stream !== false) {

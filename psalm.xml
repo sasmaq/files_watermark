@@ -17,15 +17,15 @@
 		Level 3 is where Psalm starts reporting the *possibly* failing type: the `false` a GD
 		call returns for a file it cannot decode, the `null` a nullable getter can hand on.
 		Clearing it took 39 fixes, 29 of them in ImageWatermarker, and none of them a cast or
-		a suppression — every one is a check with an outcome, because that is the only version
+		a suppression - every one is a check with an outcome, because that is the only version
 		that is worth the noise. What they buy is that a truncated upload now fails by name
 		instead of reaching imagettftext() as `false` and producing a warning-strewn image
 		nobody asked for.
 
 		Level 2 would add 48, and they are a different kind of finding: 38 are ClassMustBeFinal
-		— a design opinion about `final`, not a type check, and one the suite contradicts
+		- a design opinion about `final`, not a type check, and one the suite contradicts
 		directly: FakeImageStack extends ImageWatermarker to simulate a host without GD, and
-		PdfWatermarker and WatermarkLogMapper are mocked — with 4 redundant casts, 3 truthy comparisons on
+		PdfWatermarker and WatermarkLogMapper are mocked - with 4 redundant casts, 3 truthy comparisons on
 		possibly-empty strings, 3 PropertyNotSetInConstructor and one docblock contradiction
 		behind it. Tracked in doc/tasks.md rather than frozen into a baseline.
 	-->
@@ -44,13 +44,13 @@
 
 	<!--
 		The hand-written declarations of Nextcloud *server* classes that lib/ is written
-		against, fed to Psalm as the exact same files the test suite loads — one source of
+		against, fed to Psalm as the exact same files the test suite loads - one source of
 		truth, rather than a second set of stubs free to drift from the first:
 
 		- tests/stubs/CoreStubs.php holds OCA\DAV\Connector\Sabre\{Node,File,Directory},
 		  OC\Streamer and the two events, transcribed from a real server and not
 		  installable from packagist. Psalm still cannot tell whether the stub matches
-		  core — only a diff against a real server can, see the header of that file — but
+		  core - only a diff against a real server can, see the header of that file - but
 		  it now checks that lib/Dav/ matches the stub, which no tool did before.
 		- tests/bootstrap.php declares OC\Hooks\Emitter, which OCP\Files\IRootFolder
 		  extends and nextcloud/ocp does not ship.
@@ -82,20 +82,20 @@
 		<!--
 			#[\Override] is PHP 8.3, and this app supports 8.2 (composer.json, and both are
 			in the CI matrix). PHP ignores unknown attributes, so adding them would not be
-			fatal on 8.2 — but it would put a version marker on 29 methods for a naming
+			fatal on 8.2 - but it would put a version marker on 29 methods for a naming
 			convention, not a type check. Revisit when the floor moves to 8.3.
 		-->
 		<MissingOverrideAttribute errorLevel="suppress" />
 
 		<!--
-			ext-imagick is optional (GD is the default engine — see the header of the file),
+			ext-imagick is optional (GD is the default engine - see the header of the file),
 			so it is not in composer.json's require and is not loaded on every machine that
 			runs Psalm. Psalm reflects extension classes from the *running* PHP, and there
 			is no maintained stub package to stand in for it, so `new \Imagick()` reads as
 			undefined on a host without the extension and as the real class on a host with
 			it. Suppressed rather than baselined so both hosts reach the same verdict.
 
-			Both CI runners *do* load imagick — they run the test suite too — so the calls
+			Both CI runners *do* load imagick - they run the test suite too - so the calls
 			in that branch are analysed there. All this silences is the "class does not
 			exist" noise on a machine that has no Imagick to check against in the first
 			place. Scoped to the one file that touches it, so a typo'd class name anywhere
@@ -103,7 +103,7 @@
 
 			`findUnusedIssueHandlerSuppression="false"` above is the consequence of exactly
 			this: on a host that has the extension nothing throws UndefinedClass here, and
-			Psalm's default is to report the suppression itself as unused — so the config
+			Psalm's default is to report the suppression itself as unused - so the config
 			written to make the two hosts agree would instead fail on one of them. There are
 			two suppressions in this file and both are deliberate, which is the whole of
 			what that check could tell us.

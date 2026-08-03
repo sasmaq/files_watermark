@@ -17,7 +17,7 @@ use Sabre\DAV\ServerPlugin;
  * Exposes a per-file WebDAV property telling the Files client whether a file has
  * ever been watermarked. Delivering the status as a node property means the Files
  * app has it the moment a row renders, so the "Apply watermark" `FileAction` can
- * decide `enabled()` synchronously on first evaluation — no async lookup, no relying
+ * decide `enabled()` synchronously on first evaluation - no async lookup, no relying
  * on Nextcloud re-computing memoized actions after the fact.
  */
 class PropFindPlugin extends ServerPlugin {
@@ -72,7 +72,7 @@ class PropFindPlugin extends ServerPlugin {
 		foreach ($this->logMapper->findWatermarkedFileIds($childIds) as $id) {
 			$this->cache[$id] = true;
 		}
-		// Everything else in the folder is known *not* watermarked — record it so the
+		// Everything else in the folder is known *not* watermarked - record it so the
 		// per-node handler never falls back to a second query.
 		foreach ($childIds as $id) {
 			$this->cache[$id] ??= false;

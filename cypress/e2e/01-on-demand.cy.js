@@ -3,7 +3,7 @@
  * only one with an undo.
  *
  * The round trip is the point. "Apply produced a different file" is not evidence of
- * a watermark, and "remove produced a file" is not evidence the original came back —
+ * a watermark, and "remove produced a file" is not evidence the original came back -
  * so apply is judged by the embedded face appearing in the delivered bytes, and
  * remove by the restored file being **byte-identical** to what was uploaded.
  */

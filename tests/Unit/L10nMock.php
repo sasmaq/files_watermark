@@ -17,7 +17,7 @@ use PHPUnit\Framework\MockObject\MockObject;
  * It also formats, because the parameters are the part that breaks. A translated string
  * carries `%s` / `%1$s` placeholders instead of interpolated PHP variables, so a message
  * that names the offending MIME type or tag id only names it if the substitution happens
- * — and a mock that ignored the parameters would report the same green suite either way.
+ * - and a mock that ignored the parameters would report the same green suite either way.
  */
 trait L10nMock {
 
@@ -26,11 +26,11 @@ trait L10nMock {
 		$l = $this->createMock(IL10N::class);
 		$l->method('t')->willReturnCallback(
 			static fn (string $text, array $parameters = []): string
-				=> $parameters === [] ? $text : vsprintf($text, $parameters),
+			=> $parameters === [] ? $text : vsprintf($text, $parameters),
 		);
 		$l->method('n')->willReturnCallback(
 			static fn (string $singular, string $plural, int $count, array $parameters = []): string
-				=> str_replace('%n', (string)$count, vsprintf($count === 1 ? $singular : $plural, $parameters)),
+			=> str_replace('%n', (string)$count, vsprintf($count === 1 ? $singular : $plural, $parameters)),
 		);
 
 		return $l;

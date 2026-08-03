@@ -26,7 +26,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * The "Where to apply" fields. Both used to be stored verbatim, and both had a
  * plausible wrong value that turned watermarking off with nothing on screen to
- * say so — a mistyped MIME type matched no file, and a tag *name* instead of an
+ * say so - a mistyped MIME type matched no file, and a tag *name* instead of an
  * id made every watermark request die on `Tag id must be integer`.
  */
 class ApiControllerScopeTest extends TestCase {

@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Applies every `patches/patch-*.php` to the installed `vendor/` tree.
  *
  * Composer runs this from `post-install-cmd` and `post-update-cmd`, so the patches are
- * re-applied every time dependencies are (re)installed — in CI, in the E2E stage that
+ * re-applied every time dependencies are (re)installed - in CI, in the E2E stage that
  * bind-mounts this workspace into a Nextcloud container, and at packaging time. That is the
  * whole reason this is a script rather than a committed vendor edit: `vendor/` is gitignored,
  * so a hand-edit would be erased by the next `composer install` and would never ship.
@@ -28,7 +28,7 @@ declare(strict_types=1);
  * ## The two rules this runner enforces
  *
  * - **Idempotent.** A `from` that is already absent while its `to` is present is the normal
- *   steady state — composer re-runs the hook on every install, and a warm cache can hand us
+ *   steady state - composer re-runs the hook on every install, and a warm cache can hand us
  *   an already-patched tree. That is reported and skipped, not treated as failure.
  * - **Loud, never silent.** If neither form is present, or an anchor is no longer unique, or
  *   only some replacements in a file apply, this exits non-zero and composer fails with it.
@@ -83,8 +83,8 @@ foreach ($definitions as $definitionPath) {
 			$fail(
 				$name,
 				"neither the original nor the patched form of \"{$replacement['from']}\" is present in "
-				. "{$patch['file']}. The dependency has changed upstream — re-read the defect described in "
-				. basename($definitionPath) . ' against the new source before trusting Arabic output.',
+					. "{$patch['file']}. The dependency has changed upstream - re-read the defect described in "
+					. basename($definitionPath) . ' against the new source before trusting Arabic output.',
 			);
 		}
 

@@ -62,7 +62,7 @@
 							:key="ph.token"
 							type="button"
 							class="wm-chip"
-							:title="t('files_watermark', '{label} — example: {ex}', { label: ph.label, ex: ph.example })"
+							:title="t('files_watermark', '{label} - example: {ex}', { label: ph.label, ex: ph.example })"
 							@click="insertPlaceholder(ph.token)">
 							{{ ph.token }}
 						</button>
@@ -199,8 +199,8 @@
 					<!--
 						Only shown for the delivery triggers, because it only does anything
 						for them: they render per fetch, so recording them is what makes the
-						log grow without bound. The in-place triggers are always recorded —
-						those rows are how the Files list knows a file is watermarked — so
+						log grow without bound. The in-place triggers are always recorded -
+						those rows are how the Files list knows a file is watermarked - so
 						offering the switch there would promise something it cannot do.
 					-->
 					<div v-if="isDeliveryTrigger" class="wm-field wm-field--stacked wm-audit">
@@ -209,7 +209,7 @@
 							{{ t('files_watermark', 'Record every download in the activity log') }}
 						</NcCheckboxRadioSwitch>
 						<small class="wm-help">
-							{{ t('files_watermark', 'Off by default: these triggers watermark on every fetch, so this writes one entry per file per download — including every file inside a downloaded folder. Applying or removing a watermark is always recorded.') }}
+							{{ t('files_watermark', 'Off by default: these triggers watermark on every fetch, so this writes one entry per file per download - including every file inside a downloaded folder. Applying or removing a watermark is always recorded.') }}
 						</small>
 					</div>
 				</section>
@@ -244,7 +244,7 @@
 						<!--
 							Picked from the server's real tags, so the stored value is always an
 							id that exists. Hand-typing it here used to be possible, and a tag
-							*name* — the obvious thing to type — made every watermark fail.
+							*name* - the obvious thing to type - made every watermark fail.
 						-->
 						<NcSelectTags v-model="selectedFolderTag"
 							:multiple="false"
@@ -264,7 +264,7 @@
 							document, not a block of interface text, so its faux content lines
 							and its logo box must not flip when the settings page is rendered
 							RTL. The watermark text inside sets its own direction from the
-							template — see `previewDirection`.
+							template - see `previewDirection`.
 						-->
 						<svg class="wm-preview__svg"
 							dir="ltr"
@@ -433,7 +433,7 @@ const DEFAULTS = {
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })
 
-// Exactly the types the renderers handle — WatermarkService::SUPPORTED_ALL.
+// Exactly the types the renderers handle - WatermarkService::SUPPORTED_ALL.
 // saveConfig rejects anything else, so offering anything else would be a lie.
 const MIME_OPTIONS = [
 	{ value: 'application/pdf', label: t('files_watermark', 'PDF') },
@@ -536,7 +536,7 @@ const SAMPLE = {
 // would be shown two different example names for the same token.
 const identityHelp = t(
 	'files_watermark',
-	'{displayname} is the name shown in Nextcloud ({sampleDisplayname}); {username} is the account name used to sign in ({sampleUsername}). Display names can change and are not unique — use the account name when the watermark has to identify exactly one account.',
+	'{displayname} is the name shown in Nextcloud ({sampleDisplayname}); {username} is the account name used to sign in ({sampleUsername}). Display names can change and are not unique - use the account name when the watermark has to identify exactly one account.',
 	{ sampleDisplayname: SAMPLE.displayname, sampleUsername: SAMPLE.username },
 )
 
@@ -561,15 +561,15 @@ const displayText = computed(() => previewText.value || `${SAMPLE.displayname} -
 const RTL_SCRIPT = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]/u
 
 /**
- * The base direction to draw the preview text in, decided by the *text itself* — its first
- * strong character — and never by the UI language.
+ * The base direction to draw the preview text in, decided by the *text itself* - its first
+ * strong character - and never by the UI language.
  *
  * That rule is not a style choice: it is what the server-side shaper does. `Com\Tecnick\
  * Unicode\Bidi` resolves the paragraph direction from the first strong character of the
  * string it is handed, so an Arabic template is reordered right-to-left whatever locale the
  * admin who saved it was using. Letting the SVG inherit `dir` from the page would make the
  * preview say two different things about one stored template depending on who opened the
- * settings — and only one of them could match the file that comes out.
+ * settings - and only one of them could match the file that comes out.
  * @param {string} text - the text about to be drawn
  * @return {string} 'rtl' or 'ltr'
  */
@@ -581,7 +581,7 @@ function baseDirection(text) {
 const previewDirection = computed(() => baseDirection(displayText.value))
 
 // Kept in step with WatermarkImageStore::MAX_BYTES and its allowed types. Checking here
-// too only saves the user a round-trip — the server re-validates from the file's actual
+// too only saves the user a round-trip - the server re-validates from the file's actual
 // content, which is the check that counts.
 const MAX_IMAGE_MB = 2
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg']
@@ -620,7 +620,7 @@ function pickImage() {
 
 /**
  * Upload the picked image and store the reference the server hands back. The config keeps
- * only that reference — the bytes live in the app's appdata.
+ * only that reference - the bytes live in the app's appdata.
  * @param {Event} event - the file input's change event
  */
 async function onImageSelected(event) {
@@ -722,7 +722,7 @@ const logo = computed(() => {
 })
 
 // The stored value is an opaque reference now, not a filename, so there is nothing
-// human-readable to show — the preview box just marks where the logo sits. One
+// human-readable to show - the preview box just marks where the logo sits. One
 // translated label either way: the two branches used to differ only in that one of them
 // went through t(), so an Arabic admin saw the word change when they uploaded a file.
 const logoLabel = t('files_watermark', 'LOGO')
@@ -950,7 +950,7 @@ const contentLines = [
     margin: 1px 0 0;
     accent-color: var(--color-primary-element);
     /* Nextcloud's global input styles otherwise draw a dark border/box-shadow
-       around the native radio on hover and focus — strip it here. */
+       around the native radio on hover and focus - strip it here. */
     border: none !important;
     box-shadow: none !important;
     background-color: transparent !important;
@@ -1036,7 +1036,7 @@ const contentLines = [
     letter-spacing: 0.04em;
     color: var(--color-text-maxcontrast);
 }
-/* Arabic letters join, and letter-spacing pulls the joins apart — the word comes out as
+/* Arabic letters join, and letter-spacing pulls the joins apart - the word comes out as
    disconnected characters. Neither does uppercasing mean anything in a script with no
    case, so both are dropped rather than kept and ignored. */
 [dir="rtl"] .wm-preview__label {
@@ -1092,7 +1092,7 @@ const contentLines = [
     color: var(--color-error, #c7361f);
 }
 /* The status slides in from the side the text starts on, so it reads as arriving rather
-   than as being pushed backwards. That side is mirrored under RTL — a keyframe cannot
+   than as being pushed backwards. That side is mirrored under RTL - a keyframe cannot
    take a logical property, so the direction is chosen by a second animation. */
 @keyframes wm-status-in {
     from { opacity: 0; transform: translateX(-4px); }
@@ -1133,7 +1133,7 @@ const contentLines = [
  *
  * The cause is an over-constrained absolute box, and it is in @nextcloud/vue rather than
  * here. Its `.vs__dropdown-menu--floating` sets `inset-inline-start: 0` as a fallback,
- * which resolves to `right: 0` under RTL — while floating-ui writes the real position as
+ * which resolves to `right: 0` under RTL - while floating-ui writes the real position as
  * an inline `left`, together with an inline `width`. With `left`, `right` and `width` all
  * non-auto the box is over-constrained, and CSS 2.2 §10.3.7 says the loser is `left` when
  * the direction is RTL. So the computed position is discarded and the list is pinned to

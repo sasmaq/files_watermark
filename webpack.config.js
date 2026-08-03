@@ -57,8 +57,8 @@ module.exports = {
     },
     plugins: [
         new VueLoaderPlugin(),
-        // Output CSS to the app's css/ dir so Util::addStyle(app, name) — which
-        // resolves to css/<name>.css — can find it (JS goes to js/).
+        // Output CSS to the app's css/ dir so Util::addStyle(app, name) - which
+        // resolves to css/<name>.css - can find it (JS goes to js/).
         new MiniCssExtractPlugin({ filename: '../css/[name].css' }),
         // Expose Buffer/process as globals for deps that assume a Node env.
         new webpack.ProvidePlugin({

@@ -33,7 +33,7 @@ use PHPUnit\Framework\TestCase;
  *
  * The clamps matter more than they look. `opacity`, `fontSize` and `rotation` arrive as
  * plain ints from a JSON body, and nothing between the browser and the renderer refuses a
- * negative font size — the setters store what they are handed. `max()`/`min()` here is the
+ * negative font size - the setters store what they are handed. `max()`/`min()` here is the
  * only bound there is.
  */
 class ApiControllerConfigTest extends TestCase {
@@ -118,7 +118,7 @@ class ApiControllerConfigTest extends TestCase {
 
 	/**
 	 * A fresh install has no row. The settings page has to open on it, so this is an empty
-	 * list and HTTP 200 — not a 404, which the form would have to special-case.
+	 * list and HTTP 200 - not a 404, which the form would have to special-case.
 	 */
 	public function testGetConfigReturnsAnEmptyListWhenNoneIsSaved(): void {
 		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException(''));

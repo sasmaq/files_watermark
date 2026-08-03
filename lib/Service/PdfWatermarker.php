@@ -16,7 +16,7 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  * The trade-off is deliberate and worth knowing. A separate layer can be stripped by
  * a determined user with ordinary tools. A `PdfFlattener` once rebuilt each page as a
  * bitmap to prevent that, and was removed along with every other external-binary
- * dependency — rasterising needs a PDF interpreter, which is not something to bundle.
+ * dependency - rasterising needs a PDF interpreter, which is not something to bundle.
  * This app deters and traces; it does not prevent.
  *
  * Renders with tc-lib-pdf, the successor to TCPDF by the same author. It replaced
@@ -25,8 +25,8 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  * modern producers emit.
  *
  * Pure PHP, and deliberately so: this app spawns no processes. Documents the parser
- * will not open — anything encrypted, including files locked with an empty password
- * purely to set permission flags — are refused here and skipped by the caller. An
+ * will not open - anything encrypted, including files locked with an empty password
+ * purely to set permission flags - are refused here and skipped by the caller. An
  * external rewriter (`qpdf --decrypt`) used to rescue that case and was removed with
  * the rest of the binary dependencies.
  *
@@ -44,8 +44,8 @@ class PdfWatermarker {
 	 * IBM Plex Sans Arabic Bold (SIL OFL), committed in `resources/fonts`.
 	 *
 	 * **One face draws every watermark**, Latin and Arabic alike, so the same configuration
-	 * produces the same typeface whatever the text happens to contain. The alternative — a
-	 * standard-14 font for Latin and an embedded one only when needed — kept Latin files
+	 * produces the same typeface whatever the text happens to contain. The alternative - a
+	 * standard-14 font for Latin and an embedded one only when needed - kept Latin files
 	 * smaller but meant a watermark changed appearance depending on whether someone's
 	 * display name was Arabic, which is not a property anyone asked for.
 	 *
@@ -53,13 +53,13 @@ class PdfWatermarker {
 	 * but **Arabic Presentation Forms-B** (U+FE70–FEFF): the shaper substitutes into that
 	 * block, so a font that omits it draws nothing for shaped Arabic no matter how complete
 	 * its `U+0600` coverage looks. Most modern faces omit it, because they shape through
-	 * OpenType `GSUB` instead — Cairo, Tajawal, Almarai, Markazi Text, Readex Pro all fail
+	 * OpenType `GSUB` instead - Cairo, Tajawal, Almarai, Markazi Text, Readex Pro all fail
 	 * on it, and so do the SIL Naskh faces (Scheherazade New, Lateef, Harmattan), which miss
 	 * 64 forms apiece.
 	 *
 	 * Three candidates covered both scripts completely. IBM Plex Sans Arabic is the smallest
-	 * of them by font program — 103 KB against Noto Kufi Arabic's 210 KB and Noto Sans
-	 * Arabic's 445 KB — and it is a sans, which is the register a watermark wants.
+	 * of them by font program - 103 KB against Noto Kufi Arabic's 210 KB and Noto Sans
+	 * Arabic's 445 KB - and it is a sans, which is the register a watermark wants.
 	 */
 	private const FONT_FAMILY = 'ibmplexsansarabic';
 	private const FONT_STYLE = 'B';
@@ -74,7 +74,7 @@ class PdfWatermarker {
 		// Points, so user units and PDF units coincide and the page geometry read
 		// off the imported template needs no conversion.
 		// subsetfont: embed only the glyphs the watermark actually uses. A watermark draws
-		// the same short string over and over, so the subset is tiny — measured on an Arabic
+		// the same short string over and over, so the subset is tiny - measured on an Arabic
 		// template, the output drops from 213 KB to 38 KB, and it renders *faster* (0.071s to
 		// 0.025s) because there is far less to write. The library's docblock warns the option
 		// is "computational and memory intensive"; that is not what happens here, and the
@@ -116,15 +116,15 @@ class PdfWatermarker {
 	 * correction is the whole reason it is unrolled here.
 	 *
 	 * **The imported form keeps the source page's coordinate system.** Its `/BBox` is the
-	 * source's visible box *in source coordinates* — `[72 72 540 720]` for a page cropped
-	 * 72pt on each side — while the new page is created at the box's *size*, 468×648, with
+	 * source's visible box *in source coordinates* - `[72 72 540 720]` for a page cropped
+	 * 72pt on each side - while the new page is created at the box's *size*, 468×648, with
 	 * its origin at (0, 0). `addPageFromImport()` then places the form at (0, 0) with an
 	 * identity matrix, so content that lives at x≥72 in the source is drawn at x≥72 on a
 	 * page only 468 wide. The content is pushed off the top-right corner.
 	 *
 	 * How bad depends entirely on the crop. At a 72pt origin a quarter of the page is lost;
 	 * measured on a `/CropBox [300 300 612 792]` fixture, **98% of the content ends up off
-	 * the page** — which is indistinguishable from "the watermark blanked my file", because
+	 * the page** - which is indistinguishable from "the watermark blanked my file", because
 	 * every byte is still in there, just drawn where nothing can see it.
 	 *
 	 * Placing the form at `(-x0, +y0)` cancels the offset. The signs are not symmetric
@@ -132,8 +132,8 @@ class PdfWatermarker {
 	 * flips it internally: it emits `yPt = pageHeight - y - formHeight`, so with the page
 	 * and the form the same height, a positive `y` moves the form down by exactly `y`.
 	 *
-	 * A page whose box starts at the origin — the overwhelming majority, and every fixture
-	 * this app had before — offsets by zero and is unaffected.
+	 * A page whose box starts at the origin - the overwhelming majority, and every fixture
+	 * this app had before - offsets by zero and is unaffected.
 	 */
 	private function addImportedPage(Tcpdf $pdf, string $sourceId, int $page): PageTemplateInterface {
 		$template = $pdf->importPage($sourceId, $page);
@@ -165,11 +165,11 @@ class PdfWatermarker {
 	 * Where to place the imported form so its visible box starts at the page origin.
 	 *
 	 * `getMediaBox()` reports the box the import was sized from, in points, as
-	 * `[x0, y0, x1, y1]` — despite the name that is the **CropBox** when the source has
+	 * `[x0, y0, x1, y1]` - despite the name that is the **CropBox** when the source has
 	 * one, and a non-zero `(x0, y0)` is what pushes the content off the page.
 	 *
 	 * The offset has to be applied in the *rotated* frame, because the library's own form
-	 * matrix is built for a box anchored at the origin — it uses the box's width and
+	 * matrix is built for a box anchored at the origin - it uses the box's width and
 	 * height, never its coordinates. For a page cropped to `[300 300 612 792]` it emits
 	 * `[0 -1 1 0 0 312]` at 90°, mapping `(x, y)` to `(y, 312 - x)`; translating by
 	 * `(-x0, -y0)` there moves the content further off the page rather than back onto it.
@@ -202,13 +202,13 @@ class PdfWatermarker {
 	 * Directories tc-lib-pdf is permitted to read from.
 	 *
 	 * The library refuses local reads outside an allowlist, which is a sensible default
-	 * for a renderer that also fetches remote assets — but everything this app feeds it
+	 * for a renderer that also fetches remote assets - but everything this app feeds it
 	 * is a temp copy, so without this the source PDF and the logo are both rejected
 	 * ("Unable to read image file"). Kept to the specific directories in play rather
 	 * than opened up wholesale.
 	 *
 	 * Supplying this **replaces** the library's defaults rather than adding to them,
-	 * which is why the font directory has to be named here too — omit it and the
+	 * which is why the font directory has to be named here too - omit it and the
 	 * metrics that were loading a moment ago start failing instead.
 	 *
 	 * @return list<string>
@@ -241,8 +241,8 @@ class PdfWatermarker {
 	 * Register `$sourcePath` for import and return its id and page count.
 	 *
 	 * Every parse failure is final. There is no rescue pass: the app spawns no
-	 * processes, so a document tc-lib-pdf cannot open — encrypted, or damaged beyond
-	 * its tolerance — is refused here and the trigger's own policy takes over (skip
+	 * processes, so a document tc-lib-pdf cannot open - encrypted, or damaged beyond
+	 * its tolerance - is refused here and the trigger's own policy takes over (skip
 	 * plus an audit row for the in-place triggers, deny for `on_share`).
 	 *
 	 * @return array{0: string, 1: int} source id and page count
@@ -278,7 +278,7 @@ class PdfWatermarker {
 			if (!PdfFontPath::isUsingOwnFonts()) {
 				throw new \RuntimeException(sprintf(
 					'Cannot process PDF: font metrics are unreachable because %s points at "%s" '
-					. 'instead of this app\'s "%s" — another app defined it first. %s',
+						. 'instead of this app\'s "%s" - another app defined it first. %s',
 					PdfFontPath::CONSTANT,
 					defined(PdfFontPath::CONSTANT) ? (string)constant(PdfFontPath::CONSTANT) : '(undefined)',
 					PdfFontPath::directory(),
@@ -322,7 +322,7 @@ class PdfWatermarker {
 	 *
 	 * There is no public string-measuring call, so this draws the cell and throws the
 	 * content away, keeping only the bounding box it recorded. The returned string is
-	 * deliberately discarded — it is never added to a page, so nothing is rendered.
+	 * deliberately discarded - it is never added to a page, so nothing is rendered.
 	 */
 	private function measure(Tcpdf $pdf, string $text): float {
 		$pdf->getTextCell($text, 0, 0, 0, 0, drawcell: false);
@@ -332,7 +332,7 @@ class PdfWatermarker {
 	/**
 	 * Centres of the watermark tiles needed to cover one page, in page
 	 * coordinates (origin top-left, y downwards). Centres outside the page are
-	 * expected and required — they are what covers the edges and corners.
+	 * expected and required - they are what covers the edges and corners.
 	 *
 	 * The geometry itself now lives in {@see TileLattice}, because the image renderer
 	 * needed the same lattice and had been making do with a fixed grid that ignored the
@@ -404,7 +404,7 @@ class PdfWatermarker {
 	private function unreadable(\Exception $cause): \RuntimeException {
 		return new \RuntimeException(
 			'Cannot process PDF: the file may be encrypted, password-protected, or use unsupported compression. '
-			. $cause->getMessage(),
+				. $cause->getMessage(),
 			0,
 			$cause,
 		);

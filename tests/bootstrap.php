@@ -19,7 +19,7 @@ namespace {
 	$loader = require __DIR__ . '/../vendor/autoload.php';
 
 	// tc-lib-pdf finds its font metrics through the K_PATH_FONTS constant, and
-	// resources/fonts is where this app keeps them — Composer ships none. Claimed here
+	// resources/fonts is where this app keeps them - Composer ships none. Claimed here
 	// so it is set before any test touches the renderer, mirroring what Application's
 	// constructor does at runtime. A constant cannot be redefined, so this must not be
 	// left to whichever test happens to run first.

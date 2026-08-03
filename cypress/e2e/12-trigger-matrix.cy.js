@@ -1,8 +1,8 @@
 /**
  * The trigger × access matrix: every trigger, fetched every way.
  *
- * Four triggers against six access paths — owner direct, owner ZIP, recipient direct,
- * recipient ZIP, public-link direct, public-link ZIP — because the app's behaviour is a
+ * Four triggers against six access paths - owner direct, owner ZIP, recipient direct,
+ * recipient ZIP, public-link direct, public-link ZIP - because the app's behaviour is a
  * function of both together, and every delivery bug found so far has been one cell of
  * this table disagreeing with its neighbours:
  *
@@ -16,17 +16,17 @@
  * None of those is visible from a single cell. What makes the table worth running as a
  * table is the disagreements: `on_share` must watermark for everyone **except** the owner,
  * `on_download` for everyone **including** the owner, and the two in-place triggers must
- * watermark through every path for a different reason entirely — the bytes on disk already
+ * watermark through every path for a different reason entirely - the bytes on disk already
  * carry it.
  *
  * That last row is asserted as a **negative**, which is the whole point of including it.
  * "Watermarked" is not interesting for `on_demand` and `on_upload`: the burn put it there
- * and every path would report it. What must be true is that **no interceptor engaged** —
+ * and every path would report it. What must be true is that **no interceptor engaged** -
  * so each cell is compared byte-for-byte against the stored file. A delivery renderer that
  * woke up on an already-burned file would produce a valid, watermarked, *different* PDF,
  * pass every "is it watermarked" check, and stamp the document twice.
  *
- * Deeper per-mode assertions live with their own specs — preview blocking and the share
+ * Deeper per-mode assertions live with their own specs - preview blocking and the share
  * page's download link in `04-on-share`, archive membership and audit granularity in
  * `05-archives`, per-fetch rendering and the HEAD regression in `03-on-download`. This
  * file answers one question only: is any cell of the matrix wrong.
@@ -69,7 +69,7 @@ describe('Trigger × access matrix', () => {
 
 	/**
 	 * The six ways the same file can arrive. Each returns the delivered bytes of
-	 * `name` — unpacked from the archive for the ZIP cells, so all six are directly
+	 * `name` - unpacked from the archive for the ZIP cells, so all six are directly
 	 * comparable with each other and with the stored file.
 	 */
 	const access = [
@@ -135,7 +135,7 @@ describe('Trigger × access matrix', () => {
 		// A known-neutral policy *before* anything is uploaded. The policy is
 		// server-wide and survives between specs and runs, so a leftover `on_upload`
 		// would burn every fixture as it arrives and each row below would then measure
-		// a file that was already watermarked before its trigger was set — the
+		// a file that was already watermarked before its trigger was set - the
 		// `on_share` owner cells fail, and the `on_download` cells pass for the wrong
 		// reason, which is worse.
 		cy.wmSetPolicy({ trigger: 'on_demand' })
@@ -156,7 +156,7 @@ describe('Trigger × access matrix', () => {
 			})
 
 		// One folder share covers four of the six cells for every trigger, and the
-		// policy is switched on afterwards — nothing is copied or rewritten when a
+		// policy is switched on afterwards - nothing is copied or rewritten when a
 		// share is created.
 		cy.wmUnshareAll(`/${folder}`)
 		cy.wmShare({ path: `/${folder}`, shareWith: recipientUid })
@@ -171,7 +171,7 @@ describe('Trigger × access matrix', () => {
 		cy.task('nc:delete', { ...admin(), path: folder })
 	})
 
-	describe('on_download — rendered per fetch, for everyone including the owner', () => {
+	describe('on_download - rendered per fetch, for everyone including the owner', () => {
 		before(() => {
 			cy.wmSetPolicy({ trigger: 'on_download' })
 		})
@@ -197,7 +197,7 @@ describe('Trigger × access matrix', () => {
 		})
 	})
 
-	describe('on_share — for everyone except the owner', () => {
+	describe('on_share - for everyone except the owner', () => {
 		before(() => {
 			cy.wmSetPolicy({ trigger: 'on_share' })
 		})
@@ -222,7 +222,7 @@ describe('Trigger × access matrix', () => {
 	 * cell has to show is that it delivered *those* bytes and nothing re-rendered them.
 	 */
 	const inPlace = (trigger, burn) => {
-		describe(`${trigger} — burned into the stored bytes, no interceptor engages`, () => {
+		describe(`${trigger} - burned into the stored bytes, no interceptor engages`, () => {
 			let stored
 
 			before(() => {
@@ -245,7 +245,7 @@ describe('Trigger × access matrix', () => {
 					fetch(files[trigger]).then((base64) => {
 						// Byte-identity, not "is it watermarked". A delivery renderer that
 						// woke up here would return a valid, watermarked, *different* file
-						// — a second stamp on an already-stamped document, which every
+						// - a second stamp on an already-stamped document, which every
 						// looser assertion accepts.
 						expect(base64, `${label} re-rendered a file that was already burned`)
 							.to.eq(stored)
@@ -263,8 +263,8 @@ describe('Trigger × access matrix', () => {
 	 * Created here rather than in the outer `before`, so this row measures a first upload
 	 * and nothing else.
 	 *
-	 * An overwrite is a different question with its own answer — it used to land clean and
-	 * still badged, and closing that took three fixes — so it is asserted on its own in
+	 * An overwrite is a different question with its own answer - it used to land clean and
+	 * still badged, and closing that took three fixes - so it is asserted on its own in
 	 * `02-on-upload` rather than folded in here, where a failure would read as a broken
 	 * matrix cell.
 	 */

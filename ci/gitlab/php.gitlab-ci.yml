@@ -1,9 +1,9 @@
-# PHP jobs — the GitLab equivalent of .github/workflows/php.yml.
+# PHP jobs - the GitLab equivalent of .github/workflows/php.yml.
 #
 # The environment is `ci/php.Dockerfile`, the same file the Jenkinsfile builds per stage.
 # GitLab has no per-job Dockerfile, so it is built once per PHP version into the
 # project's container registry and every job below pulls it from there. That keeps one
-# definition of "the PHP CI environment" for both CI systems — the alternative,
+# definition of "the PHP CI environment" for both CI systems - the alternative,
 # reinstalling the extension set in a `before_script`, is a second list to keep in step
 # with the first and re-runs on every job.
 #
@@ -14,19 +14,19 @@
 
 variables:
   PHP_IMAGE_REPO: $CI_REGISTRY_IMAGE/ci-php
-  BUILD_PHP_IMAGE: 'true'
+  BUILD_PHP_IMAGE: "true"
 
 php:image:
   stage: images
   parallel:
     matrix:
-      - PHP_VERSION: ['8.2', '8.3']
+      - PHP_VERSION: ["8.2", "8.3"]
   rules:
     - if: $BUILD_PHP_IMAGE == "true"
     - when: never
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: ['']
+    entrypoint: [""]
   # Kaniko rather than docker:dind: it needs no privileged runner, which is the one
   # thing a shared-runner project cannot arrange for itself.
   script:
@@ -48,7 +48,7 @@ php:image:
 .php:
   stage: check
   variables:
-    PHP_VERSION: '8.2'
+    PHP_VERSION: "8.2"
   image: $PHP_IMAGE_REPO:$PHP_VERSION
   cache:
     # Keyed on the lockfile *and* the PHP version: `composer install` resolves against
@@ -71,11 +71,11 @@ php:lint:
       optional: true
   parallel:
     matrix:
-      - PHP_VERSION: ['8.2', '8.3']
+      - PHP_VERSION: ["8.2", "8.3"]
   script:
     - composer lint
 
-# The Nextcloud coding standard is version-independent, so one PHP version is enough —
+# The Nextcloud coding standard is version-independent, so one PHP version is enough -
 # unlike the syntax job, which is what catches version-specific parse errors. Pinned to
 # the lowest supported version to share the composer cache with the 8.2 PHPUnit job.
 php:cs:
@@ -88,7 +88,7 @@ php:cs:
     - composer cs:check
 
 # One version is enough: psalm.xml pins `phpVersion="8.2"`, so an 8.3 leg would only
-# re-prove the same analysis. What it does need is the full extension set — Psalm
+# re-prove the same analysis. What it does need is the full extension set - Psalm
 # reflects extension classes from the *running* PHP, so imagick being present is what
 # gets the optional Imagick branch of ImageWatermarker analysed at all.
 php:psalm:
@@ -108,7 +108,7 @@ php:phpunit:
       optional: true
   parallel:
     matrix:
-      - PHP_VERSION: ['8.2', '8.3']
+      - PHP_VERSION: ["8.2", "8.3"]
   script:
     - composer install --prefer-dist --no-progress --no-interaction
     - vendor/bin/phpunit --colors=always --log-junit build/phpunit-$PHP_VERSION.xml

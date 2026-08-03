@@ -146,7 +146,7 @@ class ApiControllerImageTest extends TestCase {
 	public function testSaveConfigRejectsAnArbitraryServerPath(): void {
 		// The regression this validation exists for: an arbitrary server path used to be
 		// persisted here and read by the renderers. Asserted as an admin, because that is
-		// now the only role that reaches the validation at all — but the check has to stay
+		// now the only role that reaches the validation at all - but the check has to stay
 		// server-side regardless of who can call it.
 		$this->login('admin', isAdmin: true);
 		$this->configMapper->expects($this->never())->method('insert');
@@ -162,7 +162,7 @@ class ApiControllerImageTest extends TestCase {
 	}
 
 	/**
-	 * A non-admin cannot save the policy at all — there is one config, and it is
+	 * A non-admin cannot save the policy at all - there is one config, and it is
 	 * server-wide.
 	 *
 	 * The 403 lands *before* validation, so the response says nothing about whether the

@@ -19,7 +19,7 @@ use Psr\Log\LoggerInterface;
  * The watermark cannot be applied from inside {@see \OCA\FilesWatermark\EventListener\NodeWrittenListener}:
  * `NodeWrittenEvent` fires while the write that triggered it still holds a lock on the
  * node, so writing the watermarked bytes back throws `LockedException`. That is not
- * specific to WebDAV — a plain `newFile()` through the Files API fails the same way — so
+ * specific to WebDAV - a plain `newFile()` through the Files API fails the same way - so
  * deferring to a job is what gets the write out from under the lock on every upload path.
  *
  * Running here also keeps rendering (which is slow for large PDFs) off the upload request.
@@ -52,7 +52,7 @@ class WatermarkOnUploadJob extends QueuedJob {
 		}
 
 		// Resolve through the user's own folder so the node comes back on the storage the
-		// uploader sees, with their mounts set up — getById() on the root folder would not.
+		// uploader sees, with their mounts set up - getById() on the root folder would not.
 		$nodes = $this->rootFolder->getUserFolder($uid)->getById($fileId);
 		$node = $nodes[0] ?? null;
 
@@ -63,10 +63,10 @@ class WatermarkOnUploadJob extends QueuedJob {
 		}
 
 		try {
-			// The burn writes the file, which fires NodeWrittenEvent again — suppressed so
+			// The burn writes the file, which fires NodeWrittenEvent again - suppressed so
 			// it does not queue a follow-up job for the file we are already watermarking.
 			NodeWrittenListener::suppressFor($fileId, function () use ($node, $user): void {
-				// There is no session here, so the acting user is passed explicitly — otherwise
+				// There is no session here, so the acting user is passed explicitly - otherwise
 				// {username} renders as "Unknown" and the audit row is attributed to "system".
 				$this->watermarkService->watermarkInPlace($node, 'on_upload', null, $user);
 			});

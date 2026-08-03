@@ -25,7 +25,7 @@ use OCP\Migration\SimpleMigrationStep;
  * **The delete has to happen before the column goes, which is why it is in
  * `preSchemaChange` rather than the usual `postSchemaChange`.** Dropping `user_id` first
  * would leave the per-user rows in the table as ordinary rows, indistinguishable from the
- * global one — and `findGlobal()` takes the first row it finds, so a former per-user
+ * global one - and `findGlobal()` takes the first row it finds, so a former per-user
  * override could silently become the server-wide policy. Deleting first is what makes the
  * outcome deterministic.
  *
@@ -44,8 +44,10 @@ class Version1006Date20260731160000 extends SimpleMigrationStep {
 
 		// Guarded both ways: a fresh install has no table yet, and an instance that has
 		// already run this step has no column. Neither should error.
-		if (!$schema->hasTable('watermark_config')
-			|| !$schema->getTable('watermark_config')->hasColumn('user_id')) {
+		if (
+			!$schema->hasTable('watermark_config')
+			|| !$schema->getTable('watermark_config')->hasColumn('user_id')
+		) {
 			return;
 		}
 
@@ -57,7 +59,7 @@ class Version1006Date20260731160000 extends SimpleMigrationStep {
 		if ($removed > 0) {
 			$output->info(sprintf(
 				'files_watermark: removed %d per-user watermark policy/policies; those users now '
-				. 'follow the global policy, which is the only one the app has.',
+					. 'follow the global policy, which is the only one the app has.',
 				$removed,
 			));
 		}
@@ -77,7 +79,7 @@ class Version1006Date20260731160000 extends SimpleMigrationStep {
 			return null;
 		}
 
-		// Index first — see the note in Version1005: a column pulled out from under a live
+		// Index first - see the note in Version1005: a column pulled out from under a live
 		// index is DDL the database platforms disagree about.
 		if ($table->hasIndex('wm_config_user_idx')) {
 			$table->dropIndex('wm_config_user_idx');

@@ -5,7 +5,7 @@
  * produces a file that opens fine:
  *
  *  - the owner's own fetch must stay clean, so "everything is watermarked" is not a
- *    passing answer here — it is a different bug;
+ *    passing answer here - it is a different bug;
  *  - public links are served by a **second** Sabre server (`public.php/dav`) that
  *    never fires `SabrePluginAddEvent`, so a plugin registered once covers the
  *    authenticated path only;
@@ -90,7 +90,7 @@ describe('On-share watermarking', () => {
 	it('watermarks the share page\'s own download link', () => {
 		// `/s/<token>/download` is what the share page's button points at. It answers
 		// 303 onto the public DAV endpoint rather than serving bytes itself, which is
-		// why it is not a way round the interceptor — but that is worth following
+		// why it is not a way round the interceptor - but that is worth following
 		// rather than assuming, since a direct handler here would bypass Sabre whole.
 		cy.task('nc:get', { url: `/s/${link.token}/download` }).its('status').should('eq', 303)
 

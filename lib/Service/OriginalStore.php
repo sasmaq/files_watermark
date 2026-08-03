@@ -16,8 +16,8 @@ use Psr\Log\LoggerInterface;
 /**
  * Keeps a copy of a file's pre-watermark content so an in-place watermark can be undone.
  *
- * `watermarkInPlace` burns the watermark into the stored bytes — there is no way to strip
- * it back out of a rendered PDF or image — so "remove watermark" can only mean restoring a
+ * `watermarkInPlace` burns the watermark into the stored bytes - there is no way to strip
+ * it back out of a rendered PDF or image - so "remove watermark" can only mean restoring a
  * copy taken before the burn.
  *
  * Nextcloud's file versions were the obvious alternative and were rejected: the versions
@@ -29,7 +29,7 @@ use Psr\Log\LoggerInterface;
  *
  * In the owner's own storage, at `{owner}/files/.files_watermark/originals/{fileId}`.
  * It used to live in the app's appdata, which is invisible, quota-free and not
- * shareable — a better home in every respect but one: **server-side encryption never
+ * shareable - a better home in every respect but one: **server-side encryption never
  * reaches it**. With SSE enabled the user's own file is written as ciphertext while the
  * app's copy of the *same bytes* sat beside it in the clear, which is the one property a
  * pre-watermark backup must not have.
@@ -40,7 +40,7 @@ use Psr\Log\LoggerInterface;
  * throws outright for a path whose first segment is not a real user. Driving the module
  * by hand over an app-owned blob fails too, and not for want of trying: `encrypt()`
  * signs each block with `version + 1` while `decrypt()` verifies with `version`, and
- * that version comes from the file cache entry the storage layer maintains — so every
+ * that version comes from the file cache entry the storage layer maintains - so every
  * read of a hand-encrypted blob fails with "Bad Signature". Measured against Nextcloud
  * 31.0.14 with the master key enabled, for both a real cached file and a virtual path.
  *
@@ -54,7 +54,7 @@ use Psr\Log\LoggerInterface;
  * undo their watermarks. {@see isBackup()} is what keeps the app's own triggers off it.
  *
  * Copies written before the move are still read from appdata, so upgrading does not
- * strand a single one — see {@see read()}. Nothing migrates them: re-encrypting on
+ * strand a single one - see {@see read()}. Nothing migrates them: re-encrypting on
  * upgrade would need every owner's storage mounted at once, and a copy that is never
  * restored is one that never needed moving. New copies are always written to the owner.
  * ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ class OriginalStore {
 	 *
 	 * The guard that stops the app watermarking its own backups. Without it, storing a
 	 * copy fires `NodeWrittenEvent`, the on-upload trigger queues a job for *that* copy,
-	 * watermarking it stores a copy of the copy, and so on — the copies are supported
+	 * watermarking it stores a copy of the copy, and so on - the copies are supported
 	 * mime types, so nothing else would stop the recursion.
 	 *
 	 * Matched on the path rather than on a marker inside the file: the bytes are the
@@ -115,7 +115,7 @@ class OriginalStore {
 	/**
 	 * Preserve $content as the pre-watermark original for $file.
 	 *
-	 * An existing backup is never overwritten — re-watermarking an already-watermarked file
+	 * An existing backup is never overwritten - re-watermarking an already-watermarked file
 	 * would otherwise replace the true original with the watermarked bytes, quietly making
 	 * the file impossible to restore.
 	 *
@@ -138,8 +138,8 @@ class OriginalStore {
 			$folder->newFile($this->name($file), $content);
 			return true;
 		} catch (\Throwable $e) {
-			// Quota is the expected failure — the copy is the size of the file, in the
-			// owner's own storage — and it is reported the same as any other: the
+			// Quota is the expected failure - the copy is the size of the file, in the
+			// owner's own storage - and it is reported the same as any other: the
 			// watermark still applies, and removeWatermark() says it cannot be undone.
 			$this->logger->error('files_watermark: could not preserve original for file {fileId}', [
 				'fileId' => $this->fileId($file),
@@ -250,7 +250,7 @@ class OriginalStore {
 	private function homeFolder(File $file, bool $create): ?Folder {
 		$uid = $file->getOwner()?->getUID();
 		if ($uid === null || $uid === '') {
-			// No owner to attribute the copy to — an external or system-mounted node.
+			// No owner to attribute the copy to - an external or system-mounted node.
 			// Legacy appdata is still consulted by the caller.
 			return null;
 		}

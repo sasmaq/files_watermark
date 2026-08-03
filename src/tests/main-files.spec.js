@@ -281,7 +281,7 @@ describe('main-files', () => {
 			expect(link.querySelector(INDICATOR_SELECTOR)).not.toBeNull()
 		})
 
-		it('is idempotent — never doubles the badge on a row', () => {
+		it('is idempotent - never doubles the badge on a row', () => {
 			addRow(1)
 			syncWatermarkedIds([node({ fileid: 1, watermarked: true })])
 			decorateRows()
@@ -385,7 +385,7 @@ describe('main-files', () => {
 		})
 
 		it('leaves a tracked id alone when the node carries no status property', () => {
-			// "Missing" means unknown (the hard-refresh race), not clean — clearing here
+			// "Missing" means unknown (the hard-refresh race), not clean - clearing here
 			// would undo what the REST reconcile just discovered.
 			const onNodeUpdated = handlerFor('files:node:updated')
 			addRow(7)

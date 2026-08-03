@@ -42,7 +42,7 @@
 											interface language is. Left to inherit `dir`, the
 											leading slash of `/Documents/تقرير.pdf` is a neutral
 											at the start of an RTL paragraph and gets rendered at
-											the far end — the path reads as though it were named
+											the far end - the path reads as though it were named
 											backwards.
 										-->
 										<span class="file-path" dir="ltr">{{ row.filePath }}</span>

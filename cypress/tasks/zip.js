@@ -5,7 +5,7 @@ const zlib = require('zlib')
  * than at the archive's size.
  *
  * `ZipInterceptorPlugin` rebuilds an archive member by member, and the bug that
- * shipped once — the gate keyed off the container rather than the member — produced
+ * shipped once - the gate keyed off the container rather than the member - produced
  * a perfectly valid archive of perfectly clean originals. Nothing short of unpacking
  * it and probing each member can see that.
  *
@@ -64,7 +64,7 @@ function list({ base64 }) {
 	let offset = buffer.readUInt32LE(end + 16)
 
 	// `ZipStreamer` writes ZIP64 whenever it cannot know the sizes up front, which
-	// for a streamed archive is always — so the 32-bit fields above are the 0xFFFF…
+	// for a streamed archive is always - so the 32-bit fields above are the 0xFFFF…
 	// sentinels and the real values live in the ZIP64 records. Reading the sentinel
 	// as an offset is how this first showed up: a seek to 4294967295.
 	if (count === 0xffff || offset === 0xffffffff) {

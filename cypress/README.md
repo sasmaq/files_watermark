@@ -1,7 +1,7 @@
 # End-to-end suite
 
 Drives a real Nextcloud 31 with the app enabled, and judges every scenario by the
-**bytes that come back** — not by a spinner stopping or a toast appearing.
+**bytes that come back** - not by a spinner stopping or a toast appearing.
 
 ## Running it
 
@@ -19,7 +19,7 @@ docker compose exec -u www-data nextcloud php occ app:enable files_watermark
 
 # Core allows 20 shares per 10 minutes per user. This suite rebuilds its users, folders
 # and shares on every run, so two runs inside that window exhaust the budget and the
-# share specs fail in their setup with an empty HTTP 429. Turn the limiter off — on a
+# share specs fail in their setup with an empty HTTP 429. Turn the limiter off - on a
 # throwaway test instance only:
 docker compose exec -u www-data nextcloud php occ \
   config:system:set ratelimit.protection.enabled --value false --type boolean
@@ -30,8 +30,8 @@ npm run test:e2e        # headless
 npm run test:e2e:open   # interactive
 ```
 
-If the local Cypress binary will not start — on macOS 26 it fails `cypress verify` with
-`bad option: --no-sandbox` — the runner can come from the official image instead:
+If the local Cypress binary will not start - on macOS 26 it fails `cypress verify` with
+`bad option: --no-sandbox` - the runner can come from the official image instead:
 
 ```sh
 docker compose exec -u www-data nextcloud php occ \
@@ -44,12 +44,12 @@ docker run --rm -v "$PWD":/e2e -w /e2e \
 ```
 
 The trusted domain is required: the container reaches the instance by a different host
-name, and Nextcloud answers an untrusted one with `400`. Two specs still fail that way —
+name, and Nextcloud answers an untrusted one with `400`. Two specs still fail that way -
 `06-archive-caps` and `11-prune-log` shell out to `occ` through `docker compose`, which
 does not exist inside the runner container. Everything else passes.
 
 `NC_URL`, `NC_ADMIN` and `NC_ADMIN_PASSWORD` override the target (`http://localhost:8080`,
-`admin`, `admin`). `NC_OCC` overrides how `occ` is invoked — it defaults to
+`admin`, `admin`). `NC_OCC` overrides how `occ` is invoked - it defaults to
 `docker compose exec -T -u www-data nextcloud php occ`, so a run against a real host wants
 something like `NC_OCC="sudo -u www-data php /var/www/nextcloud/occ"`.
 
@@ -58,7 +58,7 @@ the server-wide policy back to `on_demand` when it finishes.
 
 **After changing PHP, give opcache a moment.** The container runs with
 `opcache.revalidate_freq=60`, so a source change can take up to a minute to take
-effect — a suite re-run inside that window is testing the code you just replaced.
+effect - a suite re-run inside that window is testing the code you just replaced.
 `docker compose restart nextcloud` settles it immediately. (Frontend changes need
 `npm run build`; the mount is live, so no restart.)
 
@@ -82,7 +82,7 @@ effect — a suite re-run inside that window is testing the code you just replac
 ## How it is put together
 
 **Two transports, and the split matters.** `cy.request` serialises a body as UTF-8, so
-anything carrying file bytes goes through a Node task instead (`tasks/http.js`) — a
+anything carrying file bytes goes through a Node task instead (`tasks/http.js`) - a
 PDF uploaded through `cy.request` arrives corrupt, and the assertion that comes back
 is about the corruption. The app's own `/api/v1/*` endpoints go the other way, through
 the browser session: none of them is `#[NoCSRFRequired]`, so a basic-auth call to one
@@ -90,13 +90,13 @@ gets HTTP 412.
 
 **Evidence, per file type** (`tasks/pdf.js`, `tasks/image.js`, `tasks/zip.js`):
 
-- **PDF** — the app draws every watermark with a subsetted IBM Plex Sans Arabic, so
+- **PDF** - the app draws every watermark with a subsetted IBM Plex Sans Arabic, so
   `/BaseFont /XXXXXX+IBMPlexSansArabic` in the delivered bytes *is* the watermark.
   The face is written with two-byte code units, so the operand of a text-showing
   operator is the shaped string, which is what makes the Arabic assertions possible.
-- **Images** — fixtures are a flat white field and `inkRatio` is the fraction of
+- **Images** - fixtures are a flat white field and `inkRatio` is the fraction of
   pixels that are no longer that colour. A clean control upload has to measure zero.
-- **Archives** — unpacked in Node (ZIP64 included, since `\OC\Streamer` writes it) and
+- **Archives** - unpacked in Node (ZIP64 included, since `\OC\Streamer` writes it) and
   probed member by member. The container-gate bug produced a valid archive of clean
   originals; nothing less would see it.
 
@@ -105,9 +105,9 @@ in a hundred ways that have nothing to do with a watermark being drawn.
 
 ## Not covered here
 
-- **Office documents** — no renderer exists yet.
-- **S3 primary storage** — needs `docker-compose.s3.yml`; the suite is storage-agnostic
+- **Office documents** - no renderer exists yet.
+- **S3 primary storage** - needs `docker-compose.s3.yml`; the suite is storage-agnostic
   and would run against it unchanged, but nothing wires that up in CI.
-- **The bidi bug** — `07-arabic.cy.js` carries a pending test for Latin word order
+- **The bidi bug** - `07-arabic.cy.js` carries a pending test for Latin word order
   inside an RTL watermark. Asserting today's output would cement the bug; deleting
   `.skip` is the whole change once the shaper is fixed.

@@ -4,7 +4,7 @@ FROM php:${PHP_VERSION}-cli
 # Stand-in for shivammathur/setup-php: the extensions used by the watermarking
 # renderers and the test suite, plus composer itself.
 COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensions /usr/local/bin/
-# bcmath is required by tecnickcom/tc-lib-pdf — Composer refuses to resolve without it.
+# bcmath is required by tecnickcom/tc-lib-pdf - Composer refuses to resolve without it.
 RUN install-php-extensions gd imagick gmp mbstring dom zip bcmath @composer
 
 # git and unzip are what `composer install --prefer-dist` needs. Nothing else: the

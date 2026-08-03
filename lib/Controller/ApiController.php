@@ -43,7 +43,7 @@ class ApiController extends Controller {
 	/**
 	 * The global policy, or an empty list on an install where none has been saved yet.
 	 *
-	 * Admin-only, like the settings page it feeds. The Files app does not call this — the
+	 * Admin-only, like the settings page it feeds. The Files app does not call this - the
 	 * one thing it needs, the effective trigger, arrives as initial state from
 	 * {@see \OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener}.
 	 *
@@ -156,7 +156,7 @@ class ApiController extends Controller {
 
 		// The tag has to be an id of a tag that exists. A tag *name* is the obvious
 		// thing to type and used to be accepted, after which every watermark attempt
-		// died on `InvalidArgumentException: Tag id must be integer` — an HTTP 500 per
+		// died on `InvalidArgumentException: Tag id must be integer` - an HTTP 500 per
 		// request, with nothing in the settings page to hint at the cause.
 		if ($folderTag !== null) {
 			if (!ctype_digit($folderTag)) {
@@ -213,7 +213,7 @@ class ApiController extends Controller {
 		$config->setTrigger($trigger);
 		$config->setMimeTypes($mimeTypes);
 		$config->setFolderTag($folderTag);
-		// Delivery triggers render per fetch, so recording them is opt-in — see the
+		// Delivery triggers render per fetch, so recording them is opt-in - see the
 		// column's own note in Version1007Date20260801120000. Nothing to validate: it is
 		// a boolean, and the in-place rows it does not govern are written regardless.
 		$config->setLogDelivery($logDelivery);
@@ -325,7 +325,7 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
 		}
 
-		// Already watermarked — a benign no-op, not an error. The UI branches on
+		// Already watermarked - a benign no-op, not an error. The UI branches on
 		// this status to inform the user rather than showing a failure.
 		if (!$applied) {
 			return new DataResponse(['status' => 'already_watermarked', 'path' => $path]);
@@ -338,7 +338,7 @@ class ApiController extends Controller {
 	 * Undo an on-demand watermark by restoring the preserved original.
 	 *
 	 * The watermark is burned into the file content, so this restores the copy taken
-	 * before the burn rather than stripping anything. 422 when no such copy exists —
+	 * before the burn rather than stripping anything. 422 when no such copy exists -
 	 * a file watermarked before this feature landed, or one whose backup failed.
 	 */
 	#[NoAdminRequired]

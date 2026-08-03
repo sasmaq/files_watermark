@@ -29,7 +29,7 @@ services:
     # directory owned by root. `custom_apps` is a *writable* app path, so the
     # first-run install fails its writability check ("Cannot write into apps
     # directory"). Chown the dir (non-recursive, so the host-owned app files
-    # inside are left alone — they only need to be readable) before handing
+    # inside are left alone - they only need to be readable) before handing
     # off to the stock entrypoint.
     #
     # bcmath is the app's one platform requirement beyond PHP itself: tc-lib-pdf does
@@ -56,7 +56,7 @@ services:
       # Persist Nextcloud core + data across restarts.
       - nextcloud_data:/var/www/html
       # Live-mount the app. After a frontend change, re-run `npm run build`
-      # on the host and hard-refresh the browser — no container restart needed.
+      # on the host and hard-refresh the browser - no container restart needed.
       - ./:/var/www/html/custom_apps/files_watermark
 
 volumes:

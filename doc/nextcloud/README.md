@@ -22,17 +22,17 @@ backend + Vue 3 frontend).
 
 ## Top-level manual structure
 
-1. **Prologue** — code of conduct, communication, bugtracker, security guidelines, ecosystem compatibility
-2. **Getting started** — development process, environment, coding style → [01](01-getting-started.md)
-3. **Basic concepts** — the App Framework essentials → [02](02-basic-concepts.md)
-4. **App development** — building an app end-to-end → [03](03-app-development.md)
-5. **ExApp development** — external apps (AppAPI / out-of-process apps)
-6. **Server development** — contributing to / building the server → [04](04-server-development.md)
-7. **Digging deeper** — 40+ specialized APIs → [05](05-digging-deeper.md)
-8. **App publishing and maintenance** — releasing & maintaining → [06](06-app-publishing.md)
-9. **Interface & interaction design** — UX foundations, layout, components
-10. **HTML/CSS guidelines** — markup and styling conventions
-11. **Clients and Client APIs** — OCS, WebDAV, mobile/desktop client APIs → [07](07-client-apis.md)
+1. **Prologue** - code of conduct, communication, bugtracker, security guidelines, ecosystem compatibility
+2. **Getting started** - development process, environment, coding style → [01](01-getting-started.md)
+3. **Basic concepts** - the App Framework essentials → [02](02-basic-concepts.md)
+4. **App development** - building an app end-to-end → [03](03-app-development.md)
+5. **ExApp development** - external apps (AppAPI / out-of-process apps)
+6. **Server development** - contributing to / building the server → [04](04-server-development.md)
+7. **Digging deeper** - 40+ specialized APIs → [05](05-digging-deeper.md)
+8. **App publishing and maintenance** - releasing & maintaining → [06](06-app-publishing.md)
+9. **Interface & interaction design** - UX foundations, layout, components
+10. **HTML/CSS guidelines** - markup and styling conventions
+11. **Clients and Client APIs** - OCS, WebDAV, mobile/desktop client APIs → [07](07-client-apis.md)
 
 ## Quick orientation for app authors
 
@@ -55,4 +55,4 @@ backend + Vue 3 frontend).
   ```
 - Use **dependency injection** everywhere; prefer auto-wiring (`<namespace>` in info.xml).
 - Use the **OCP** namespace for public, stable APIs. `OC`/`OCA\<App>` is internal.
-- Use **typed events** (`OCP\EventDispatcher`) — hooks/emitters are deprecated.
+- Use **typed events** (`OCP\EventDispatcher`) - hooks/emitters are deprecated.

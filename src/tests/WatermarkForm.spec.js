@@ -56,7 +56,7 @@ describe('WatermarkForm', () => {
 	describe('identity placeholders', () => {
 		// {username} used to resolve to the display name, so the account name could not be
 		// watermarked at all and the token said one thing while meaning another. Both are
-		// offered now, and the form has to make clear which is which — otherwise an admin
+		// offered now, and the form has to make clear which is which - otherwise an admin
 		// picks by name and gets the other one.
 		it('offers both the display name and the account name', () => {
 			const chips = mountForm().findAll('.wm-chip').map((c) => c.text())
@@ -93,7 +93,7 @@ describe('WatermarkForm', () => {
 	// direction comes from the *text*, never from the interface language.
 	//
 	// This matters because the browser is a competent bidi engine and the renderers are
-	// not obviously so — an Arabic template looks right in the preview the moment it is
+	// not obviously so - an Arabic template looks right in the preview the moment it is
 	// typed, whether or not anything downstream can reproduce it.
 	describe('preview direction', () => {
 		const previewText = (wrapper) => wrapper.find('.wm-preview__svg text')
@@ -115,14 +115,14 @@ describe('WatermarkForm', () => {
 		it('takes the direction from the first strong character, as the shaper does', () => {
 			// Com\Tecnick\Unicode\Bidi resolves the paragraph direction from the first
 			// strong character, so a template opening in Latin is an LTR paragraph however
-			// much Arabic follows it — and the preview has to agree, or it shows an
+			// much Arabic follows it - and the preview has to agree, or it shows an
 			// admin a different arrangement from the one that gets stamped into the file.
 			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: 'Confidential سري' } })
 			expect(previewText(wrapper).attributes('direction')).toBe('ltr')
 		})
 
 		it('ignores digits and punctuation, which are not strong characters', () => {
-			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '2026-07-31 — سري' } })
+			const wrapper = mountForm({ modelValue: { type: 'text', textTemplate: '2026-07-31 - سري' } })
 			expect(previewText(wrapper).attributes('direction')).toBe('rtl')
 		})
 
@@ -241,7 +241,7 @@ describe('WatermarkForm', () => {
 
 		it('offers exactly the types the server supports', () => {
 			// Free text here let an admin store a typo, which is a filter nothing can
-			// match — a policy that silently watermarks nothing.
+			// match - a policy that silently watermarks nothing.
 			const wrapper = mountForm({ isAdmin: true })
 			expect(mimeBoxes(wrapper)).toHaveLength(4)
 			const text = wrapper.text()
@@ -334,8 +334,8 @@ describe('WatermarkForm', () => {
 		})
 
 		it('is hidden for the in-place triggers, which are always recorded', () => {
-			// Those rows are not optional history — the Files-list badge and the guard
-			// against a second burn read them — so offering a switch would promise
+			// Those rows are not optional history - the Files-list badge and the guard
+			// against a second burn read them - so offering a switch would promise
 			// something the server will not do.
 			for (const trigger of ['on_demand', 'on_upload']) {
 				expect(auditBox(mountForm({ modelValue: { trigger } }))).toBeNull()

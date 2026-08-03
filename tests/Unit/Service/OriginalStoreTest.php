@@ -179,7 +179,7 @@ class OriginalStoreTest extends TestCase {
 			'nested under it' => ['/bob/files/.files_watermark/originals/220', true],
 			'an ordinary file' => ['/alice/files/report.pdf', false],
 			// A user is free to make a folder of that name themselves; only the app's
-			// own path — the full folder/subfolder pair under files/ — is excluded.
+			// own path - the full folder/subfolder pair under files/ - is excluded.
 			'a lookalike folder' => ['/alice/files/.files_watermark/notes.pdf', false],
 			'a file merely named like it' => ['/alice/files/originals/11', false],
 		];

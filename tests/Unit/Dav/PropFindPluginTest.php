@@ -117,8 +117,8 @@ class PropFindPluginTest extends TestCase {
 		$this->plugin->propFind($depth1, $davDir);
 
 		// The listing is primed in a single batch, plus one lookup for the folder's own
-		// id (a folder is never watermarked, but it is still asked). Two queries, and —
-		// crucially — a constant two rather than one per child.
+		// id (a folder is never watermarked, but it is still asked). Two queries, and -
+		// crucially - a constant two rather than one per child.
 		$this->assertSame([[10, 11, 12], [1]], $queries);
 
 		// Children are now answered from the primed cache: no further queries at all.

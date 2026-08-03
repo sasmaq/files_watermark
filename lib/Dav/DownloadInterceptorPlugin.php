@@ -18,15 +18,15 @@ use Sabre\HTTP\ResponseInterface;
  * Watermarks files on download.
  *
  * The `on_download` trigger streams a freshly watermarked copy in place of the
- * original whenever a file is fetched over WebDAV — the web Files app's Download
+ * original whenever a file is fetched over WebDAV - the web Files app's Download
  * action, desktop/mobile sync clients and direct DAV links all issue a plain
  * `GET` on the file node, so intercepting `beforeMethod:GET` here is the single
  * point that covers them all. The original on storage is never modified; the
  * watermarked bytes live only in the streamed temp copy.
  *
  * This complements {@see PropFindPlugin} (which serves the watermarked *status*).
- * The decision and rendering — supported-type check, trigger gating and watermark
- * generation — live in {@see WatermarkService::watermarkForDownload}; this plugin is
+ * The decision and rendering - supported-type check, trigger gating and watermark
+ * generation - live in {@see WatermarkService::watermarkForDownload}; this plugin is
  * the thin Sabre adapter that resolves the node, streams the copy and cleans up.
  *
  * The plugin is registered on two DAV servers, which is what gives public links the
@@ -36,7 +36,7 @@ use Sabre\HTTP\ResponseInterface;
  * {@see \OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener}). The public
  * instance is constructed with $publicContext = true because a public link is served
  * off the owner's own storage, so the service cannot tell it is share access from the
- * mount alone — see {@see WatermarkService::isShareAccess}.
+ * mount alone - see {@see WatermarkService::isShareAccess}.
  */
 class DownloadInterceptorPlugin extends ServerPlugin {
 
@@ -52,7 +52,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		$this->server = $server;
 		// Hook the same event Sabre's CorePlugin streams file bodies on (`method:GET`),
 		// at a lower priority number so we run *first*. Returning false stops CorePlugin
-		// from serving the original, but — unlike returning false from `beforeMethod` —
+		// from serving the original, but - unlike returning false from `beforeMethod` -
 		// Sabre still runs `afterMethod` and flushes our response via `sendResponse`.
 		// (A false from `beforeMethod:GET` returns before `sendResponse`, sending 0 bytes.)
 		$server->on('method:GET', [$this, 'httpGet'], 90);
@@ -89,7 +89,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		$tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
 		if ($tmpPath === null) {
 			// No watermarked copy was produced. For `on_share` a recipient must never
-			// receive the clean original — so if the file *should* have been
+			// receive the clean original - so if the file *should* have been
 			// watermarked for this shared access but couldn't be (e.g. a PDF the
 			// renderer can't parse), deny the fetch instead of leaking the original.
 			// This closes the viewer/inline-view bypass. (`on_download` keeps its
@@ -135,7 +135,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	 *
 	 * Deferring to core also makes the headers consistent with the rest of the app:
 	 * PROPFIND already reports the stored file's size, never the watermarked copy's, so a
-	 * HEAD that answered with the render's length was the odd one out — and paid a full
+	 * HEAD that answered with the render's length was the odd one out - and paid a full
 	 * render for a response with no body.
 	 */
 	private function isHeadRequest(RequestInterface $request): bool {

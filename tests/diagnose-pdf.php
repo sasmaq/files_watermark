@@ -12,7 +12,7 @@ declare(strict_types=1);
  * content stream names is still defined. Prints a verdict per page.
  *
  * Written for the "blank page with only the watermark on it" report, where the file is
- * intact by every ordinary measure — the bytes are all still there — and the failure is
+ * intact by every ordinary measure - the bytes are all still there - and the failure is
  * only visible in how a *reader* resolves the page. Nothing here is part of the app;
  * it is a bench instrument for a file that cannot be shared.
  */
@@ -37,8 +37,8 @@ if ($source === '' || !is_file($source)) {
 /**
  * A parsed object's dictionary as name => value token.
  *
- * The parser hands back a dictionary as a flat *token list* — `[["/","Type"],
- * ["/","XObject"], ["/","Subtype"], ["/","Form"], …]` — not as pairs, so the pairing
+ * The parser hands back a dictionary as a flat *token list* - `[["/","Type"],
+ * ["/","XObject"], ["/","Subtype"], ["/","Form"], …]` - not as pairs, so the pairing
  * has to happen here. Which is convenient for this tool: pairing the tokens in order
  * is exactly what a reader does, so a dictionary with a missing value shows up as the
  * wrong value on a key rather than being silently repaired.
@@ -102,14 +102,16 @@ function objStream(array $obj): ?string {
 /** Resource names a content stream actually uses, by category. */
 function namesUsed(string $content): array {
 	$used = [];
-	foreach ([
-		'Font' => '~/([^\s/<>\[\]()]+)\s+[\d.-]+\s+Tf~',
-		'XObject' => '~/([^\s/<>\[\]()]+)\s+Do~',
-		'ExtGState' => '~/([^\s/<>\[\]()]+)\s+gs~',
-		'ColorSpace' => '~/([^\s/<>\[\]()]+)\s+(?:cs|CS)\b~',
-		'Shading' => '~/([^\s/<>\[\]()]+)\s+sh~',
-		'Pattern' => '~/([^\s/<>\[\]()]+)\s+scn~',
-	] as $type => $pattern) {
+	foreach (
+		[
+			'Font' => '~/([^\s/<>\[\]()]+)\s+[\d.-]+\s+Tf~',
+			'XObject' => '~/([^\s/<>\[\]()]+)\s+Do~',
+			'ExtGState' => '~/([^\s/<>\[\]()]+)\s+gs~',
+			'ColorSpace' => '~/([^\s/<>\[\]()]+)\s+(?:cs|CS)\b~',
+			'Shading' => '~/([^\s/<>\[\]()]+)\s+sh~',
+			'Pattern' => '~/([^\s/<>\[\]()]+)\s+scn~',
+		] as $type => $pattern
+	) {
 		if (preg_match_all($pattern, $content, $m) === 0) {
 			continue;
 		}
@@ -147,7 +149,7 @@ try {
 	(new PdfWatermarker())->apply($source, $dest, $config, ['username' => 'Diagnostic']);
 } catch (\Throwable $e) {
 	echo 'REFUSED: ' . get_class($e) . ': ' . $e->getMessage() . "\n";
-	echo "The file was skipped rather than blanked — this is not the reported failure.\n";
+	echo "The file was skipped rather than blanked - this is not the reported failure.\n";
 	exit(1);
 }
 
@@ -179,7 +181,7 @@ foreach ($objects as $num => $obj) {
 	// Was the copied stream readable, or did it stay compressed because /Filter was
 	// mis-paired? The parser decodes what it can; operators mean it came through.
 	if (preg_match('~(BT|Do|re|cm|Tj|TJ)~', $content) !== 1) {
-		echo "  PROBLEM: no drawing operators in the copied stream — it is being read as\n"
+		echo "  PROBLEM: no drawing operators in the copied stream - it is being read as\n"
 			. "           raw bytes, which is what a mis-paired /Filter entry causes\n";
 		$problems++;
 	}
@@ -187,7 +189,7 @@ foreach ($objects as $num => $obj) {
 	$resRaw = $dict['Resources'] ?? null;
 	$resDict = subDict($resRaw, $objects);
 	if (is_array($resRaw) && ($resRaw[0] ?? null) === '/') {
-		echo '  PROBLEM: /Resources holds the name /' . $resRaw[1] . " instead of a dictionary —\n"
+		echo '  PROBLEM: /Resources holds the name /' . $resRaw[1] . " instead of a dictionary -\n"
 			. "           it has swallowed the entry after it, and every later key in this\n"
 			. "           dictionary is now paired with the wrong value\n";
 		$problems++;
@@ -201,7 +203,7 @@ foreach ($objects as $num => $obj) {
 			static fn (string $n): bool => !array_key_exists($n, $defined),
 		));
 		echo "  $type: uses " . implode(', ', $names)
-			. ($missing === [] ? ' — all defined' : ' — MISSING ' . implode(', ', $missing)) . "\n";
+			. ($missing === [] ? ' - all defined' : ' - MISSING ' . implode(', ', $missing)) . "\n";
 		if ($missing !== []) {
 			$problems++;
 		}
@@ -210,11 +212,11 @@ foreach ($objects as $num => $obj) {
 
 echo "\n";
 if ($forms === 0) {
-	echo "VERDICT: no imported pages in the output — nothing of the original was carried over.\n";
+	echo "VERDICT: no imported pages in the output - nothing of the original was carried over.\n";
 	exit(1);
 }
 echo $problems === 0
 	? "VERDICT: $forms page(s) imported, content and resources intact. If this file still\n"
-		. "         renders blank, the cause is in how it is *drawn*, not in what was copied —\n"
-		. "         send this output along with the file.\n"
-	: "VERDICT: $problems problem(s) across $forms page(s) — see above.\n";
+	. "         renders blank, the cause is in how it is *drawn*, not in what was copied -\n"
+	. "         send this output along with the file.\n"
+	: "VERDICT: $problems problem(s) across $forms page(s) - see above.\n";

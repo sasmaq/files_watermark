@@ -1,7 +1,7 @@
 // Jenkins equivalent of .github/workflows/php.yml and .github/workflows/nodejs.yml.
 //
 // The GitHub triggers (push to main, pull_request) map to Multibranch Pipeline
-// branch/PR discovery, so there is no `triggers` block here — configure the job
+// branch/PR discovery, so there is no `triggers` block here - configure the job
 // as a Multibranch Pipeline (or GitHub Branch Source) and it fires on the same
 // events.
 
@@ -9,7 +9,7 @@ pipeline {
 	agent none
 
 	options {
-		// Mirrors `concurrency: cancel-in-progress: true` — a new build on the
+		// Mirrors `concurrency: cancel-in-progress: true` - a new build on the
 		// same branch aborts the one still running.
 		disableConcurrentBuilds(abortPrevious: true)
 		timestamps()
@@ -29,7 +29,7 @@ pipeline {
 
 	stages {
 		stage('Checks') {
-			// `fail-fast: false` — one failing matrix leg does not cancel the rest.
+			// `fail-fast: false` - one failing matrix leg does not cancel the rest.
 			failFast false
 
 			parallel {
@@ -65,7 +65,7 @@ pipeline {
 
 				stage('Coding standard') {
 					// The Nextcloud coding standard is version-independent, so one PHP
-					// version is enough — unlike the syntax stages, which are what catch
+					// version is enough - unlike the syntax stages, which are what catch
 					// version-specific parse errors. Pinned to the lowest supported version.
 					agent {
 						dockerfile {
@@ -85,7 +85,7 @@ pipeline {
 					// One version is enough: psalm.xml pins `phpVersion="8.2"`, so the
 					// analysis is identical on 8.3 and the second leg would only re-prove
 					// that. The ci/ image carries imagick, which is what gets the optional
-					// Imagick branch of ImageWatermarker analysed — Psalm reflects extension
+					// Imagick branch of ImageWatermarker analysed - Psalm reflects extension
 					// classes from the running PHP, and psalm.xml suppresses the
 					// undefined-class noise that a host without the extension would produce.
 					agent {
@@ -199,7 +199,7 @@ pipeline {
 		// Mirrors .github/workflows/e2e.yml. Deliberately *not* inside a container
 		// agent and not in the parallel block above: it stands up a real Nextcloud
 		// with `docker compose`, bind-mounting the workspace into the container, so
-		// it needs the agent's own Docker rather than Docker inside a Docker agent —
+		// it needs the agent's own Docker rather than Docker inside a Docker agent -
 		// a bind mount from within a container agent would resolve against the host
 		// filesystem and mount the wrong (or an empty) directory.
 		//

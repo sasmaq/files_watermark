@@ -25,10 +25,10 @@ use PHPUnit\Framework\TestCase;
  * already recorded, so the remaining steps meet instances in four different states and
  * have to land all of them on the same schema:
  *
- * 1. **fresh** — no tables at all;
- * 2. **applied 1000** — tables exist, no flattening columns;
- * 3. **applied 1000 + 1001** — tables exist *with* the flattening columns;
- * 4. **applied 1003** — tables exist as that step created them, scope columns included.
+ * 1. **fresh** - no tables at all;
+ * 2. **applied 1000** - tables exist, no flattening columns;
+ * 3. **applied 1000 + 1001** - tables exist *with* the flattening columns;
+ * 4. **applied 1003** - tables exist as that step created them, scope columns included.
  *
  * Only the first is what a developer sees locally, which is exactly why this is a test
  * and not a comment. An `addColumn` that loses its `hasColumn` guard, or a `createTable`
@@ -39,7 +39,7 @@ use PHPUnit\Framework\TestCase;
  * 1005 drops `group_id`, 1006 drops `user_id` and 1008 drops `position` from every install
  * that does. 1004 is a data-only step and changes no schema, so it is absent here.
  *
- * Doctrine is not a dependency of this app — Nextcloud provides it at runtime — so the
+ * Doctrine is not a dependency of this app - Nextcloud provides it at runtime - so the
  * schema objects here are fakes. That is enough: what is under test is the migrations'
  * branching, not Doctrine's DDL.
  */
@@ -51,13 +51,24 @@ class SchemaConvergenceTest extends TestCase {
 	 * steps already built.
 	 */
 	private const EXPECTED_CONFIG_COLUMNS = [
-		'id', 'type', 'text_template', 'image_path',
-		'opacity', 'font_size', 'color', 'rotation', 'trigger', 'mime_types', 'folder_tag',
-		'created_at', 'updated_at', 'log_delivery',
+		'id',
+		'type',
+		'text_template',
+		'image_path',
+		'opacity',
+		'font_size',
+		'color',
+		'rotation',
+		'trigger',
+		'mime_types',
+		'folder_tag',
+		'created_at',
+		'updated_at',
+		'log_delivery',
 	];
 
 	/**
-	 * What the pre-1007 states are seeded with — every expected column *except* the one
+	 * What the pre-1007 states are seeded with - every expected column *except* the one
 	 * 1007 adds. Seeding `log_delivery` too would let its `hasColumn` guard skip the
 	 * `addColumn` on all three upgrade paths, which is precisely the branch under test.
 	 *
@@ -65,16 +76,26 @@ class SchemaConvergenceTest extends TestCase {
 	 * install that predates 1008 has it, and no install that survives 1008 does.
 	 */
 	private const PRE_1007_CONFIG_COLUMNS = [
-		'id', 'type', 'text_template', 'image_path',
-		'opacity', 'font_size', 'color', 'rotation', 'trigger', 'mime_types', 'folder_tag',
-		'created_at', 'updated_at',
+		'id',
+		'type',
+		'text_template',
+		'image_path',
+		'opacity',
+		'font_size',
+		'color',
+		'rotation',
+		'trigger',
+		'mime_types',
+		'folder_tag',
+		'created_at',
+		'updated_at',
 	];
 
 	/**
 	 * Columns an earlier version created and a later one dropped. Seeding them here is
 	 * what makes the upgrade states differ from the fresh one at all.
 	 *
-	 * `position` joins the scope columns as of 1008: same story, one step later — stored,
+	 * `position` joins the scope columns as of 1008: same story, one step later - stored,
 	 * never read, and dropped rather than implemented.
 	 */
 	private const DROPPED_CONFIG_COLUMNS = ['user_id', 'group_id', 'position'];
@@ -174,7 +195,7 @@ class SchemaConvergenceTest extends TestCase {
 		}
 	}
 
-	/** Re-running must not duplicate columns or throw — the tables already exist. */
+	/** Re-running must not duplicate columns or throw - the tables already exist. */
 	public function testRunningTwiceIsHarmless(): void {
 		$schema = new FakeSchema();
 		$this->runMigration($schema);
@@ -190,7 +211,7 @@ class SchemaConvergenceTest extends TestCase {
 	 * {@see WatermarkImageStore::isReference()}, so the values that survive validation are
 	 * exactly the ones the renderers can resolve.
 	 *
-	 * The query plumbing is not mocked here — that would assert the shape of a
+	 * The query plumbing is not mocked here - that would assert the shape of a
 	 * QueryBuilder chain rather than any behaviour. What matters is the predicate, and
 	 * that it treats a pre-validation absolute path as legacy while leaving a
 	 * store-issued reference alone.
@@ -199,12 +220,14 @@ class SchemaConvergenceTest extends TestCase {
 		$valid = str_repeat('a', 32) . '.png';
 		$this->assertTrue(WatermarkImageStore::isReference($valid));
 
-		foreach ([
-			'/var/www/html/core/img/logo.png',
-			'/etc/passwd',
-			'../../' . str_repeat('a', 32) . '.png',
-			'logo.png',
-		] as $legacy) {
+		foreach (
+			[
+				'/var/www/html/core/img/logo.png',
+				'/etc/passwd',
+				'../../' . str_repeat('a', 32) . '.png',
+				'logo.png',
+			] as $legacy
+		) {
 			$this->assertFalse(
 				WatermarkImageStore::isReference($legacy),
 				"$legacy should be treated as a legacy value and cleared",
@@ -257,7 +280,7 @@ class SchemaConvergenceTest extends TestCase {
 
 	/**
 	 * A connection whose query builder accepts the per-user delete and reports nothing
-	 * removed. The delete's *SQL* is not what this test is about — the ordering against
+	 * removed. The delete's *SQL* is not what this test is about - the ordering against
 	 * the column drop is.
 	 */
 	private function stubConnection(): IDBConnection {

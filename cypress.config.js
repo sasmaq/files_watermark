@@ -3,7 +3,7 @@ const { defineConfig } = require('cypress')
 const tasks = require('./cypress/tasks/index.js')
 
 /**
- * End-to-end suite. Drives a real Nextcloud with the app enabled — see
+ * End-to-end suite. Drives a real Nextcloud with the app enabled - see
  * `cypress/README.md` for standing it up.
  *
  * `testIsolation` is off: these specs share one server-wide policy and a folder of

@@ -7,7 +7,7 @@
  * which must return the uploaded bytes exactly. Reading a size or an mtime would pass
  * against a file that had been rewritten with the same length.
  *
- * `on_download` applies to *everyone*, the owner included — that is what separates it
+ * `on_download` applies to *everyone*, the owner included - that is what separates it
  * from `on_share`, and it is the cell of the matrix that a suite run only as the owner
  * would otherwise never distinguish.
  */
@@ -71,7 +71,7 @@ describe('On-download watermarking', () => {
 	})
 
 	/**
-	 * One download, one row — the regression that reported itself as "the log adds two
+	 * One download, one row - the regression that reported itself as "the log adds two
 	 * entries per download".
 	 *
 	 * The Files app's download sends **HEAD then GET**, and Sabre serves a HEAD by

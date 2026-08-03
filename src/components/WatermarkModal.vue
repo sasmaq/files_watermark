@@ -70,7 +70,7 @@ const estimatedSeconds = computed(() => {
 
 // A real plural call rather than "second(s)". The parenthesised form is a workaround for
 // English having two forms and is unusable in Arabic, which has six and inflects the noun
-// differently in each — "ثانية واحدة", "ثانيتان", "3 ثوانٍ", "11 ثانية" are not one string
+// differently in each - "ثانية واحدة", "ثانيتان", "3 ثوانٍ", "11 ثانية" are not one string
 // with a number swapped in. This is the app's only plural, and the `pluralForm` line in
 // l10n/ar.json is what makes it pick correctly.
 const estimateHint = computed(() => n(
@@ -90,7 +90,7 @@ async function apply() {
 		const res = await axios.post(generateUrl('/apps/files_watermark/api/v1/apply'), {
 			path: props.filePath,
 		})
-		// The backend reports an already-watermarked file as a benign no-op — treat
+		// The backend reports an already-watermarked file as a benign no-op - treat
 		// it as informational, and still emit `watermarked` so the row badge / action
 		// state catch up if the client cache was stale.
 		if (res?.data?.status === 'already_watermarked') {

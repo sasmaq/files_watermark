@@ -25,14 +25,14 @@ use Psr\Log\LoggerInterface;
  * `/public.php/dav/files/{token}/`, a separate Sabre server built in
  * `apps/dav/appinfo/v2/publicremote.php` that announces itself with
  * BeforeSabrePubliclyLoadedEvent instead of SabrePluginAddEvent. Without this listener
- * the interceptor is simply absent there and every public-link download — including the
- * inline fetch the viewer makes on the share page — serves the clean original.
+ * the interceptor is simply absent there and every public-link download - including the
+ * inline fetch the viewer makes on the share page - serves the clean original.
  *
  * The plugin is built by hand rather than pulled from the container because this
  * instance must carry $publicContext = true: the public endpoint mounts the file from
  * the owner's own storage, so share access is not detectable from the mount.
  *
- * PropFindPlugin is deliberately not registered here — the `is-watermarked` property
+ * PropFindPlugin is deliberately not registered here - the `is-watermarked` property
  * only feeds the logged-in Files list, which no public visitor sees.
  *
  * @template-implements IEventListener<BeforeSabrePubliclyLoadedEvent>
@@ -61,7 +61,7 @@ class SabrePublicPluginAddListener implements IEventListener {
 		));
 
 		// Folder shares are downloaded as an archive, which the single-file interceptor
-		// never sees — same gap as on the authenticated server.
+		// never sees - same gap as on the authenticated server.
 		$server->addPlugin(new ZipInterceptorPlugin(
 			$this->container->get(WatermarkService::class),
 			$this->container->get(IDateTimeZone::class),

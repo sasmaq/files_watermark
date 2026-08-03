@@ -8,12 +8,12 @@
  *    entry in `appinfo/info.xml`, which no unit test reads. A class that is never
  *    listed is a command that does not exist, and its unit tests stay green;
  *  - **it deletes the right rows in a real database.** The mapper tests assert the
- *    `WHERE` clauses against a mocked query builder — they cannot see a clause that is
+ *    `WHERE` clauses against a mocked query builder - they cannot see a clause that is
  *    valid SQL and matches the wrong thing.
  *
  * The in-place half is the one worth being careful about: those rows are not history,
  * they are how the app knows a file's stored bytes carry a watermark. Pruning cannot
- * reach them at all — not by default, but by construction — so the last test here asks
+ * reach them at all - not by default, but by construction - so the last test here asks
  * for the flag that used to allow it and expects the command to refuse.
  */
 
@@ -85,7 +85,7 @@ describe('occ files_watermark:prune-log', () => {
 
 	it('leaves everything alone when nothing is old enough', () => {
 		// The rows were written seconds ago, so the default 90-day retention must not
-		// match them — an off-by-one on the cutoff would take the lot.
+		// match them - an off-by-one on the cutoff would take the lot.
 		cy.task('nc:occ', { args: ['files_watermark:prune-log'] }).then((result) => {
 			expect(result.code, result.stderr).to.eq(0)
 			expect(result.stdout).to.contain('Deleted 0 row(s)')
@@ -108,7 +108,7 @@ describe('occ files_watermark:prune-log', () => {
 
 	it('has no option that would clear a badge', () => {
 		// The guarantee is that a retention command cannot make the app forget a file it
-		// has stamped — so the flag that used to allow it is gone, and asking for it is a
+		// has stamped - so the flag that used to allow it is gone, and asking for it is a
 		// usage error rather than a silently ignored argument.
 		cy.task('nc:occ', { args: ['files_watermark:prune-log', '--all', '--include-applied'] })
 			.then((result) => {

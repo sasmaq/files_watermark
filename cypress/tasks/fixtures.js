@@ -10,7 +10,7 @@ const zlib = require('zlib')
  * be that.
  *
  * They are deliberately small. Delivery-time triggers render per fetch, so a large
- * fixture buys nothing but a slow suite — the skeleton PDFs are used where a real
+ * fixture buys nothing but a slow suite - the skeleton PDFs are used where a real
  * document is the point (see `cy.wmSkeleton`).
  */
 
@@ -94,7 +94,7 @@ function chunk(type, data) {
 }
 
 /**
- * A flat single-colour 8-bit RGB PNG — a field with no ink on it.
+ * A flat single-colour 8-bit RGB PNG - a field with no ink on it.
  *
  * @param {{width?: number, height?: number, color?: number[]}} args canvas size and fill
  * @return {string} the file, base64
