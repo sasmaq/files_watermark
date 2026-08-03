@@ -91,7 +91,7 @@ Things that produce a wrong file, or say something untrue about one.
 ### End-to-end gaps
 
 - [ ] **Encrypted / password-protected PDF** through every trigger.
-- [ ] **The admin UI under an Arabic locale** — settings, audit log and the live preview at
+- [x] **The admin UI under an Arabic locale** — settings, audit log and the live preview at
   `dir="rtl"`, with the preview matching the rendered output rather than merely looking
   plausible. [notes](development.md#admin-ui-arabic-interface)
 - [ ] **Concurrent uploads of the same path** — `suppressFor()` is a per-process static and

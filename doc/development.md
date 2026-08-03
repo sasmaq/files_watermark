@@ -1021,11 +1021,11 @@ base direction is pinned to the rule the renderer uses rather than to the viewer
   the MIME labels and `AuditLog.vue`'s headers were already wrapped
   - **the samples are translated on purpose**, and it is the one entry here that is a decision
     rather than a chore. `John Doe` in a Latin face tells an Arabic deployment nothing about
-    its own watermarks, so `ar` renders `صالح المقوشي` / `s.almuqwashi` / `مستند.pdf` — which puts
+    its own watermarks, so `ar` renders `فلان الفلاني` / `s.almuqwashi` / `مستند.pdf` — which puts
     real Arabic through the preview's shaping and direction handling the moment the page opens
   - the help text that names those samples now **takes them as parameters** instead of
     repeating them, because a sentence quoting `(John Doe)` beside a chip tooltip reading
-    `صالح المقوشي` is two translations of one fact, drifting independently
+    `فلان الفلاني` is two translations of one fact, drifting independently
   - the `{displayname} - {date}` field placeholder went the other way: **un-wrapped**. The
     tokens are identifiers the server matches literally, so a translated copy would offer an
     admin a template that comes straight back as a 400. It reads from `DEFAULTS` now
