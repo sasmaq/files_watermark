@@ -30,6 +30,24 @@ npm run test:e2e        # headless
 npm run test:e2e:open   # interactive
 ```
 
+If the local Cypress binary will not start — on macOS 26 it fails `cypress verify` with
+`bad option: --no-sandbox` — the runner can come from the official image instead:
+
+```sh
+docker compose exec -u www-data nextcloud php occ \
+  config:system:set trusted_domains 1 --value=host.docker.internal
+
+docker run --rm -v "$PWD":/e2e -w /e2e \
+  --add-host=host.docker.internal:host-gateway \
+  -e NC_URL=http://host.docker.internal:8080 \
+  cypress/included:15.19.0
+```
+
+The trusted domain is required: the container reaches the instance by a different host
+name, and Nextcloud answers an untrusted one with `400`. Two specs still fail that way —
+`06-archive-caps` and `11-prune-log` shell out to `occ` through `docker compose`, which
+does not exist inside the runner container. Everything else passes.
+
 `NC_URL`, `NC_ADMIN` and `NC_ADMIN_PASSWORD` override the target (`http://localhost:8080`,
 `admin`, `admin`). `NC_OCC` overrides how `occ` is invoked — it defaults to
 `docker compose exec -T -u www-data nextcloud php occ`, so a run against a real host wants
@@ -58,6 +76,8 @@ effect — a suite re-run inside that window is testing the code you just replac
 | `08-images` | ink on the canvas, size preserved, JPEG round trip |
 | `09-admin-settings` | the settings page mounts, persists, and previews what it saves |
 | `10-files-app` | the file actions, their mirroring, and the row badge |
+| `11-prune-log` | the retention command, and the in-place rows it must refuse to touch |
+| `12-trigger-matrix` | all four triggers × all six access paths, in one table |
 
 ## How it is put together
 

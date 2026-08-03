@@ -44,7 +44,7 @@ has any — see [No external binaries](#no-external-binaries).
 | [Data model](#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, two dead columns |
 | [Environment](#environment-and-dependencies) | PHP + `bcmath` + Imagick/GD. **No external binaries** | LibreOffice, `exif` |
 | [Security](#security) | Two real vulnerabilities found and fixed; their residue cleaned up | Rate limiting, font-metrics provenance |
-| [Testing](#testing) | 448 PHPUnit + 91 Jest + 63 Cypress E2E, no binary-conditional skips | The rest of the trigger matrix, static analysis |
+| [Testing](#testing) | 482 PHPUnit + 91 Jest + 88 Cypress E2E, no binary-conditional skips | Psalm level 3, the `on_upload` overwrite hole |
 | [Docs and release](#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -119,9 +119,12 @@ Ordered by what would hurt most to ship without. Each links to the detail below.
 - [x] [Cypress E2E](#integration--e2e-cypress) — **built.** 52 tests across 10 specs, run
   against a real Nextcloud 31, each judged on the bytes that come back rather than on the UI
   saying it worked
-- [ ] [The trigger × access matrix](#manual-verification-matrix) — `on_share` is now driven
-  automatically through all six cells; the other three modes still are not. Every cell of it
-  has historically caught a real bug
+- [x] [The trigger × access matrix](#manual-verification-matrix) — **all four triggers ×
+  all six access paths are driven automatically** by `12-trigger-matrix.cy.js`, 25 tests.
+  It found one on its first run: see the `on_upload` overwrite hole below
+- [ ] [**`on_upload` does not watermark an overwrite, and still badges it**](#open-3) — a
+  second upload to the same path lands clean while the audit row and the `is-watermarked`
+  property stay behind. Measured, not suspected
 - [ ] [`ZipInterceptorPlugin::streamNode` drift](#open-testing) against core, re-checked by hand
   on every Nextcloud upgrade
 - [x] [Psalm](#open-testing) — **built.** `lib/` is type-checked against core's OCP API and
@@ -472,6 +475,32 @@ Not started. The largest piece of missing SDD scope.
 share, and public-link access. This is where every delivery-time bug has been found.
 
 ### Open {#open-3}
+
+- [ ] **`on_upload` does not watermark an overwrite, and the file still claims it is
+  watermarked.** Found by `12-trigger-matrix.cy.js` on its first run. Upload a supported file
+  under `on_upload`, then upload again to the same path: the second copy is stored **clean**,
+  while the audit row and the `is-watermarked` property from the first upload stay behind, so
+  the Files list badges it and `canRemoveWatermark()` offers to undo a watermark that is not
+  there. Measured on 31.0.14:
+
+  | step | stored bytes | watermark markers | `is-watermarked` |
+  | --- | --- | --- | --- |
+  | 1st PUT (create) | 34,851 | 3 | — |
+  | 2nd PUT (overwrite) | 868 — the clean fixture, byte for byte | 0 | **1** |
+
+  - the cause is one line: `watermarkInPlace()` returns early on
+    `isAlreadyWatermarked($fileId)`, and **a file id survives an overwrite**. The guard
+    exists to stop the same *content* being burned twice; keyed by id, it also suppresses the
+    first burn of entirely new content that reuses the id
+  - it is a bypass, not only an inconsistency: two uploads of the same path is all it takes
+    to store an unwatermarked file under a policy that exists to prevent exactly that
+  - the fix is a design decision rather than a patch, which is why it is written down here
+    rather than applied: the row cannot simply be deleted on write (in-place rows are what
+    the badge and the double-burn guard read, and the audit trail is deliberately not
+    something a later write may erase), so the guard needs to compare the *content* it
+    guarded — a size/mtime/etag or a stored hash on the log row — rather than the id alone
+  - `12-trigger-matrix` deliberately creates its `on_upload` file fresh so the matrix keeps
+    measuring the matrix. The overwrite case belongs in `02-on-upload.cy.js` with the fix
 
 - [x] **Tar archives are broken in core.** `Accept: application/x-tar` yields a truncated
   archive, and it reproduces identically on the untouched core path, so it is not caused by
@@ -2058,20 +2087,27 @@ Several of these have since been promoted, and are marked with the spec that too
 What is left by hand is either S3-specific, blocked on a feature, or a judgement a machine
 cannot make (the Arabic UI at `dir="rtl"`).
 
-- [ ] **Trigger × access matrix.** For each of `on_demand` / `on_upload` / `on_download` /
-  `on_share`: owner direct fetch, owner ZIP, recipient direct fetch, recipient ZIP,
-  public-link fetch, public-link ZIP. Expected: `on_share` watermarks for everyone *except*
-  the owner; `on_download` for everyone including the owner; the in-place triggers watermark
-  the stored bytes so every path carries it and no interceptor engages
-  - **`on_share` is now automated through all six cells** (`04-on-share.cy.js`,
-    `05-archives.cy.js`), which is the mode where the cells differ from each other and where
-    every delivery bug so far has lived
-  - `on_download` is automated for owner direct, owner ZIP and a multi-file selection; its
-    recipient and public-link cells are not, because the interceptor takes the same path
-    there as `on_share` — a reason to expect them to pass, not evidence that they do
-  - the in-place triggers are automated for owner direct only. What they need from the other
-    cells is the *negative*: that no interceptor engages, since the watermark is already in
-    the stored bytes
+- [x] **Trigger × access matrix — automated, all 24 cells.** `12-trigger-matrix.cy.js`
+  drives each of `on_demand` / `on_upload` / `on_download` / `on_share` through owner direct
+  fetch, owner ZIP, recipient direct fetch, recipient ZIP, public-link fetch and public-link
+  ZIP: `on_share` watermarks for everyone *except* the owner, `on_download` for everyone
+  including the owner, and the in-place triggers watermark the stored bytes so every path
+  carries it and no interceptor engages
+  - the in-place rows are asserted as a **negative**, which is the only thing worth
+    asserting there. "Is it watermarked" is uninteresting once the burn has happened — every
+    path would say yes. What must hold is that **nothing re-rendered it**, so each cell is
+    compared byte-for-byte with the stored file. A delivery renderer waking up on an
+    already-burned file returns a valid, watermarked, *different* PDF: a second stamp that
+    passes every looser check
+  - it is **independent of the policy it inherits**. The policy is server-wide and outlives a
+    spec, and a leftover `on_upload` burns each fixture as it arrives — which fails the
+    `on_share` owner cells and, worse, passes the `on_download` cells for the wrong reason.
+    The spec sets a neutral policy before uploading anything, and was verified by running it
+    against an instance deliberately left on `on_upload`
+  - one file per trigger, so a burn in one row cannot change what another row measures
+  - the deeper per-mode assertions stay where they were — preview blocking in `04-on-share`,
+    audit granularity in `05-archives`, the HEAD regression in `03-on-download`. This spec
+    answers one question: is any cell of the matrix wrong
 - [ ] **Tar archives** (`Accept: application/x-tar`) — broken in core itself; recheck. The E2E
   suite asks for zip throughout for that reason; automating tar would pin core's bug
 - [ ] **Public file-drop upload** — watermarked by neither path; decide whether to cover it
