@@ -1,0 +1,53 @@
+# GitLab CI equivalent of .github/workflows/{php,nodejs,e2e}.yml and the Jenkinsfile.
+#
+# The three workflows are kept as three included files rather than inlined here, so a
+# change to the PHP matrix lands in one place whichever CI system you read first.
+#
+# The GitHub triggers (push to main, pull_request) map to the `workflow:` rules below:
+# merge-request pipelines and default-branch pipelines, never both for the same commit.
+# Without that pairing GitLab runs a branch pipeline *and* an MR pipeline for every push
+# to a branch with an open MR, which doubles the bill and halves the runner capacity.
+
+include:
+  - local: ci/gitlab/php.gitlab-ci.yml
+  - local: ci/gitlab/node.gitlab-ci.yml
+  - local: ci/gitlab/e2e.gitlab-ci.yml
+
+stages:
+  # The PHP environment is built from ci/php.Dockerfile before anything can use it; the
+  # Node jobs declare `needs: []` and start in parallel with it rather than waiting.
+  - images
+  - check
+  - test
+  - e2e
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+  # Mirrors `concurrency: cancel-in-progress: true`. Every job below is
+  # `interruptible`, so a new push to the same ref cancels the run still going.
+  # Requires GitLab 16.8 or newer; on anything older it is ignored and the old
+  # pipeline simply runs to completion.
+  auto_cancel:
+    on_new_commit: interruptible
+
+default:
+  interruptible: true
+  # A runner that dies mid-job is not a test failure. Nothing here is order-dependent
+  # or leaves state behind — the E2E job cleans up in `after_script` — so a retry is
+  # always safe.
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+variables:
+  # Caches live in the workspace because that is what GitLab's `cache:` can carry
+  # between jobs; both paths are already gitignored for the Jenkins agents.
+  COMPOSER_CACHE_DIR: $CI_PROJECT_DIR/.composer-cache
+  npm_config_cache: $CI_PROJECT_DIR/.npm-cache
+  COMPOSER_NO_INTERACTION: '1'
+  GIT_DEPTH: '20'

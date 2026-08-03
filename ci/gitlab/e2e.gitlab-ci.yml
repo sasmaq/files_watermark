@@ -1,0 +1,69 @@
+# E2E job — the GitLab equivalent of .github/workflows/e2e.yml.
+#
+# **This one cannot run in a container.** It brings up `docker-compose.yml`, which
+# bind-mounts the checkout into Nextcloud's `custom_apps/`; a bind mount issued from
+# inside a container job (including one talking to docker:dind) resolves against the
+# *daemon's* filesystem, not the job's, so the mount silently lands on the wrong — or an
+# empty — directory and every spec fails on a missing app. The Jenkinsfile runs its E2E
+# stage on the agent itself for exactly this reason.
+#
+# So it needs a **shell runner** on a host with `php`, `composer`, `node`, `npm` and
+# `docker compose` on PATH, and port 8080 free while it runs.
+#
+# It is therefore opt-in: set the CI/CD variable `E2E_RUNNER_TAG` to that runner's tag
+# and the job appears. Left unset — the default, and the only sane one on shared runners
+# — the job does not exist, rather than sitting pending forever waiting for a runner that
+# will never pick it up.
+
+e2e:cypress:
+  stage: e2e
+  tags:
+    - $E2E_RUNNER_TAG
+  rules:
+    - if: $E2E_RUNNER_TAG == null || $E2E_RUNNER_TAG == ""
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  # One instance per host: the compose file publishes a fixed port 8080, and two runs
+  # sharing a shell runner would fight over it and over the container names.
+  resource_group: e2e
+  timeout: 30 minutes
+  script:
+    # The container runs the *compiled* app off the bind mount, so both builds have to
+    # happen here before Nextcloud starts. `--no-dev` is not just for speed: the dev tree
+    # is what shadowed core's Sabre once, and CI should install what a release installs.
+    - composer install --no-dev --prefer-dist --no-progress --no-interaction
+    - npm ci
+    - npm run build
+    - docker compose up -d
+    - |
+      for attempt in $(seq 1 60); do
+        if curl -sf http://localhost:8080/status.php | grep -q '"installed":true'; then
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "Nextcloud did not finish installing"
+      docker compose logs --tail=100
+      exit 1
+    - docker compose exec -T -u www-data nextcloud php occ app:enable files_watermark
+    # Core allows 20 shares per 10 minutes per user, and this suite rebuilds its
+    # fixtures — users, folders, shares — on every run, which legitimately looks like
+    # abuse. Two runs inside the window exhaust the budget and the share specs fail in
+    # their setup with an empty 429. Off on a throwaway test instance only.
+    - >
+      docker compose exec -T -u www-data nextcloud php occ config:system:set
+      ratelimit.protection.enabled --value false --type boolean
+    - npm run test:e2e
+  after_script:
+    # The instance's own log is the only account of a server-side failure, and the
+    # containers go either way — a leftover stack would block the next run's port 8080.
+    - if [ "$CI_JOB_STATUS" != "success" ]; then docker compose exec -T nextcloud tail -n 200 /var/www/html/data/nextcloud.log || true; fi
+    - docker compose down -v || true
+  artifacts:
+    # Screenshots are only written for failures, and they are the only record of what a
+    # UI spec saw.
+    when: on_failure
+    expire_in: 1 week
+    paths:
+      - cypress/screenshots/

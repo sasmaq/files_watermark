@@ -2272,6 +2272,26 @@ Open:
     workspace into the Nextcloud container, and a bind mount issued from inside a Docker agent
     resolves against the *host* path, mounting the wrong directory. It runs on the agent
     itself and needs php, node and `docker compose` on PATH
+- **GitLab CI** — `.gitlab-ci.yml` includes `ci/gitlab/{php,node,e2e}.gitlab-ci.yml`, one file
+  per GitHub workflow, so the same matrix is edited in one place whichever system you read
+  first. Same jobs: syntax on 8.2 + 8.3, coding standard and Psalm on 8.2, PHPUnit on both
+  with a JUnit report attached to the merge request, ESLint, Jest on Node 20 + 22, and the
+  webpack build
+  - **the PHP environment is `ci/php.Dockerfile`**, the file the Jenkinsfile already builds.
+    GitLab has no per-job Dockerfile, so `php:image` builds it once per version with Kaniko
+    (no privileged runner needed) into the project registry and every PHP job pulls from
+    there. Reinstalling the extension set in a `before_script` would have been a second list
+    to keep in step with the first, and one that re-runs on every job. `PHP_IMAGE_REPO` +
+    `BUILD_PHP_IMAGE=false` point the jobs at a prebuilt image and drop the build
+  - **the E2E job is opt-in and needs a shell runner**, for the bind-mount reason above — a
+    mount issued from a container job resolves against the *daemon's* filesystem, so
+    `docker:dind` does not rescue it. It appears only once `E2E_RUNNER_TAG` is set to that
+    runner's tag; unset, the job does not exist, rather than sitting pending forever waiting
+    for a runner that will never take it. `resource_group: e2e` keeps two runs off the same
+    port 8080
+  - `workflow:` runs merge-request and default-branch pipelines only. Without that pairing a
+    push to a branch with an open MR builds twice, and `auto_cancel: on_new_commit` plus
+    `interruptible` is what replaces `cancel-in-progress`
 
 ---
 

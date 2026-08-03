@@ -1,0 +1,119 @@
+# PHP jobs — the GitLab equivalent of .github/workflows/php.yml.
+#
+# The environment is `ci/php.Dockerfile`, the same file the Jenkinsfile builds per stage.
+# GitLab has no per-job Dockerfile, so it is built once per PHP version into the
+# project's container registry and every job below pulls it from there. That keeps one
+# definition of "the PHP CI environment" for both CI systems — the alternative,
+# reinstalling the extension set in a `before_script`, is a second list to keep in step
+# with the first and re-runs on every job.
+#
+# **Needs the project's container registry.** If it is disabled, or the image already
+# lives somewhere else, set the CI/CD variables `PHP_IMAGE_REPO` to that repository and
+# `BUILD_PHP_IMAGE` to `false`; the build jobs then disappear and everything else pulls
+# what you pointed it at.
+
+variables:
+  PHP_IMAGE_REPO: $CI_REGISTRY_IMAGE/ci-php
+  BUILD_PHP_IMAGE: 'true'
+
+php:image:
+  stage: images
+  parallel:
+    matrix:
+      - PHP_VERSION: ['8.2', '8.3']
+  rules:
+    - if: $BUILD_PHP_IMAGE == "true"
+    - when: never
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: ['']
+  # Kaniko rather than docker:dind: it needs no privileged runner, which is the one
+  # thing a shared-runner project cannot arrange for itself.
+  script:
+    - mkdir -p /kaniko/.docker
+    - >
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}"
+      > /kaniko/.docker/config.json
+    # `--cache=true` is what keeps this off the critical path: with the Dockerfile
+    # unchanged every layer is a registry hit and the job is seconds, not minutes.
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR/ci"
+      --dockerfile "$CI_PROJECT_DIR/ci/php.Dockerfile"
+      --build-arg "PHP_VERSION=$PHP_VERSION"
+      --destination "$PHP_IMAGE_REPO:$PHP_VERSION"
+      --cache=true
+      --cache-repo "$PHP_IMAGE_REPO/cache"
+
+.php:
+  stage: check
+  variables:
+    PHP_VERSION: '8.2'
+  image: $PHP_IMAGE_REPO:$PHP_VERSION
+  cache:
+    # Keyed on the lockfile *and* the PHP version: `composer install` resolves against
+    # the running platform, so one cache shared across versions would hand 8.3 what 8.2
+    # resolved.
+    key:
+      files:
+        - composer.lock
+      prefix: composer-$PHP_VERSION
+    paths:
+      - .composer-cache/
+
+# `php -l` needs no dependencies, so this job skips composer install entirely and stays
+# the first signal on a merge request. Both supported versions, because a parse error is
+# the thing that is version-specific.
+php:lint:
+  extends: .php
+  needs:
+    - job: php:image
+      optional: true
+  parallel:
+    matrix:
+      - PHP_VERSION: ['8.2', '8.3']
+  script:
+    - composer lint
+
+# The Nextcloud coding standard is version-independent, so one PHP version is enough —
+# unlike the syntax job, which is what catches version-specific parse errors. Pinned to
+# the lowest supported version to share the composer cache with the 8.2 PHPUnit job.
+php:cs:
+  extends: .php
+  needs:
+    - job: php:image
+      optional: true
+  script:
+    - composer install --prefer-dist --no-progress --no-interaction
+    - composer cs:check
+
+# One version is enough: psalm.xml pins `phpVersion="8.2"`, so an 8.3 leg would only
+# re-prove the same analysis. What it does need is the full extension set — Psalm
+# reflects extension classes from the *running* PHP, so imagick being present is what
+# gets the optional Imagick branch of ImageWatermarker analysed at all.
+php:psalm:
+  extends: .php
+  needs:
+    - job: php:image
+      optional: true
+  script:
+    - composer install --prefer-dist --no-progress --no-interaction
+    - composer psalm
+
+php:phpunit:
+  extends: .php
+  stage: test
+  needs:
+    - job: php:image
+      optional: true
+  parallel:
+    matrix:
+      - PHP_VERSION: ['8.2', '8.3']
+  script:
+    - composer install --prefer-dist --no-progress --no-interaction
+    - vendor/bin/phpunit --colors=always --log-junit build/phpunit-$PHP_VERSION.xml
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: build/phpunit-$PHP_VERSION.xml
