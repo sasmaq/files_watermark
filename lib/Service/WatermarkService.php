@@ -522,13 +522,6 @@ class WatermarkService {
 	}
 
 	/**
-	 * Whether a watermark on this file can be undone (a preserved original exists).
-	 */
-	public function canRemoveWatermark(File $file): bool {
-		return $this->originalStore->has($file);
-	}
-
-	/**
 	 * Whether any configured policy uses a delivery trigger.
 	 *
 	 * Coarse, owner-agnostic gate for the archive interceptor - see

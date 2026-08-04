@@ -804,11 +804,22 @@ admin, in force server-wide. Nothing here is stored without being honoured.
 Because `watermarkInPlace` **burns** the watermark into the content, "remove" means restoring
 a preserved copy of the pre-watermark original - not algorithmically stripping pixels.
 
-- **App-managed backup** in appdata (`OriginalStore`), keyed by file id
+- **App-managed backup** (`OriginalStore`), keyed by file id, in the owner's own storage at
+  `{owner}/files/.files_watermark/originals/` - or, for a file in a Team folder, inside that
+  folder rather than in anybody's home
+  - it started in appdata and **moved**, because server-side encryption does not reach
+    appdata: the copy sat in the clear beside the user's own ciphertext. Written through the
+    Files API instead, the storage layer encrypts it with whatever module the admin selected.
+    The finding and what it cost to establish are under [Security](#open-security); the Team
+    folder half is under [Team folders](#team-folders-originals)
+  - the copies are consequently ordinary files in a user's tree, which is taken back on two
+    fronts: `HideOriginalsPlugin` drops them from every WebDAV listing and answers 404 to
+    every method on their paths, and `ShareGuardListener` refuses to share one. `isBackup()`
+    keeps the app's own triggers off them
   - Nextcloud file versions were the alternative and were rejected: the versions app can be
-    disabled, and version expiry would silently delete the only route back
-  - appdata sits outside every user's storage, so a backup is not itself browsable, shareable
-    or watermarkable
+    disabled, and version expiry would silently delete the only route back. Reopened since,
+    as an opt-in admin setting rather than a replacement - see
+    [below](#open-versions-undo)
 - The snapshot is taken **before** `putContent`, pinned by a test that asserts the
   ordering - reading after the write would preserve the watermarked bytes
 - `store()` never overwrites an existing backup, so re-watermarking cannot replace the
@@ -824,6 +835,60 @@ a preserved copy of the pre-watermark original - not algorithmically stripping p
 - Verified by hand: apply → remove restores a **byte-identical** original, backup
   discarded, status cleared, a second remove 422s, re-apply works, and the audit trail keeps
   all three events
+
+### Undo through file versions, as an admin option {#open-versions-undo}
+
+**Not built. This section is a design sketch, not a set of measurements** - unlike the rest
+of this document, nothing below was observed against a running instance. Every claim about
+`files_versions` internals is written as an assumption with the file to check it in, and the
+first task is to go and check them.
+
+**Why it is worth considering at all, and it is not the reason the original decision
+weighed.** The burn writes through the Files API, so on an instance with `files_versions`
+enabled that `putContent()` already creates a version holding the pre-watermark bytes -
+and then `OriginalStore::store()` writes *the same bytes again*. Watermarking a 50 MB PDF
+costs the owner 100 MB of extra quota, and half of it is a copy this app never reads. The
+duplication is what makes the question worth reopening; it is not an argument that versions
+are a sound *sole* route back.
+
+**Shape, if built.** `OCA\Files_Versions\Versions\IVersionManager`, resolved lazily rather
+than through constructor DI - the class does not exist when the app is disabled, so
+injecting it would make this app fail to boot on an instance without it. After the burn,
+record the pre-watermark version's `getRevisionId()` on the `watermark_log` row already
+being inserted; `removeWatermark()` becomes `rollback()` instead of `putContent()`. What
+that deletes is substantial: `OriginalStore` almost entirely, `HideOriginalsPlugin`, the
+`isBackup()` guard, the backup branch of `ShareGuardListener`, and the whole Team-folder
+base-folder problem - `groupfolders` ships its own version backend and `IVersionManager`
+dispatches to it.
+
+**Why an admin option and not a replacement.** Three properties this app does not control,
+each of which turns the undo from a guarantee into a maybe:
+
+1. **Expiry.** `versions_retention_obligation` defaults to `auto`, which thins old versions
+   and drops them under storage pressure. The undo would stop working at a moment nobody
+   chose and nothing announces. The mitigation to check is version *labels* - Nextcloud is
+   understood to keep a labelled version indefinitely, so labelling the pre-watermark one
+   via `IVersionManager::setMetadataValue($node, $revision, 'label', …)` would exempt it.
+   Even if that holds, the label is user-visible in the versions sidebar and the user can
+   remove it, which re-arms the failure
+2. **The app is disableable.** Guarding with `IAppManager::isEnabledForUser('files_versions')`
+   means keeping `OriginalStore` as the fallback anyway - so this adds a second path rather
+   than removing the first
+3. **A version is not cut on every write.** `files_versions` skips creation in several
+   cases, and the one that matters is a write close in time to the preceding one. The
+   `on_upload` trigger burns seconds after the upload that created the file, which is
+   exactly that window. If no version is cut the original is simply gone, and unlike a
+   failed `store()` nothing finds out until someone tries to undo
+
+**Also unresolved: encryption in Team folders.** `groupfolders` keeps its versions in its
+own appdata, and by the finding above the default module encrypts nothing outside `files`,
+`files_versions` and `files_trashbin`. Today's Team-folder backups sit inside the folder
+and are encrypted; version-based ones may not be. This is the same property the move out of
+appdata was made for, so it has to be measured before the option ships, not after.
+
+**Point 3 is the gate.** If the burn does not reliably produce a version on the on-upload
+path, the option is not worth building for any instance that uses that trigger, and the
+other work is wasted. Check it first.
 
 ---
 
@@ -1389,7 +1454,7 @@ count used to depend on the developer's laptop.
 
 | Removed | Was used for | Consequence |
 | --- | --- | --- |
-| `PdfFlattener` + `pdftoppm` | Rasterising pages so the watermark could not be stripped | **Tamper resistance is gone.** See [Flattened PDFs](#flattened-rasterised-pdfs--removed) |
+| `PdfFlattener` + `pdftoppm` | Rasterising pages so the watermark could not be stripped | **Tamper resistance is gone.** See [Flattened PDFs](#flattened-rasterised-pdfs---removed) |
 | `PdfNormalizer` + `qpdf` | `--decrypt` on files locked with an empty password | **Empty-password encrypted PDFs are now skipped** rather than watermarked |
 | `BinaryLocator` | Probing `PATH` for both of the above | Nothing left to probe |
 

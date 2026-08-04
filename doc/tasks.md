@@ -49,6 +49,34 @@ Things that produce a wrong file, or say something untrue about one.
   both digit sets, so the font is not the obstacle. [notes](development.md#open-arabic)
 - [ ] **Folder downloads through `/api/v1/download`** - accept a folder path, or document
   that archives go through the DAV route. [notes](development.md#open-3)
+- [ ] **Admin option: undo through file versions instead of app-owned copies.** Today the
+  burn's `putContent()` makes `files_versions` cut a version of the pre-watermark bytes and
+  `OriginalStore` then stores the same bytes again - two extra copies against the owner's
+  quota, one of which this app never reads. An admin-settings toggle would let an instance
+  give that back. **Gated on the first item below: if it fails, drop the rest.**
+  [notes](development.md#open-versions-undo)
+  - [ ] **Measure whether the burn actually cuts a version on the `on_upload` path.** The
+    trigger writes seconds after the upload that created the file, and `files_versions`
+    skips creation for writes close in time to the preceding one. No version means the
+    original is gone with nothing to report it. Check `files_versions/lib/Storage.php` on
+    31.0.14.1 and confirm by hand on a real upload
+  - [ ] **Measure whether a labelled version survives expiry.** `versions_retention_obligation`
+    defaults to `auto`; the undo is only durable if `IVersionManager::setMetadataValue(…,
+    'label', …)` exempts the version, and if a user removing that label in the sidebar is an
+    accepted failure
+  - [ ] **Measure whether `groupfolders` versions are encrypted.** They live in that app's
+    own appdata, and the default module encrypts nothing outside `files`, `files_versions`
+    and `files_trashbin` - the exact property the move out of appdata was made for
+  - [ ] `IAppManager::isEnabledForUser('files_versions')` guard and lazy resolution of
+    `IVersionManager` - it must not be a constructor dependency, or this app stops booting
+    where the versions app is disabled
+  - [ ] Record the pre-watermark revision id on the `watermark_log` row (column + migration),
+    and make `removeWatermark()` branch to `rollback()`
+  - [ ] `IAppConfig` boolean + the toggle in `WatermarkForm.vue` / `SettingsController`,
+    defaulting to app-owned copies. The UI has to say what the setting costs, not just name it
+  - [ ] **Keep the read path dual.** An instance that flips the toggle must still restore
+    files backed up under the old scheme - the same shape as the existing appdata fallback in
+    `OriginalStore::read()`
 
 ## Security and operations
 
@@ -137,7 +165,7 @@ Things that produce a wrong file, or say something untrue about one.
 | [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** - watermark shaped and reordered, UI translated and RTL-clean. Two `tc-lib-unicode` bugs found and [patched](development.md#vendor-patches) | `{date}` localisation, a real Arabic instance, upstream PRs for both patches |
 | [No external binaries](development.md#no-external-binaries) | **Done.** No `exec()` anywhere | A rule that keeps it that way |
 | [PDF stack migration](development.md#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone | - |
-| [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | Their *name* in search and activity |
+| [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | Their *name* in search and activity; a [file-versions option](development.md#open-versions-undo) to stop double-storing them |
 | [Data model](development.md#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, one dead column |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
 | [Security](development.md#security) | Two real vulnerabilities found and fixed. On-demand applies bounded by rate limit + size cap; images by a pixel ceiling on every trigger | - |
