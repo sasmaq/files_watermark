@@ -102,7 +102,14 @@ async function apply() {
 		// Auto-close after showing the message briefly.
 		setTimeout(() => emit('close'), 1500)
 	} catch (e) {
-		applyError.value = e?.response?.data?.error ?? e.message
+		// A throttled request is answered by Nextcloud's rate-limiting middleware, not by
+		// this app, so it carries no `error` field to show - without this the user reads
+		// "Request failed with status code 429" in English on an otherwise translated
+		// dialog. Every other failure does carry one, including the 413 for an oversized
+		// file, which names both the size and the limit.
+		applyError.value = e?.response?.status === 429
+			? t('files_watermark', 'Too many watermark requests at once. Wait a moment and try again.')
+			: e?.response?.data?.error ?? e.message
 	} finally {
 		applying.value = false
 	}

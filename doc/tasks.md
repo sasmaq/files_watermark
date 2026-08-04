@@ -9,8 +9,8 @@ what was measured, why a design is what it is - lives in
 **Closed items are deleted from here, not ticked.** What was done, and what it cost to
 learn, is recorded in `development.md`; everything below is genuinely still open.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **583 PHPUnit**,
-**91 Jest**, **89 Cypress**, no host-conditional skips.
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **599 PHPUnit**,
+**93 Jest**, **89 Cypress**, no host-conditional skips.
 
 The two things standing between this and a 1.0 release are **Office support** and
 **release packaging**. Everything else below is refinement.
@@ -52,7 +52,10 @@ Things that produce a wrong file, or say something untrue about one.
 
 ## Security and operations
 
-- [ ] **Rate-limit or queue on-demand applies** for large files - nothing throttles them.
+- [ ] **No pixel ceiling on image applies.** `apply_max_bytes` bounds bytes on disk, but GD
+  holds ~4 bytes per pixel, so a highly compressed PNG a few MiB wide decodes to far more
+  than the cap lets a PDF be - the one way left to exhaust a worker through the on-demand
+  endpoint. Needs a dimension check from the header, before the decode.
   [notes](development.md#open-security)
 - [ ] **Emit `CriticalActionPerformedEvent`** into the Nextcloud admin audit log.
   [notes](development.md#audit-log)
@@ -72,7 +75,7 @@ Things that produce a wrong file, or say something untrue about one.
 
 ## Testing and CI
 
-- [ ] **Psalm level 2: 50 findings**, 39 of them `ClassMustBeFinal` - a design opinion the
+- [ ] **Psalm level 2: 51 findings**, 40 of them `ClassMustBeFinal` - a design opinion the
   test doubles contradict, not a type check. Behind it: 4 redundant casts, 3 truthy
   comparisons, 3 `PropertyNotSetInConstructor`, 1 docblock contradiction.
   [notes](development.md#open-testing)
@@ -142,6 +145,6 @@ Things that produce a wrong file, or say something untrue about one.
 | [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | Their *name* in search and activity |
 | [Data model](development.md#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, one dead column |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
-| [Security](development.md#security) | Two real vulnerabilities found and fixed | Rate limiting |
+| [Security](development.md#security) | Two real vulnerabilities found and fixed. On-demand applies bounded by rate limit + size cap | A pixel ceiling for images |
 | [Testing](development.md#testing) | 500 PHPUnit + 91 Jest + 89 Cypress, no host-conditional skips | Psalm level 3 |
 | [Docs and release](development.md#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |

@@ -1849,7 +1849,44 @@ still missing.
   - `LegacyImagePathCleanupTest` pins which rows are chosen - a valid reference, an absolute
     path, a traversal attempt, a non-hex name and an empty string - and mutation-tested:
     clearing every row instead of the stale ones fails it
-- Rate-limit or queue on-demand applies for large files - nothing throttles them today
+- **On-demand applies are bounded now - two limits, because they stop different things.**
+  This was the one expensive operation an ordinary user could trigger directly, and nothing
+  throttled it. It runs **synchronously inside the request**: the render, the full
+  `getContent()` that feeds it, and the second full read `OriginalStore` takes to preserve
+  the pre-watermark bytes all land on one PHP worker
+  - **frequency** - `#[UserRateLimit(limit: 20, period: 60)]` on `applyWatermark()` and
+    `removeWatermark()`. Core's middleware enforces it and answers 429 before the
+    controller runs, so there is no code of ours on that path. 20/minute is far above what
+    the file action can produce by hand (each apply needs its own modal confirmation) and
+    far below what a script can
+  - **magnitude** - `apply_max_bytes`, default **64 MiB**, refused with a 413 that names
+    both the file's size and the ceiling so an admin knows what to set. Frequency alone
+    does not help against a single file large enough to exhaust the worker, and one request
+    is all that takes
+  - **the default is deliberately a quarter of the archive cap**, and that asymmetry is the
+    part worth remembering: `archive_max_bytes` bounds a temp *filesystem*, this bounds a
+    worker's *heap*. Peak sits around 4-6 × the file's size for a PDF - the parsed object
+    graph dominates and is not linear in anything predictable - against a `memory_limit`
+    that is 512M on a stock instance. `testTheDefaultIsSizedForMemoryRatherThanDisk` pins it
+    against the obvious "consistency" cleanup of raising it to match
+  - **the size check reads the file cache, never the content.** A cap that let the render
+    start and failed afterwards would have spent exactly what it exists to save, so the
+    assertion in `testAFileOverTheCapIsRefusedBeforeAnyWorkIsDone` is `never()` on
+    `watermarkInPlace()`, not the status code
+  - the comparison is `>` and not `>=`, pinned separately: a cap of N bytes must accept a
+    file of N bytes, or the number an admin sets is not the number they get
+  - **the rate limits are asserted by reflection**, because they are declarative and
+    nothing else in the suite would notice their removal - the whole app behaves
+    identically without them. The numbers are asserted too, not merely the attribute's
+    presence: an edit to `limit: 2000` removes the bound while leaving something that reads
+    like a throttle
+  - the 429 is the one failure the dialog had to learn about. It comes from core, so it
+    carries no `error` field, and the modal fell back to axios' English "Request failed
+    with status code 429" on an otherwise translated page
+  - **what this does not bound: decoded image size.** The cap is bytes on disk, and GD
+    holds roughly 4 bytes per pixel, so a highly compressed PNG a few MiB wide can decode to
+    far more than this lets a PDF be. A pixel ceiling is a separate guard and is not built -
+    it is listed in `tasks.md` rather than left implied here
 - **Preserved originals are covered by server-side encryption.** They used to sit in appdata **in the clear**, beside the ciphertext of the very same bytes:
   measured on a real instance with SSE on, `head -c 9` on one returned `%PDF-1.4` while the
   user's own copy of that file began `HBEGIN:oc_encryption_module:…`. The pre-watermark copy

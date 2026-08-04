@@ -122,6 +122,8 @@
         "You do not have permission to read this file": "ليس لديك إذن لقراءة هذا الملف",
         "You do not have permission to modify this file": "ليس لديك إذن لتعديل هذا الملف",
         "File type \"%1$s\" is not supported. Supported types: %2$s.": "نوع الملف \"%1$s\" غير مدعوم. الأنواع المدعومة: %2$s.",
+        "This file is too large to watermark on demand (%1$s; the limit is %2$s).": "هذا الملف أكبر من أن تُطبَّق عليه علامة مائية عند الطلب (%1$s؛ الحد الأقصى %2$s).",
+        "Too many watermark requests at once. Wait a moment and try again.": "طلبات كثيرة جدًا للعلامة المائية دفعةً واحدة. انتظر لحظة ثم أعد المحاولة.",
         "No preserved original is available for this file, so its watermark cannot be removed.": "لا تتوفر نسخة أصلية محفوظة لهذا الملف، لذا لا يمكن إزالة علامته المائية.",
         "The uploaded image could not be read.": "تعذّرت قراءة الصورة المرفوعة.",
         "The watermarked file could not be read back.": "تعذّرت إعادة قراءة الملف بعد وضع العلامة المائية.",

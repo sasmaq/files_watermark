@@ -234,18 +234,20 @@ who downloaded what; it never makes the app forget that a file is already waterm
 
 ## Server settings (`occ`)
 
-The watermark itself is configured in the admin UI. These two are host tuning rather than
-policy - they bound what one folder download may cost, and they change nothing about the
-watermark that comes out, so they live in the app config instead of on the form:
+The watermark itself is configured in the admin UI. These are host tuning rather than
+policy - they bound what one request may cost, and they change nothing about the watermark
+that comes out, so they live in the app config instead of on the form:
 
 | Key | Default | What it bounds |
 | --- | --- | --- |
 | `archive_max_members` | `200` | Files rendered for a single folder / multi-select download |
 | `archive_max_bytes` | `268435456` (256 MiB) | Source bytes rendered for one such download |
+| `apply_max_bytes` | `67108864` (64 MiB) | Size of a single file accepted for an on-demand apply |
 
 ```bash
 occ config:app:set files_watermark archive_max_members --value 500
 occ config:app:set files_watermark archive_max_bytes   --value 1073741824
+occ config:app:set files_watermark apply_max_bytes     --value 134217728
 occ config:app:delete files_watermark archive_max_members   # back to the default
 ```
 
@@ -257,6 +259,20 @@ these bound the temp disk and CPU one request can use. Past the cap, `on_share` 
 Raise them if large folder downloads are being denied or served unwatermarked and the server
 has the temp space; lower them on a small host. There is no unlimited setting: a value below
 `1` is refused and the default used, with a warning in the log.
+
+`apply_max_bytes` bounds something different, and the difference is why its default is so
+much smaller. An on-demand apply renders **synchronously inside the request**, so what it
+spends is a PHP worker's memory rather than temp disk - and a render holds several times
+the file's own size at peak, against a `memory_limit` that is 512M on a stock Nextcloud.
+Files over the cap are refused with a 413 naming both their size and the limit, before any
+content is read. **Raise it and PHP's `memory_limit` together, or not at all**: on its own
+it only moves the failure from a clean 413 that costs nothing to a fatal error part-way
+through the render, which takes the worker down and tells the user nothing useful.
+
+On-demand applies and watermark removals are also rate limited to **20 per user per
+minute** by Nextcloud's own middleware, which answers `429`. That is far above what the
+file action can produce by hand - each apply needs its own confirmation - and far below
+what a script can. It is not configurable.
 
 ## API Endpoints
 

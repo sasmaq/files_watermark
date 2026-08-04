@@ -7,12 +7,14 @@ namespace OCA\FilesWatermark\Controller;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
+use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
@@ -35,6 +37,7 @@ class ApiController extends Controller {
 		private IGroupManager $groupManager,
 		private WatermarkImageStore $imageStore,
 		private ISystemTagManager $tagManager,
+		private ApplyLimits $applyLimits,
 		private IL10N $l,
 	) {
 		parent::__construct($appName, $request);
@@ -279,7 +282,27 @@ class ApiController extends Controller {
 		return new DataResponse(['status' => 'deleted']);
 	}
 
+	/**
+	 * Watermark a file in place, on the user's own request.
+	 *
+	 * The one expensive operation an ordinary user can trigger directly, and it runs
+	 * **synchronously inside the request** - the render, a full read of the content, and a
+	 * second full read for the preserved original all land on one PHP worker. Two bounds
+	 * sit on it, because they stop different things:
+	 *
+	 *  - **frequency**, the `UserRateLimit` below. 20 a minute per user is far above what
+	 *    the file action can produce by hand - each apply needs its own modal confirmation
+	 *    - and far below what a script can. Core's rate-limiting middleware enforces it and
+	 *    answers 429; nothing in this method runs.
+	 *  - **magnitude**, {@see ApplyLimits}. Frequency alone does not help against a single
+	 *    file large enough to exhaust the worker's memory, and one request is all that
+	 *    takes.
+	 *
+	 * `removeWatermark()` carries the same rate limit and no size cap: it restores a copy
+	 * this app wrote, so its cost is bounded by a file that already passed the cap here.
+	 */
 	#[NoAdminRequired]
+	#[UserRateLimit(limit: 20, period: 60)]
 	public function applyWatermark(string $path): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
@@ -319,6 +342,26 @@ class ApiController extends Controller {
 			);
 		}
 
+		// Checked from the file cache, before a single byte is read. The point of the cap
+		// is to refuse the work rather than to survive it, so anything that loads the
+		// content first - including asking the renderer to try - has already spent what
+		// this exists to save.
+		$maxBytes = $this->applyLimits->maxBytes();
+		// `getSize()` is documented as float|int - the cache widens it so a size can
+		// outrun a 32-bit int. Narrowed once here rather than at each use.
+		$size = (int)$node->getSize();
+		if ($size > $maxBytes) {
+			return new DataResponse(
+				[
+					'error' => $this->l->t(
+						'This file is too large to watermark on demand (%1$s; the limit is %2$s).',
+						[$this->humanBytes($size), $this->humanBytes($maxBytes)],
+					),
+				],
+				Http::STATUS_REQUEST_ENTITY_TOO_LARGE,
+			);
+		}
+
 		try {
 			$applied = $this->watermarkService->watermarkInPlace($node, 'on_demand');
 		} catch (\RuntimeException $e) {
@@ -342,6 +385,7 @@ class ApiController extends Controller {
 	 * a file watermarked before this feature landed, or one whose backup failed.
 	 */
 	#[NoAdminRequired]
+	#[UserRateLimit(limit: 20, period: 60)]
 	public function removeWatermark(string $path): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
@@ -384,6 +428,37 @@ class ApiController extends Controller {
 		}
 
 		return new DataResponse(['status' => 'removed', 'path' => $path]);
+	}
+
+	/**
+	 * A byte count as something an admin can act on, e.g. `210.4 MB`.
+	 *
+	 * The 413 exists to be actionable - it names both the file's size and the ceiling so
+	 * the admin knows what to set `apply_max_bytes` to. Raw byte counts in the tens of
+	 * millions do not read as anything, and this message reaches an end user, not a log.
+	 *
+	 * Decimal units, matching what the Files app shows for the same file: a user comparing
+	 * this message against the size in the list must not find two different numbers.
+	 */
+	private function humanBytes(int $bytes): string {
+		// Whole bytes stay whole; anything scaled gets one decimal, which is enough to
+		// tell 64.0 MB from 64.9 MB without implying precision the cache does not have.
+		if ($bytes < 1000) {
+			return $bytes . ' B';
+		}
+
+		$value = (float)$bytes;
+		$unit = 'KB';
+
+		foreach (['KB', 'MB', 'GB', 'TB'] as $candidate) {
+			$unit = $candidate;
+			$value /= 1000;
+			if ($value < 1000) {
+				break;
+			}
+		}
+
+		return round($value, 1) . ' ' . $unit;
 	}
 
 	/**
