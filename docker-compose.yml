@@ -32,11 +32,13 @@ services:
     # inside are left alone - they only need to be readable) before handing
     # off to the stock entrypoint.
     #
-    # bcmath is the app's one platform requirement beyond PHP itself: tc-lib-pdf does
-    # not load without it, and `appinfo/info.xml` declares it, so Nextcloud refuses to
-    # enable the app at all. `php-bcmath` on RHEL 9; here it is compiled in, which is
-    # why the guard tests the module list rather than looking for a binary on PATH.
-    # Guarded so a restart is not a rebuild.
+    # bcmath and gd are the app's two platform requirements beyond PHP itself -
+    # tc-lib-pdf does not load without bcmath, and gd is the image renderer - and
+    # `appinfo/info.xml` declares both, so Nextcloud refuses to enable the app without
+    # them. `php-bcmath` and `php-gd` on RHEL 9; this image has both compiled in, which
+    # is why the guard tests the module list rather than looking for a binary on PATH,
+    # and why only bcmath is installable here at all. Guarded so a restart is not a
+    # rebuild.
     #
     # No external binaries are installed, because the app spawns no processes.
     entrypoint:

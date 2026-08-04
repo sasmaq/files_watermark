@@ -1519,9 +1519,12 @@ Neither loss is invisible, and neither is being papered over:
   shelling out to `qpdf --encrypt`; they now use tc-lib-pdf's own encryption support
   (`Com\Tecnick\Pdf\Encrypt\Encrypt`), so the test suite spawns nothing either. A test
   helper that shells out is still a process spawn in the repository
-- **One platform requirement left**, `ext-bcmath`, and it is declared in
-  `appinfo/info.xml` so Nextcloud refuses to enable the app without it instead of failing
-  at render time
+- **Two platform requirements left**, `ext-bcmath` (the PDF renderer) and `ext-gd` (the
+  image renderer), both declared in `composer.json` *and* `appinfo/info.xml` so Composer
+  refuses to resolve and Nextcloud refuses to enable the app without them, instead of
+  either failing at render time. Declaring `gd` does refuse an Imagick-only host that
+  `ImageWatermarker` could technically run on - but that host cannot watermark a WEBP
+  either, and an install that half-works silently is the worse of the two
 - **Two open questions closed by deletion** rather than answered: the RHEL 9 package
   names for `qpdf` and `poppler-utils`, and the unmeasured memory ceiling of the
   page-at-a-time rasterise loop

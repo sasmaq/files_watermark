@@ -25,7 +25,7 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 | --- | --- |
 | Nextcloud | 31.x |
 | PHP | 8.2 or 8.3 |
-| PHP extension | `gd` (used by default); `imagick` optional, see below |
+| PHP extension | `gd` (required; the image renderer - `imagick` optional, see below) |
 | PHP extension | `bcmath` (required by the PDF renderer) |
 | Composer | 2.x |
 | Node.js | >= 20 |
@@ -34,9 +34,10 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 ### Image rendering: GD by default, Imagick where GD cannot go
 
 JPEG, PNG and WEBP are watermarked with **GD**, which ships with essentially every PHP
-build and which Nextcloud server already requires. **Imagick is used when GD cannot decode
-the file** - in practice that means WebP on a GD compiled without libwebp - and when GD is
-not installed at all. Nothing to configure either way.
+build and which Nextcloud server already requires. It is a declared requirement of this app
+(`composer.json` and `appinfo/info.xml`), so a host without it is refused at install rather
+than at the first image. **Imagick is used when GD cannot decode the file** - in practice
+that means WebP on a GD compiled without libwebp. Nothing to configure either way.
 
 The preference used to run the other way round, and it was flipped for the same reason the
 app spawns no external processes: two servers running the same configuration should produce

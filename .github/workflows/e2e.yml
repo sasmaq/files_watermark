@@ -30,7 +30,11 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.2"
-          extensions: bcmath
+          # Only what `composer install` needs to resolve: both are hard platform
+          # requirements in composer.json, so the install fails outright without them.
+          # The renderers run inside the Nextcloud container, not here, and that image
+          # carries its own gd.
+          extensions: bcmath, gd
           coverage: none
 
       - name: Install PHP dependencies

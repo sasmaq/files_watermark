@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "50056495c2a8abd4964d0122bc81247c",
+    "content-hash": "f8a945871958a7e68119cc9c2078a6e0",
     "packages": [
         {
             "name": "tecnickcom/tc-lib-barcode",
@@ -6821,7 +6821,8 @@
     "prefer-lowest": false,
     "platform": {
         "php": "^8.2",
-        "ext-bcmath": "*"
+        "ext-bcmath": "*",
+        "ext-gd": "*"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

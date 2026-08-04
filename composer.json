@@ -6,6 +6,7 @@
     "require": {
         "php": "^8.2",
         "ext-bcmath": "*",
+        "ext-gd": "*",
         "tecnickcom/tc-lib-pdf": "8.67.2",
         "tecnickcom/tc-lib-pdf-parser": "3.14.0"
     },

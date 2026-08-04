@@ -46,6 +46,17 @@ Features:
              even resolve without it. Declared here so Nextcloud refuses to enable the
              app on a host that lacks it, rather than fatalling on the first PDF. -->
         <lib>bcmath</lib>
+        <!-- GD is the image renderer: JPEG and PNG are watermarked with it on every
+             trigger, and Imagick is only consulted for what GD cannot decode (a WEBP on
+             a GD built without libwebp). Declared for the same reason as bcmath - the
+             alternative is an app that enables cleanly and then fails on the first
+             image, which is the trigger a user reaches for first.
+
+             It does mean an Imagick-only host is refused, even though ImageWatermarker
+             can technically run there: that host cannot watermark a WEBP either, and
+             "some image types work" is not a state to let an install reach silently.
+             `php-gd` on RHEL 9; the Nextcloud Docker images have it compiled in. -->
+        <lib>gd</lib>
         <nextcloud min-version="31" max-version="31"/>
     </dependencies>
     <commands>

@@ -204,7 +204,9 @@ pipeline {
 		// filesystem and mount the wrong (or an empty) directory.
 		//
 		// The agent therefore needs php + composer, node + npm, and docker compose on
-		// PATH, and port 8080 free while it runs.
+		// PATH, and port 8080 free while it runs. The agent's PHP needs `bcmath` and
+		// `gd`: both are hard platform requirements in composer.json, so the install on
+		// the first line below fails outright without them.
 		stage('E2E (Cypress)') {
 			agent {
 				label 'docker'
