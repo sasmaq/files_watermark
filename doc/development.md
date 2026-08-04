@@ -1133,6 +1133,56 @@ Three blocking facts, each read off the current tree rather than assumed:
   host - and pushing Arabic to Imagick would reintroduce exactly the host-dependent output the
   default was flipped to remove. The app has to shape
 
+### One byte that is not UTF-8, and the whole watermark goes unshaped {#arabic-bad-byte}
+
+Reported from a RHEL 9 instance: Arabic image watermarks drawn in isolated letters, running
+left to right, on an app that was up to date. The first two suspects were both wrong, and
+ruling them out is what left the real one visible:
+
+- **not the GD version.** Rendered on RHEL 9's own stack (`ubi9/php-82`, PHP 8.2.32, GD
+  2.3.2 / libgd 2.3.2 with FreeType): the current code draws `الاختبار السري` joined,
+  right to left, ligature intact. Measured on that host, same font and size, libgd applies
+  no shaping of its own - shaped renders 13 glyphs / 316px / 6166 ink px, unshaped renders
+  14 glyphs / 435px / 8479. It draws the code points it is handed and can neither join nor
+  disconnect them, so **disconnected output means the string arrived unshaped**
+- **not the shaper.** Same host: `ShapedText::shape()` returns the seven expected
+  presentation forms with the lam-alef ligature, and `patches/` applies cleanly
+
+What actually happened is in the guard, not the shaper:
+
+```php
+return preg_match('/[^\x{0000}-\x{00FF}]/u', $text) === 1;   // before
+```
+
+`preg_match()` with the `u` modifier returns **`false`**, not `0`, when the subject is not
+valid UTF-8, and `false === 1` reads as *"nothing here beyond Latin-1, no shaping needed"* -
+the exact opposite of the truth for a string carrying a broken byte. One such byte anywhere
+in the resolved text costs the **whole** watermark its shaping. The source in production is
+a placeholder, not the template: `{displayname}` and `{email}` come from the user backend,
+and LDAP/AD hand over latin-1 and Windows-1256 remnants routinely. Nothing threw, nothing
+was logged, and the result was a valid image nobody could read - reproduced on RHEL 9 with a
+single trailing `0xD8` on a display name.
+
+The fix is in three places, and each answers a different half:
+
+- `ShapedText::toValidUtf8()` **drops** invalid sequences (not substitutes - a name should
+  watermark as `Ahmed`, not `Ahmed?`), saving and restoring `mb_substitute_character()`
+  because that is process-global state
+- `ShapedText::mayNeedShaping()` treats a subject it cannot scan as needing shaping, and
+  `shape()` repairs its input before asking anything about it. The PDF path does not go
+  through `shape()`, so both renderers scrub in `resolvePlaceholders()` - the last point
+  before the string is measured and drawn
+- `WatermarkService::scrubPlaceholders()` logs a warning naming the fields it repaired.
+  This is the half only that class can provide: by the time a renderer sees the string, the
+  bad bytes are one substring of a resolved template, and an admin looking at a mangled name
+  needs to know whether to fix the user backend or the file
+
+Guarded by ten tests across `ShapedTextTest`, `ImageWatermarkerTest`, `PdfWatermarkerTest`
+and `WatermarkServiceTest`; nine of them fail on the code before the fix. The renderer-level
+ones assert on pixels and on the code points the PDF actually carries rather than on the
+string, because a string-level guard is one line away from being reintroduced elsewhere in
+the chain.
+
 ### Notes and open questions {#open-arabic}
 
 **Position: the watermark half is done**, and so is the [Admin UI](#admin-ui-arabic-interface)

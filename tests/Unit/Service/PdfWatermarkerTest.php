@@ -137,6 +137,37 @@ class PdfWatermarkerTest extends TestCase {
 	 * {@see ShapedText::shape()} does. Unpatched, this drew `Doe John - سري` - the watermark
 	 * naming the wrong person, in the format most likely to be handed to a court.
 	 */
+	/**
+	 * A placeholder value that is not valid UTF-8 must not reach the page, and must not
+	 * take the line's shaping with it.
+	 *
+	 * The image path was where this was reported, but the PDF path resolves the same
+	 * templates from the same values and hands the result to a library that walks it as
+	 * UTF-8 - it just gets there without going through {@see ShapedText::shape()}, so it
+	 * does not inherit that method's scrub. Asserted on the codepoints the PDF actually
+	 * carries: the drawn run must be the one the clean name produces, byte for byte.
+	 */
+	public function testADirtyPlaceholderDoesNotReachThePage(): void {
+		$source = $this->createSourcePdf(1);
+		$dirty = $this->tmpDir . '/dirty_placeholder.pdf';
+		$clean = $this->tmpDir . '/clean_placeholder.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setTextTemplate(self::ARABIC_PROBE . ' {username}');
+
+		// The byte an LDAP display name carries after a latin-1 round trip.
+		$this->watermarker->apply($source, $dirty, $config, ['username' => "Ahmed\xD8"]);
+		$this->watermarker->apply($source, $clean, $config, ['username' => 'Ahmed']);
+
+		$drawn = $this->firstTextRunCodepoints($dirty);
+		$this->assertNotEmpty($drawn, 'nothing was drawn at all');
+		$this->assertSame(
+			$this->firstTextRunCodepoints($clean),
+			$drawn,
+			'a byte that is not part of the text changed what reached the page',
+		);
+	}
+
 	public function testLatinNameKeepsItsOrderInsideAnArabicLine(): void {
 		$source = $this->createSourcePdf(1);
 		$dest = $this->tmpDir . '/arabic-latin.pdf';

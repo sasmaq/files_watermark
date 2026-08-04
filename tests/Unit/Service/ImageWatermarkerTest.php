@@ -334,6 +334,62 @@ class ImageWatermarkerTest extends TestCase {
 	}
 
 	/**
+	 * A placeholder value carrying one byte that is not UTF-8 must not cost the watermark
+	 * its shaping.
+	 *
+	 * This is the production failure, at the level it was reported: Arabic drawn in
+	 * isolated forms, left to right, in a valid PNG. The bad byte came from a display name
+	 * - the kind of thing LDAP hands over after a latin-1 round trip - and because
+	 * `preg_match('/…/u')` cannot scan a malformed subject, the guard that decides whether
+	 * to shape read its `false` as "no". Nothing threw, nothing was logged.
+	 *
+	 * Asserted as an image, not as a string, because the string-level guard is one line
+	 * away from being reintroduced somewhere else in the chain: what matters is that the
+	 * pixels are the ones the clean name produces.
+	 */
+	public function testADirtyPlaceholderStillRendersAShapedWatermark(): void {
+		$base = $this->createImage('image/png', 'png', 500, 360);
+		$config = $this->arabicConfig(self::ARABIC_PROBE . ' {displayname}');
+
+		$dirty = $this->tmpDir . '/ar_dirty.png';
+		$clean = $this->tmpDir . '/ar_clean.png';
+		$this->watermarker->apply($base, $dirty, $config, ['displayname' => "Ahmed\xD8"]);
+		$this->watermarker->apply($base, $clean, $config, ['displayname' => 'Ahmed']);
+
+		$this->assertGreaterThan(0, $this->changedPixels($base, $dirty), 'nothing was drawn at all');
+		$this->assertSame(
+			md5_file($clean),
+			md5_file($dirty),
+			'one byte that is not part of the text changed what was drawn, so the shaping pass was skipped',
+		);
+	}
+
+	/**
+	 * The same, measured rather than compared: unshaped Arabic is materially wider than
+	 * shaped Arabic, because isolated letters do not overlap and lam-alef stays two glyphs.
+	 * A render that came out at the unshaped width is the reported bug, whatever else about
+	 * the image looks plausible.
+	 */
+	public function testTheDirtyRenderIsNotTheUnshapedWidth(): void {
+		$font = ShapedText::bundledFontPath();
+		$this->assertNotNull($font);
+
+		$resolved = self::ARABIC_PROBE . ' ' . "Ahmed\xD8";
+		$shapedBox = imagettfbbox(24, 0, $font, ShapedText::shape($resolved));
+		$rawBox = imagettfbbox(24, 0, $font, $resolved);
+		$this->assertNotFalse($shapedBox);
+		$this->assertNotFalse($rawBox);
+
+		$shapedWidth = abs($shapedBox[2] - $shapedBox[0]);
+		$rawWidth = abs($rawBox[2] - $rawBox[0]);
+		$this->assertLessThan(
+			$rawWidth,
+			$shapedWidth,
+			'shaping a string containing a bad byte left it the width of unshaped text',
+		);
+	}
+
+	/**
 	 * Arabic must not quietly fall back to a Latin font or the bitmap font, both of which
 	 * produce a valid image that no one can read. The bundled face is what gets used.
 	 */

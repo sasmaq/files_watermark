@@ -352,10 +352,18 @@ class ImageWatermarker {
 		return $bundled;
 	}
 
+	/**
+	 * The template with its placeholders filled in, guaranteed to be valid UTF-8.
+	 *
+	 * The scrub is here rather than only at the source of each value because this is the
+	 * last point before the string is measured, shaped and drawn: the template itself is
+	 * admin-supplied and every placeholder value comes from outside this app.
+	 * {@see ShapedText::toValidUtf8()} explains what one bad byte does to a whole watermark.
+	 */
 	private function resolvePlaceholders(string $template, array $placeholders): string {
 		$search = array_map(fn ($k) => '{' . $k . '}', array_keys($placeholders));
 		$replace = array_values($placeholders);
-		return str_replace($search, $replace, $template);
+		return ShapedText::toValidUtf8(str_replace($search, $replace, $template));
 	}
 
 	private function hexToRgb(string $hex): array {

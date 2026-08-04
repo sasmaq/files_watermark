@@ -315,6 +315,103 @@ class WatermarkServiceTest extends TestCase {
 		}
 	}
 
+	/**
+	 * A display name that is not valid UTF-8 reaches the renderer repaired, and the admin
+	 * is told which field it came from.
+	 *
+	 * The repair is what keeps the watermark shaped - see {@see ShapedText::toValidUtf8()}
+	 * and the image-renderer tests. The *log line* is the other half, and it is the half
+	 * only this class can provide: by the time the renderer sees the string, the bad bytes
+	 * are one substring of a resolved template and nothing can say which value they came
+	 * from. An admin looking at a mangled name needs to know whether to fix the user
+	 * backend or the file.
+	 */
+	public function testInvalidUtf8InAPlaceholderIsRepairedAndReported(): void {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{displayname}');
+		$config->setOpacity(80);
+		$config->setFontSize(24);
+		$config->setColor('#cccccc');
+		$config->setRotation(45);
+		$config->setTrigger('on_demand');
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		// What an LDAP or AD attribute looks like after a latin-1 round trip.
+		$user->method('getDisplayName')->willReturn("Ahmed\xD8");
+		$user->method('getEMailAddress')->willReturn('ahmed@example.com');
+		$this->userSession->method('getUser')->willReturn($user);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('image/jpeg');
+		$file->method('getName')->willReturn('photo.jpg');
+		$file->method('getId')->willReturn(42);
+		$file->method('getPath')->willReturn('/alice/files/photo.jpg');
+		$file->method('getContent')->willReturn('fake-image-data');
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+		$this->imageWatermarker->expects($this->once())
+			->method('apply')
+			->with(
+				$this->anything(),
+				$this->anything(),
+				$this->anything(),
+				$this->callback(function (array $placeholders): bool {
+					$this->assertSame('Ahmed', $placeholders['displayname'], 'the bad byte reached the renderer');
+					$this->assertTrue(mb_check_encoding(implode('', $placeholders), 'UTF-8'));
+					return true;
+				}),
+			);
+
+		// Named, so the admin knows which field to go and fix; the bytes themselves are
+		// not worth putting in a log line.
+		$this->logger->expects($this->once())
+			->method('warning')
+			->with(
+				$this->stringContains('invalid UTF-8'),
+				$this->callback(fn (array $context): bool => $context['fields'] === 'displayname'),
+			);
+
+		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
+	/** Clean values must not cost a log line - a warning per watermark is noise, not signal. */
+	public function testCleanPlaceholdersAreNotReported(): void {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{displayname}');
+		$config->setTrigger('on_demand');
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('ahmed');
+		$user->method('getDisplayName')->willReturn('أحمد');
+		$user->method('getEMailAddress')->willReturn('ahmed@example.com');
+		$this->userSession->method('getUser')->willReturn($user);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('image/jpeg');
+		$file->method('getName')->willReturn('صورة.jpg');
+		$file->method('getId')->willReturn(42);
+		$file->method('getPath')->willReturn('/ahmed/files/صورة.jpg');
+		$file->method('getContent')->willReturn('fake-image-data');
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+
+		$this->logger->expects($this->never())->method('warning');
+
+		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
+
+		if (file_exists($tmpPath)) {
+			unlink($tmpPath);
+			@rmdir(dirname($tmpPath));
+		}
+	}
+
 	public function testWatermarkFileDelegatesPdfToPdfWatermarker(): void {
 		$config = new WatermarkConfig();
 		$config->setType('text');

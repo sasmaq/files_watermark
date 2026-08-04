@@ -9,7 +9,7 @@ what was measured, why a design is what it is - lives in
 **Closed items are deleted from here, not ticked.** What was done, and what it cost to
 learn, is recorded in `development.md`; everything below is genuinely still open.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **637 PHPUnit**,
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **647 PHPUnit**,
 **95 Jest**, **91 Cypress**, no host-conditional skips - except the two page-reload cases
 added to `10-files-app.cy.js`, which have not been run against an instance yet.
 

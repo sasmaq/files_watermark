@@ -28,14 +28,62 @@ final class ShapedText {
 	private const FONT_ARCHIVE = 'ibmplexsansarabicb.z';
 
 	/**
+	 * `$text` with any byte sequence that is not valid UTF-8 removed.
+	 *
+	 * **This is what stands between one bad byte and an unreadable watermark.** Every
+	 * string drawn here is assembled from places this app does not control - a display
+	 * name or an email out of LDAP, a file name off the storage, a template an admin
+	 * pasted - and one stray byte from a Windows-1256 or latin-1 round trip is enough to
+	 * make the *whole* string undrawable: `preg_match()` with the `u` modifier fails on a
+	 * malformed subject rather than reporting no match, and the shaping pass that
+	 * {@see mayNeedShaping} gates never runs. The Arabic then renders in isolated forms,
+	 * left to right - measured at 435px against the shaped 316px for the same words, with
+	 * the lam-alef ligature gone. A valid image nobody can read, produced without an
+	 * exception or a log line.
+	 *
+	 * Dropped rather than substituted: a name that arrives as `Ahmed` plus a broken byte
+	 * should watermark as `Ahmed`, not `Ahmed?`. mbstring's substitution character is set
+	 * and restored around the call because it is process-global state, and this must not
+	 * change what any other code converts.
+	 */
+	public static function toValidUtf8(string $text): string {
+		if ($text === '' || mb_check_encoding($text, 'UTF-8')) {
+			return $text;
+		}
+
+		$previous = mb_substitute_character();
+		mb_substitute_character('none');
+		try {
+			// The pre-8.3 idiom for mb_scrub(): converting UTF-8 to UTF-8 re-encodes what is
+			// valid and applies the substitution rule - here, dropping - to what is not.
+			return mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+		} finally {
+			mb_substitute_character($previous);
+		}
+	}
+
+	/**
 	 * Whether `$text` may need shaping - i.e. reaches beyond Latin-1.
 	 *
 	 * Not a font question any more: one face draws everything. It is a cheap guard so that
 	 * Latin text skips the Bidi pass entirely, and the threshold stays U+00FF because
 	 * nothing below it needs reordering or contextual forms.
+	 *
+	 * **A subject `preg_match()` cannot even scan counts as "yes".** It returns `false`,
+	 * not `0`, on malformed UTF-8, and `false === 1` reads as "no shaping needed" - which
+	 * is exactly backwards, since a string carrying a broken byte is the one most likely to
+	 * be non-Latin. That inversion is what shipped Arabic watermarks unshaped whenever a
+	 * placeholder carried one bad byte. {@see shape()} repairs its input before asking, so
+	 * this branch should now be unreachable from there; it stays because this method is
+	 * public and its answer must not depend on the caller having scrubbed first.
 	 */
 	public static function mayNeedShaping(string $text): bool {
-		return preg_match('/[^\x{0000}-\x{00FF}]/u', $text) === 1;
+		$found = preg_match('/[^\x{0000}-\x{00FF}]/u', $text);
+		if ($found === false) {
+			return true;
+		}
+
+		return $found === 1;
 	}
 
 	/**
@@ -62,6 +110,11 @@ final class ShapedText {
 	 * two patches cover both rendering paths.
 	 */
 	public static function shape(string $text): string {
+		// Before anything asks a question about this string. Bidi walks it as UTF-8 and the
+		// guard below scans it as UTF-8; neither can answer for bytes that are not, and the
+		// failure mode of asking anyway is a silently unshaped watermark - see toValidUtf8().
+		$text = self::toValidUtf8($text);
+
 		if (!self::mayNeedShaping($text)) {
 			return $text;
 		}

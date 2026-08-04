@@ -234,6 +234,64 @@ class ShapedTextTest extends TestCase {
 		$this->assertSame(ShapedText::bundledFontPath(), ShapedText::bundledFontPath());
 	}
 
+	/*
+	 * ---------------------------------------------------------------------------
+	 * One byte that is not UTF-8, and the whole watermark went unshaped.
+	 *
+	 * Reported from production: Arabic image watermarks drawn in isolated forms, left to
+	 * right. The cause was not the renderer, the font or the GD version - it was a
+	 * placeholder value carrying a stray byte (an LDAP display name off a latin-1 round
+	 * trip). `preg_match()` with the `u` modifier returns **false** on a malformed subject,
+	 * `false === 1` is false, and the guard concluded "no shaping needed" for a string that
+	 * was nothing but Arabic.
+	 * ---------------------------------------------------------------------------
+	 */
+
+	/** A display name with one byte that cannot start a UTF-8 sequence. */
+	private const DIRTY = "Ahmed\xD8";
+
+	public function testMalformedInputIsTreatedAsNeedingShaping(): void {
+		// The inversion itself: preg_match cannot scan this, and its failure must not be
+		// read as "there is nothing here beyond Latin-1".
+		$this->assertFalse(preg_match('/[^\x{0000}-\x{00FF}]/u', self::DIRTY));
+		$this->assertTrue(ShapedText::mayNeedShaping(self::DIRTY));
+	}
+
+	public function testOneBadByteDoesNotCostTheRestOfTheStringItsShaping(): void {
+		$dirty = self::PROBE . ' ' . self::DIRTY;
+		$shaped = ShapedText::shape($dirty);
+
+		$this->assertNotSame($dirty, $shaped, 'the string was drawn exactly as it arrived, so shaping was skipped');
+		// The Arabic is shaped and reordered exactly as it is without the bad byte
+		// alongside it, which is the property that failed in production.
+		$this->assertSame(
+			ShapedText::shape(self::PROBE . ' Ahmed'),
+			$shaped,
+			'the shaped result depends on a byte that is not part of the text',
+		);
+	}
+
+	public function testScrubbingDropsOnlyTheInvalidBytes(): void {
+		$this->assertSame('Ahmed', ShapedText::toValidUtf8(self::DIRTY));
+		// Substituted characters would be worse than dropped ones: a watermark reading
+		// "Ahmed?" claims the name has a character in it that it does not.
+		$this->assertStringNotContainsString('?', ShapedText::toValidUtf8(self::DIRTY));
+	}
+
+	public function testValidTextIsReturnedUntouched(): void {
+		foreach ([self::PROBE, 'Alice', '', 'Ahmed - 2026', "\u{1F600}", 'مستند سري'] as $text) {
+			$this->assertSame($text, ShapedText::toValidUtf8($text));
+		}
+	}
+
+	public function testScrubbingLeavesTheGlobalSubstitutionCharacterAlone(): void {
+		// mb_substitute_character() is process-global state. Borrowing it to drop bad bytes
+		// must not change what every other conversion in the request does.
+		$before = mb_substitute_character();
+		ShapedText::toValidUtf8(self::DIRTY);
+		$this->assertSame($before, mb_substitute_character());
+	}
+
 	/**
 	 * The non-Arabic characters of a shaped string, in the order they are drawn.
 	 *

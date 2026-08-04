@@ -410,9 +410,17 @@ class PdfWatermarker {
 		);
 	}
 
+	/**
+	 * The template with its placeholders filled in, guaranteed to be valid UTF-8.
+	 *
+	 * The PDF path does not go through {@see ShapedText::shape()} - `getTextCell()` runs
+	 * its own Bidi pass - so it does not inherit that method's scrub and needs this one.
+	 * The library walks the string as UTF-8 exactly as the image path does, and a byte
+	 * that is not UTF-8 is not something to hand it and hope.
+	 */
 	private function resolvePlaceholders(string $template, array $placeholders): string {
 		$search = array_map(fn ($k) => '{' . $k . '}', array_keys($placeholders));
 		$replace = array_values($placeholders);
-		return str_replace($search, $replace, $template);
+		return ShapedText::toValidUtf8(str_replace($search, $replace, $template));
 	}
 }

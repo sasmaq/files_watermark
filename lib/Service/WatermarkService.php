@@ -683,7 +683,7 @@ class WatermarkService {
 	private function buildPlaceholders(File $file, string $trigger, ?IUser $actor = null): array {
 		$user = $actor ?? $this->userSession->getUser();
 		$anonymous = $this->anonymousLabel($trigger, 'Public link', 'Unknown');
-		return [
+		return $this->scrubPlaceholders([
 			// Two different identities, and the difference matters in a watermark. The
 			// account name is the uid: unique, stable, and what an admin greps the audit
 			// log or the user list for. The display name is what a human recognises, and
@@ -698,7 +698,50 @@ class WatermarkService {
 			'date' => date('Y-m-d'),
 			'datetime' => date('Y-m-d H:i:s'),
 			'filename' => $file->getName(),
-		];
+		]);
+	}
+
+	/**
+	 * Placeholder values as valid UTF-8, saying so in the log when one had to be repaired.
+	 *
+	 * Every value above comes from somewhere this app does not control - a display name or
+	 * an email out of the user backend (LDAP and AD are where latin-1 and Windows-1256
+	 * remnants come from), a file name off the storage. One byte that is not UTF-8 in any
+	 * of them used to cost the *whole* watermark its shaping, because the guard that
+	 * decides whether to shape cannot scan a malformed string and read its failure as "no
+	 * shaping needed". The Arabic then drew in isolated forms, left to right, in a
+	 * perfectly valid image file - see {@see ShapedText::toValidUtf8()}.
+	 *
+	 * The renderers scrub as well, at the point of drawing, and that is what guarantees
+	 * the output. This exists for the other half of the problem: **an admin looking at a
+	 * mangled name needs to know which field to fix.** The renderers cannot say - by then
+	 * the value is one substring of a resolved template - so the report happens here,
+	 * where the values still have their names, and it names them rather than dumping the
+	 * bytes.
+	 *
+	 * @param array<string, string> $placeholders
+	 * @return array<string, string>
+	 */
+	private function scrubPlaceholders(array $placeholders): array {
+		$repaired = [];
+		foreach ($placeholders as $name => $value) {
+			$clean = ShapedText::toValidUtf8($value);
+			if ($clean !== $value) {
+				$repaired[] = $name;
+				$placeholders[$name] = $clean;
+			}
+		}
+
+		if ($repaired !== []) {
+			$this->logger->warning(
+				'files_watermark: dropped invalid UTF-8 from watermark placeholder(s) {fields}; '
+					. 'the watermark rendered without those bytes. Check the source of those values '
+					. '(user backend, or the file name) if the result looks wrong.',
+				['fields' => implode(', ', $repaired)],
+			);
+		}
+
+		return $placeholders;
 	}
 
 	/**
