@@ -2151,7 +2151,7 @@ fetches the same files through the same servers a browser does.
 - `ZipInterceptorPlugin::streamNode` duplicates core's, and the stubs cannot catch it
   drifting from `ZipFolderPlugin`. Re-diff against core on every Nextcloud upgrade
 - **Psalm - built.** `psalm.xml`, `composer psalm`, a job in `.github/workflows/php.yml`,
-  `ci/gitlab/php.gitlab-ci.yml` and a stage in the `Jenkinsfile`. `lib/` is clean at
+  one in `.gitlab-ci.yml` and a stage in the `Jenkinsfile`. `lib/` is clean at
   **errorLevel 3 with no baseline** (it was 4 until the 39 level-3 findings were cleared); the
   configuration is commented in `psalm.xml`. What it does and does not settle:
   - `nextcloud/ocp` supplies the *typed* OCP interfaces, so `lib/` is now checked against
@@ -2685,17 +2685,20 @@ Open:
     workspace into the Nextcloud container, and a bind mount issued from inside a Docker agent
     resolves against the *host* path, mounting the wrong directory. It runs on the agent
     itself and needs php, node and `docker compose` on PATH
-- **GitLab CI** - `.gitlab-ci.yml` includes `ci/gitlab/{php,node,e2e}.gitlab-ci.yml`, one file
-  per GitHub workflow, so the same matrix is edited in one place whichever system you read
-  first. Same jobs: syntax on 8.2 + 8.3, coding standard and Psalm on 8.2, PHPUnit on both
-  with a JUnit report attached to the merge request, ESLint, Jest on Node 20 + 22, and the
-  webpack build
-  - **the PHP environment is `ci/php.Dockerfile`**, the file the Jenkinsfile already builds.
-    GitLab has no per-job Dockerfile, so `php:image` builds it once per version with Kaniko
-    (no privileged runner needed) into the project registry and every PHP job pulls from
-    there. Reinstalling the extension set in a `before_script` would have been a second list
-    to keep in step with the first, and one that re-runs on every job. `PHP_IMAGE_REPO` +
-    `BUILD_PHP_IMAGE=false` point the jobs at a prebuilt image and drop the build
+- **GitLab CI** - one `.gitlab-ci.yml`, a plain translation of the three GitHub workflows.
+  Same jobs: syntax on 8.2 + 8.3, coding standard and Psalm on 8.2, PHPUnit on both with a
+  JUnit report attached to the merge request, ESLint, Jest on Node 20 + 22, and the webpack
+  build. Where the two disagree, the GitHub workflows are the ones that run on every push
+  and are therefore the ones to trust
+  - **it builds no image.** The PHP jobs run on the stock `php:<v>-cli` images and add the
+    extension set in `before_script` with the same `install-php-extensions` that
+    `ci/php.Dockerfile` copies in - the GitLab equivalent of what `shivammathur/setup-php`
+    does for the GitHub jobs. It costs about a minute per job and buys a config that needs
+    no container registry, no privileged runner and no image-build stage, which is what the
+    Kaniko arrangement it replaced needed before a pipeline could run at all.
+    `ci/php.Dockerfile` stays for the Jenkinsfile, which builds it per stage
+  - the `php:lint` job installs neither dependencies nor extensions - `php -l` needs
+    neither - so it is still the first signal on a merge request
   - **the E2E job is opt-in and needs a shell runner**, for the bind-mount reason above - a
     mount issued from a container job resolves against the *daemon's* filesystem, so
     `docker:dind` does not rescue it. It appears only once `E2E_RUNNER_TAG` is set to that
