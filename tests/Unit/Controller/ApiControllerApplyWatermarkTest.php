@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ApplyLimits;
+use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
@@ -221,6 +222,43 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 		$this->assertSame(
 			Http::STATUS_REQUEST_ENTITY_TOO_LARGE,
 			$this->controller->applyWatermark('doc.pdf')->getStatus(),
+		);
+	}
+
+	/**
+	 * A decompression bomb passes the byte cap and is refused by the pixel ceiling, which
+	 * the service raises mid-render. It must arrive as the **same** 413 the byte cap gives:
+	 * `ImageTooLargeException` extends `RuntimeException`, which this controller otherwise
+	 * maps to 422, so without the narrower catch a user meets two statuses for one class of
+	 * refusal - and the order of the two catch blocks is the whole of that behaviour.
+	 */
+	public function testAnImageRefusedForItsPixelCountAnswersTheSame413AsTheByteCap(): void {
+		$this->loginAlice();
+		// Small on disk - it is the decoded size that is the problem, so the byte cap
+		// above cannot be what refuses this.
+		$this->mockFile(readable: true, updateable: true, size: 4096);
+
+		$this->watermarkService->method('watermarkInPlace')
+			->willThrowException(new ImageTooLargeException('This image is too large to watermark (400 megapixels; the limit is 40).'));
+
+		$response = $this->controller->applyWatermark('bomb.png');
+
+		$this->assertSame(Http::STATUS_REQUEST_ENTITY_TOO_LARGE, $response->getStatus());
+		$this->assertStringContainsString('400 megapixels', $response->getData()['error']);
+	}
+
+	public function testAnOrdinaryRenderFailureIsStill422(): void {
+		// The catch order must not have swallowed the general case: a PDF the renderer
+		// cannot parse is "unprocessable", not "too large".
+		$this->loginAlice();
+		$this->mockFile(readable: true, updateable: true);
+
+		$this->watermarkService->method('watermarkInPlace')
+			->willThrowException(new \RuntimeException('cannot parse PDF'));
+
+		$this->assertSame(
+			Http::STATUS_UNPROCESSABLE_ENTITY,
+			$this->controller->applyWatermark('broken.pdf')->getStatus(),
 		);
 	}
 

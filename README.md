@@ -243,11 +243,13 @@ that comes out, so they live in the app config instead of on the form:
 | `archive_max_members` | `200` | Files rendered for a single folder / multi-select download |
 | `archive_max_bytes` | `268435456` (256 MiB) | Source bytes rendered for one such download |
 | `apply_max_bytes` | `67108864` (64 MiB) | Size of a single file accepted for an on-demand apply |
+| `image_max_pixels` | `40000000` (40 MP) | Decoded size of an image, on every trigger |
 
 ```bash
 occ config:app:set files_watermark archive_max_members --value 500
 occ config:app:set files_watermark archive_max_bytes   --value 1073741824
 occ config:app:set files_watermark apply_max_bytes     --value 134217728
+occ config:app:set files_watermark image_max_pixels    --value 80000000
 occ config:app:delete files_watermark archive_max_members   # back to the default
 ```
 
@@ -268,6 +270,20 @@ Files over the cap are refused with a 413 naming both their size and the limit, 
 content is read. **Raise it and PHP's `memory_limit` together, or not at all**: on its own
 it only moves the failure from a clean 413 that costs nothing to a fatal error part-way
 through the render, which takes the worker down and tells the user nothing useful.
+
+`image_max_pixels` bounds something `apply_max_bytes` cannot see. Both GD and Imagick work
+on an uncompressed bitmap at roughly **4 bytes per pixel**, and the ratio between a file's
+size on disk and its decoded size is unbounded - a PNG of one flat colour is kilobytes on
+disk and gigabytes in memory. The default of 40 MP is about 160 MB decoded, and is set
+above ordinary photography rather than below it: a 24 MP camera frame and a full 8K image
+both pass, while the 50 MP-and-up end does not. Dimensions are read from the file header,
+so an image over the limit is refused without ever being decoded.
+
+Unlike the byte cap, this one applies on **every** trigger, not just the file action -
+`on_download` and `on_share` decode the same image, so a guard only on the on-demand
+endpoint would leave the problem reachable by downloading the file instead. On those paths
+the refusal behaves like any other render failure: `on_download` serves the original
+untouched and `on_share` denies.
 
 On-demand applies and watermark removals are also rate limited to **20 per user per
 minute** by Nextcloud's own middleware, which answers `429`. That is far above what the

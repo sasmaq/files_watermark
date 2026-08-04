@@ -8,6 +8,8 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLog;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\ImageLimits;
+use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\PdfWatermarker;
@@ -42,6 +44,7 @@ class WatermarkServiceTest extends TestCase {
 	private OriginalStore&MockObject $originalStore;
 	private WatermarkImageStore&MockObject $imageStore;
 	private TeamFolder&MockObject $teamFolder;
+	private ImageLimits&MockObject $imageLimits;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -58,6 +61,10 @@ class WatermarkServiceTest extends TestCase {
 		$this->originalStore = $this->createMock(OriginalStore::class);
 		$this->imageStore = $this->createMock(WatermarkImageStore::class);
 		$this->teamFolder = $this->createMock(TeamFolder::class);
+		// The shipped default unless a test says otherwise: an unstubbed mock answers 0,
+		// which every image exceeds.
+		$this->imageLimits = $this->createMock(ImageLimits::class);
+		$this->imageLimits->method('maxPixels')->willReturn(ImageLimits::DEFAULT_MAX_PIXELS);
 
 		$this->service = new WatermarkService(
 			$this->configMapper,
@@ -71,6 +78,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->originalStore,
 			$this->imageStore,
 			$this->teamFolder,
+			$this->imageLimits,
 			$this->l10n(),
 		);
 	}
@@ -1498,5 +1506,160 @@ class WatermarkServiceTest extends TestCase {
 			->willThrowException(new DoesNotExistException(''));
 
 		$this->assertSame($this->service->resolveConfig(), $this->service->resolveConfig());
+	}
+
+	/**
+	 * A PNG that *declares* 400 megapixels in 70 bytes - a decompression bomb in miniature.
+	 *
+	 * The whole point of the pixel ceiling is that this file can exist: `apply_max_bytes`
+	 * waves it straight through, because on disk it is nothing. Only the header says how
+	 * much memory decoding it would ask for.
+	 *
+	 * Built byte by byte rather than with GD, and it has to be: a real 400 MP image cannot
+	 * live in a test suite, and generating one would allocate exactly the 1.6 GB the guard
+	 * exists to refuse. `getimagesize()` reads the IHDR and stops, which is why this works
+	 * and why the guard is correct - it never reaches the (absent, invalid) image data.
+	 */
+	private function pixelBomb(int $width = 20000, int $height = 20000): string {
+		$ihdr = 'IHDR'
+			. pack('N', $width)
+			. pack('N', $height)
+			. "\x08\x02\x00\x00\x00"; // 8-bit truecolour, no interlace
+
+		return "\x89PNG\r\n\x1a\n"
+			. pack('N', 13) . $ihdr . pack('N', crc32($ihdr));
+	}
+
+	/** A policy that watermarks images on demand. */
+	private function imageConfig(): WatermarkConfig {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{username}');
+		$config->setTrigger('on_demand');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$user->method('getDisplayName')->willReturn('Alice');
+		$this->userSession->method('getUser')->willReturn($user);
+
+		return $config;
+	}
+
+	/** @return File&MockObject */
+	private function imageFile(string $content): File {
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('image/png');
+		$file->method('getName')->willReturn('photo.png');
+		$file->method('getId')->willReturn(31);
+		$file->method('getPath')->willReturn('/alice/files/photo.png');
+		$file->method('getContent')->willReturn($content);
+		return $file;
+	}
+
+	/**
+	 * The assertion that matters is `never()` on the renderer.
+	 *
+	 * A guard that refused *after* `imagecreatefrompng()` would have made the allocation it
+	 * exists to prevent - and a real bomb takes the worker down there, so no code of ours
+	 * would run to report anything at all.
+	 */
+	public function testAnImageOverThePixelCeilingIsRefusedBeforeItIsDecoded(): void {
+		$this->imageConfig();
+		$this->imageWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(ImageTooLargeException::class);
+
+		$this->service->watermarkFile($this->imageFile($this->pixelBomb()), 'on_demand');
+	}
+
+	public function testTheRefusalReportsMegapixelsRatherThanARawCount(): void {
+		// 400000000 tells an admin nothing; "400 megapixels" is the number in the setting.
+		$this->imageConfig();
+
+		try {
+			$this->service->watermarkFile($this->imageFile($this->pixelBomb()), 'on_demand');
+			$this->fail('Expected the bomb to be refused');
+		} catch (ImageTooLargeException $e) {
+			// Both halves, and matched with their units attached - "400" alone would also
+			// be satisfied by the string "40", which is the other number in this message.
+			$this->assertStringContainsString('400 megapixels', $e->getMessage());
+			$this->assertStringContainsString('limit is 40', $e->getMessage());
+		}
+	}
+
+	public function testAnImageUnderTheCeilingStillRenders(): void {
+		// The other direction, so the guard cannot quietly become "refuse every image".
+		$this->imageConfig();
+		$this->imageWatermarker->expects($this->once())->method('apply');
+
+		$this->service->watermarkFile($this->imageFile($this->pixelBomb(100, 100)), 'on_demand');
+	}
+
+	public function testTheConfiguredCeilingIsWhatApplies(): void {
+		// Not the shipped default: an admin who lowers it must see it take effect.
+		$this->imageLimits = $this->createMock(ImageLimits::class);
+		$this->imageLimits->method('maxPixels')->willReturn(1000);
+		$this->service = new WatermarkService(
+			$this->configMapper,
+			$this->logMapper,
+			$this->pdfWatermarker,
+			$this->imageWatermarker,
+			$this->rootFolder,
+			$this->userSession,
+			$this->tagObjectMapper,
+			$this->logger,
+			$this->originalStore,
+			$this->imageStore,
+			$this->teamFolder,
+			$this->imageLimits,
+			$this->l10n(),
+		);
+
+		$this->imageConfig();
+		$this->imageWatermarker->expects($this->never())->method('apply');
+		$this->expectException(ImageTooLargeException::class);
+
+		// 10000 pixels - far under the shipped 40 MP, so only the configured value refuses it.
+		$this->service->watermarkFile($this->imageFile($this->pixelBomb(100, 100)), 'on_demand');
+	}
+
+	/**
+	 * A header this guard cannot parse is allowed through, deliberately.
+	 *
+	 * `getimagesize()` returns false for corrupt files *and* for formats it does not know,
+	 * so refusing on it would turn "cannot tell" into "is a bomb" and reject files the
+	 * renderers handle today. The renderer's own failure is the honest answer for a file
+	 * that is actually broken.
+	 */
+	public function testAnUnreadableHeaderIsNotTreatedAsABomb(): void {
+		$this->imageConfig();
+		$this->imageWatermarker->expects($this->once())->method('apply');
+
+		$this->service->watermarkFile($this->imageFile('not an image at all'), 'on_demand');
+	}
+
+	/**
+	 * The refusal must not leave the plaintext copy of the user's file in the temp dir.
+	 * This path exists to *avoid* spending resources, so leaking a file while doing it
+	 * would be the one outcome worse than not having the guard.
+	 */
+	public function testARefusedImageLeavesNoTempCopyBehind(): void {
+		$this->imageConfig();
+
+		// The renderer never runs, so there is no path to capture from it. Compare the
+		// staging directories instead - `createTempPath()` makes one per render under
+		// `nc_watermark_`, and the refusal has to take its own back down again.
+		$staging = static fn (): array => glob(sys_get_temp_dir() . '/nc_watermark_*') ?: [];
+		$before = $staging();
+
+		try {
+			$this->service->watermarkFile($this->imageFile($this->pixelBomb()), 'on_demand');
+			$this->fail('Expected the bomb to be refused');
+		} catch (ImageTooLargeException) {
+			// expected
+		}
+
+		$this->assertSame($before, $staging(), 'the refusal left a plaintext copy behind in the temp dir');
 	}
 }

@@ -51,6 +51,7 @@ class WatermarkService {
 		private OriginalStore $originalStore,
 		private WatermarkImageStore $imageStore,
 		private TeamFolder $teamFolder,
+		private ImageLimits $imageLimits,
 		private IL10N $l,
 	) {
 	}
@@ -106,6 +107,10 @@ class WatermarkService {
 			if (in_array($mime, self::SUPPORTED_PDF, true)) {
 				$this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
 			} else {
+				// Inside the try, so the throw goes out through the same cleanup as a
+				// failed render - $srcTmp is a plaintext copy of the user's file and must
+				// not be left behind by a path that exists to refuse work.
+				$this->assertPixelsAllowed($srcTmp);
 				$this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
 			}
 		} catch (\Throwable $e) {
@@ -577,6 +582,51 @@ class WatermarkService {
 		$allowed = $config->getAllowedMimeTypes();
 		if (!empty($allowed) && !in_array($mime, $allowed, true)) {
 			throw new \RuntimeException($this->l->t('MIME type "%s" is not in the configured whitelist.', [$mime]));
+		}
+	}
+
+	/**
+	 * Throws if decoding $path would exceed the pixel ceiling.
+	 *
+	 * **Read from the header, never from a decode.** `getimagesize()` parses the few bytes
+	 * that carry the dimensions and allocates nothing for the raster, which is the only
+	 * order that helps: a check performed after `imagecreatefrom*()` has already made the
+	 * allocation it exists to prevent, and a decompression bomb kills the worker before any
+	 * code of ours runs again.
+	 *
+	 * Multiplied as ints and compared against the cap. A bomb's dimensions are large but
+	 * nowhere near overflowing a 64-bit int - the format headers cap each side at 2^31 -
+	 * so the product is exact.
+	 *
+	 * **An unreadable header is allowed through**, deliberately. `getimagesize()` returns
+	 * false for anything it cannot parse, which includes formats it does not know as well
+	 * as corrupt files. Refusing on that would turn "this guard cannot tell" into "this
+	 * file is a bomb", and would reject files the renderers handle perfectly well today.
+	 * The renderer's own failure is the honest answer for a file that is actually broken.
+	 *
+	 * @throws ImageTooLargeException
+	 */
+	private function assertPixelsAllowed(string $path): void {
+		$info = @getimagesize($path);
+		if ($info === false) {
+			return;
+		}
+
+		[$width, $height] = $info;
+		$pixels = $width * $height;
+		$max = $this->imageLimits->maxPixels();
+
+		if ($pixels > $max) {
+			$this->logger->warning('files_watermark: refusing an image of {pixels} pixels, the limit is {max}', [
+				'pixels' => $pixels,
+				'max' => $max,
+				'path' => $path,
+			]);
+
+			throw new ImageTooLargeException($this->l->t(
+				'This image is too large to watermark (%1$s megapixels; the limit is %2$s).',
+				[round($pixels / 1000000, 1), round($max / 1000000, 1)],
+			));
 		}
 	}
 

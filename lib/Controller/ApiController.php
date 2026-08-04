@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ApplyLimits;
+use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
@@ -364,6 +365,11 @@ class ApiController extends Controller {
 
 		try {
 			$applied = $this->watermarkService->watermarkInPlace($node, 'on_demand');
+		} catch (ImageTooLargeException $e) {
+			// Caught ahead of RuntimeException, which it extends. The byte cap above
+			// already answers 413 for a file that is too big; an image that is too big
+			// once decoded is the same refusal and must not arrive as a different status.
+			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_REQUEST_ENTITY_TOO_LARGE);
 		} catch (\RuntimeException $e) {
 			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
 		}

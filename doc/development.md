@@ -1883,10 +1883,43 @@ still missing.
   - the 429 is the one failure the dialog had to learn about. It comes from core, so it
     carries no `error` field, and the modal fell back to axios' English "Request failed
     with status code 429" on an otherwise translated page
-  - **what this does not bound: decoded image size.** The cap is bytes on disk, and GD
-    holds roughly 4 bytes per pixel, so a highly compressed PNG a few MiB wide can decode to
-    far more than this lets a PDF be. A pixel ceiling is a separate guard and is not built -
-    it is listed in `tasks.md` rather than left implied here
+- **The pixel ceiling - what the byte cap could not see.** `apply_max_bytes` says almost
+  nothing about an image: both engines work on an uncompressed bitmap at ~4 bytes per
+  pixel, and the ratio between disk size and decoded size is unbounded. A PNG of one flat
+  colour is kilobytes on disk and gigabytes in memory, and the byte cap waves it straight
+  through - which left one way to exhaust a worker after the caps above were in place
+  - `image_max_pixels`, default **40 MP** (~160 MB decoded). Chosen to sit **above ordinary
+    photography rather than below it**: a 24 MP camera frame and a full 8K image both pass,
+    the 50 MP-and-up end does not. That line is deliberate - a real bomb is not 41 MP, it is
+    four gigapixels, so there is no need to crowd legitimate files to catch it.
+    `testTheDefaultClearsOrdinaryPhotography` pins the boundary with real sensor sizes
+  - **read from the header, never from a decode**, and the order is the entire guard.
+    `getimagesize()` parses the few bytes carrying the dimensions and allocates nothing for
+    the raster; a check after `imagecreatefrom*()` has already made the allocation it exists
+    to prevent, and a real bomb takes the worker down there, so no code of ours would run to
+    report anything
+  - **enforced on every trigger**, not just the file action - it lives in
+    `WatermarkService::renderToTemp()` beside the mime and tag assertions rather than in the
+    controller. `on_download` and `on_share` decode the same image, so a guard only on the
+    on-demand endpoint would leave the bomb reachable by downloading it. On those paths the
+    refusal behaves like any other render failure, which is already correct: `on_download`
+    serves the original, `on_share` denies
+  - it throws `ImageTooLargeException` rather than a bare `RuntimeException` **for exactly
+    one caller**. `ApiController` maps `RuntimeException` to 422, which is honest for "cannot
+    be watermarked" and wrong for "too big" - the byte cap already answers 413, and one class
+    of refusal must not arrive as two statuses. The narrower catch goes first, and a test
+    pins that an ordinary render failure is still 422
+  - **an unreadable header is allowed through, deliberately.** `getimagesize()` returns false
+    for corrupt files *and* for formats it does not know, so refusing on it would turn "this
+    guard cannot tell" into "this file is a bomb" and reject files the renderers handle
+    today. The renderer's own failure is the honest answer for a file that is actually broken
+  - the test fixture is **a 70-byte PNG declaring 400 megapixels**, built byte by byte. It
+    has to be: a real 400 MP image cannot live in a test suite, and generating one would
+    allocate the 1.6 GB the guard exists to refuse. That the fixture works at all is the
+    proof the guard never reaches the (absent, invalid) image data
+  - the refusal takes its own temp directory back down, pinned separately. A path whose
+    whole purpose is to avoid spending resources must not leak a plaintext copy of the
+    user's file while doing it
 - **Preserved originals are covered by server-side encryption.** They used to sit in appdata **in the clear**, beside the ciphertext of the very same bytes:
   measured on a real instance with SSE on, `head -c 9` on one returned `%PDF-1.4` while the
   user's own copy of that file began `HBEGIN:oc_encryption_module:…`. The pre-watermark copy
