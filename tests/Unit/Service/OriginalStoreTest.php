@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Service\OriginalStore;
+use OCA\FilesWatermark\Service\TeamFolder;
 use OCP\Files\AppData\IAppDataFactory;
 use OCP\Files\File;
 use OCP\Files\Folder;
@@ -31,6 +32,7 @@ class OriginalStoreTest extends TestCase {
 
 	private IAppDataFactory&MockObject $appDataFactory;
 	private IRootFolder&MockObject $rootFolder;
+	private TeamFolder&MockObject $teamFolder;
 	private LoggerInterface&MockObject $logger;
 	private OriginalStore $store;
 
@@ -38,8 +40,14 @@ class OriginalStoreTest extends TestCase {
 		parent::setUp();
 		$this->appDataFactory = $this->createMock(IAppDataFactory::class);
 		$this->rootFolder = $this->createMock(IRootFolder::class);
+		$this->teamFolder = $this->createMock(TeamFolder::class);
 		$this->logger = $this->createMock(LoggerInterface::class);
-		$this->store = new OriginalStore($this->appDataFactory, $this->rootFolder, $this->logger);
+		$this->store = new OriginalStore(
+			$this->appDataFactory,
+			$this->rootFolder,
+			$this->teamFolder,
+			$this->logger,
+		);
 	}
 
 	public function testOriginalIsWrittenIntoTheOwnersStorage(): void {
@@ -146,6 +154,46 @@ class OriginalStoreTest extends TestCase {
 		$this->store->discard($this->file(11, 'alice'));
 	}
 
+	public function testATeamFolderFileKeepsItsBackupInsideTheTeamFolder(): void {
+		// A Team folder has no owner, and both answers getOwner() can give are wrong:
+		// null writes no backup at all (an irreversible watermark), and a real user files
+		// the team's document under one member's home and quota. The copy belongs to the
+		// folder.
+		$originals = $this->createMock(Folder::class);
+		$originals->method('nodeExists')->with('11')->willReturn(false);
+		$originals->expects($this->once())->method('newFile')->with('11', 'clean-bytes');
+
+		$teamRoot = $this->createMock(Folder::class);
+		$teamRoot->method('get')
+			->with(OriginalStore::HOME_FOLDER . '/' . OriginalStore::HOME_SUBFOLDER)
+			->willReturn($originals);
+
+		$file = $this->file(11, 'alice');
+		$this->teamFolder->method('rootOf')->with($file)->willReturn($teamRoot);
+
+		// The owner's home must not be touched even though this node reports an owner.
+		$this->rootFolder->expects($this->never())->method('getUserFolder');
+
+		$this->assertTrue($this->store->store($file, 'clean-bytes'));
+	}
+
+	public function testTheTeamFolderRootIsPreferredOverAnOwnerThatAlsoResolves(): void {
+		// The order in baseFolder() is the whole decision: a Team folder node may well
+		// report a real owner for the request that resolved it, and taking that answer
+		// silently reintroduces the per-member quota and deprovisioning problems.
+		$originals = $this->createMock(Folder::class);
+		$originals->method('get')->with('11')->willReturn($this->contentFile('team-bytes'));
+
+		$teamRoot = $this->createMock(Folder::class);
+		$teamRoot->method('get')->willReturn($originals);
+
+		$file = $this->file(11, 'alice');
+		$this->teamFolder->method('rootOf')->willReturn($teamRoot);
+		$this->appDataFactory->expects($this->never())->method('get');
+
+		$this->assertSame('team-bytes', $this->store->read($file));
+	}
+
 	public function testAnOwnerlessNodeFallsBackToAppdataRatherThanFailing(): void {
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn(11);
@@ -177,12 +225,25 @@ class OriginalStoreTest extends TestCase {
 		return [
 			'a preserved original' => ['/alice/files/.files_watermark/originals/11', true],
 			'nested under it' => ['/bob/files/.files_watermark/originals/220', true],
+			// A Team folder's copies sit one level further down, which the old
+			// `/files/`-anchored test called an ordinary document - so every member's
+			// upload trigger would have watermarked the team's own backups, and stored a
+			// backup of each one it burned.
+			'inside a team folder' => ['/alice/files/Team A/.files_watermark/originals/11', true],
+			'inside a nested team folder path' => ['/bob/files/Team A/sub/.files_watermark/originals/12', true],
 			'an ordinary file' => ['/alice/files/report.pdf', false],
+			'an ordinary file in a team folder' => ['/alice/files/Team A/report.pdf', false],
 			// A user is free to make a folder of that name themselves; only the app's
 			// own path - the full folder/subfolder pair under files/ - is excluded.
 			'a lookalike folder' => ['/alice/files/.files_watermark/notes.pdf', false],
 			'a file merely named like it' => ['/alice/files/originals/11', false],
 		];
+	}
+
+	private function contentFile(string $content): File&MockObject {
+		$file = $this->createMock(File::class);
+		$file->method('getContent')->willReturn($content);
+		return $file;
 	}
 
 	private function file(int $id, string $owner): File&MockObject {

@@ -11,6 +11,7 @@ use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\PdfWatermarker;
+use OCA\FilesWatermark\Service\TeamFolder;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
@@ -40,6 +41,7 @@ class WatermarkServiceTest extends TestCase {
 	private LoggerInterface&MockObject $logger;
 	private OriginalStore&MockObject $originalStore;
 	private WatermarkImageStore&MockObject $imageStore;
+	private TeamFolder&MockObject $teamFolder;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -55,6 +57,7 @@ class WatermarkServiceTest extends TestCase {
 		$this->logger = $this->createMock(LoggerInterface::class);
 		$this->originalStore = $this->createMock(OriginalStore::class);
 		$this->imageStore = $this->createMock(WatermarkImageStore::class);
+		$this->teamFolder = $this->createMock(TeamFolder::class);
 
 		$this->service = new WatermarkService(
 			$this->configMapper,
@@ -67,6 +70,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->logger,
 			$this->originalStore,
 			$this->imageStore,
+			$this->teamFolder,
 			$this->l10n(),
 		);
 	}
@@ -1402,6 +1406,67 @@ class WatermarkServiceTest extends TestCase {
 		);
 		// ...while a member inside it does, which is what the archive path must ask.
 		$this->assertSame('on_share', $this->service->deliveryTriggerFor($this->nodeOnStorage(true)));
+	}
+
+	/**
+	 * The hole Team folder support closes: `on_share` used to watermark nothing in one.
+	 *
+	 * A Team folder mount is not an `ISharedStorage` and every member reading it is a real
+	 * session user, so both of the signals `isShareAccess()` had reported owner access -
+	 * on the one storage shape that is multi-user by construction. The policy said
+	 * "watermark when someone other than the owner reads this" and the whole team was
+	 * exempt from it.
+	 */
+	public function testATeamFolderReadIsShareAccessEvenForASessionUserOnAnUnsharedMount(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
+
+		$member = $this->createMock(IUser::class);
+		$member->method('getUID')->willReturn('alice');
+		$this->userSession->method('getUser')->willReturn($member);
+
+		// Not a shared storage, and the reader is signed in: without the Team folder
+		// signal this node answers null.
+		$node = $this->nodeOnStorage(false, 'alice');
+		$this->teamFolder->method('contains')->with($node)->willReturn(true);
+
+		$this->assertSame('on_share', $this->service->deliveryTriggerFor($node));
+	}
+
+	/**
+	 * Every member, the uploader included.
+	 *
+	 * A Team folder has no owner to exempt - nothing records who put a file there - so
+	 * "everyone but the author" is not a rule this app can implement honestly. Reading
+	 * one's own upload is watermarked, and that visible cost is the deliberate side to
+	 * err on. Pinned because the tempting "fix" is to exempt whoever the mount happens to
+	 * resolve an owner to, which silently reopens the hole above for that user.
+	 */
+	public function testATeamFolderIsShareAccessForTheMemberItReportsAsOwnerToo(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
+
+		$alice = $this->createMock(IUser::class);
+		$alice->method('getUID')->willReturn('alice');
+		$this->userSession->method('getUser')->willReturn($alice);
+
+		// getOwner() says alice, the session says alice, the storage is not shared.
+		$node = $this->nodeOnStorage(false, 'alice');
+		$this->teamFolder->method('contains')->willReturn(true);
+
+		$this->assertSame('on_share', $this->service->deliveryTriggerFor($node));
+	}
+
+	public function testAnOrdinaryOwnedFileIsStillNotShareAccess(): void {
+		// The other direction, so the Team folder signal cannot quietly become "always
+		// watermark": with contains() false the owner reading their own file is untouched.
+		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
+
+		$alice = $this->createMock(IUser::class);
+		$alice->method('getUID')->willReturn('alice');
+		$this->userSession->method('getUser')->willReturn($alice);
+
+		$this->teamFolder->method('contains')->willReturn(false);
+
+		$this->assertNull($this->service->deliveryTriggerFor($this->nodeOnStorage(false, 'alice')));
 	}
 
 	public function testHasDeliveryTriggerConfiguredDelegatesToTheMapper(): void {

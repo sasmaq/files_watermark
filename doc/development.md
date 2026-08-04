@@ -62,21 +62,29 @@ Rasterised flattening existed for tamper resistance and was **removed** - see
   - search and the activity feed still show the folder's *name*. Both need a core patch,
     written out in [`patch.md`](patch.md) and deliberately left to the admin - they leak the
     name, never the contents
-- **Content lost on some files printed with Windows "Microsoft Print to PDF" -
-  reported, not reproduced.** The report is a white page carrying only the watermark, which
-  is the same signature as the two defects already fixed here (the CropBox offset, and the
-  valueless `/Resources` above), so it is likely a third path to the same end rather than
-  anything to do with that producer by name
+- **Content lost on some files printed with Windows "Microsoft Print to PDF" - closed, and
+  it was never a defect of its own.** The report is a white page carrying only the
+  watermark, which is the same signature as the two defects already fixed here (the CropBox
+  offset, and the valueless `/Resources` above). That reading turned out to be right: a real
+  file re-checked against current code round-trips intact, so the producer's name was a
+  coincidence of who happened to hit the two causes, not a third bug
   - **30+ synthetic variants of that producer's structure all round-trip intact**: object
     streams behind a cross-reference stream, `/Resources` inline / indirect / inherited /
     absent, `/Font` sub-dictionaries indirect, Type0 → CIDFontType2 → `FontFile2` chains,
     ICCBased colour spaces, images with soft masks, transparency groups, `/Contents` arrays,
     indirect `/Length`, `/Filter` as a name and as an array, CRLF and bare-CR line endings,
-    `stream\r\n` against `stream\n`, and multi-page documents sharing one font object
-  - `tests/diagnose-pdf.php` is what closes this: run against the real file, it reports per
+    `stream\r\n` against `stream\n`, and multi-page documents sharing one font object. None
+    of them reproduced it *because* both causes were already fixed by the time they were
+    written - the synthetic sweep proved the structure was safe, it did not close the report
+  - **`tests/diagnose-pdf.php` is what closed it**, run against the real file: it reports per
     page whether the content survived the import, whether it is still readable as operators,
-    and whether every resource the copied stream names is still defined. It is a bench
-    instrument, not part of the app - for a file that cannot be shared
+    and whether every resource the copied stream names is still defined. It is kept as a
+    bench instrument, not part of the app - the next field report of a blank page is
+    answered the same way, against a file that cannot be shared
+  - the standing lesson is that **a blank-page report names a symptom, not a producer.**
+    Two distinct causes produced byte-identical complaints, and both are now regression-
+    pinned (`testAPageWithoutResourcesKeepsAUsableFormDictionary`, and the CropBox tests
+    below); a third would need the instrument, not another synthetic sweep
 - **PDF 1.5+ with compressed xref - solved outright.** The renderer reads these files
   natively, so they are watermarked with **no external binary and no configuration**. Two of
   the three Nextcloud skeleton PDFs are such files, which is why this mattered so much:
@@ -845,6 +853,134 @@ Storage-agnostic by design: all file I/O goes through the Files API (`getContent
 
 ---
 
+## Team folders {#team-folders}
+
+**Position:** built, and it is two behaviour changes rather than a feature - one leak
+closed and one backup rerouted. **Not yet observed against a running Team folder:**
+`groupfolders` is not installed in this repo's Docker environment, so what is measured
+here is the logic, not the premise it rests on. See [what is still
+unverified](#team-folders-unverified) below.
+
+A Team folder (the `groupfolders` app, renamed from Group folders in Nextcloud 31) is the
+one storage shape that breaks both of this app's central assumptions at once. **It has no
+owner** - it is collective space, and `getOwner()` has no honest answer for a file in one.
+**And it is not a share** - the mount is not an `ISharedStorage`. Two things depended on
+exactly those signals.
+
+### `on_share` watermarked nothing in a Team folder {#team-folders-on-share}
+
+The hole, and the reason this is worth doing at all. `isShareAccess()` decided the
+`on_share` audience from three tests - a public-link context flag, an `ISharedStorage`
+mount, and the absence of a session user. A Team folder passes none of them: the mount is
+its own kind, and every member reading it is a signed-in user. So the policy that says
+"watermark when someone other than the owner reads this" exempted **the entire team**, on
+the one storage shape that is multi-user by construction. An admin who put confidential
+documents in a Team folder under `on_share` got clean originals for every member.
+
+A fourth signal closes it: `TeamFolder::contains()`. The decision inside it is not
+mechanical, and it is written down because it has a visible cost:
+
+- **Every member counts as share access, the uploader included.** There is no owner to
+  exempt. Nothing in the file cache records who put a file in a Team folder, so "everyone
+  except the author" is not a rule this app can implement honestly - it could only be
+  faked by exempting whoever the mount happens to resolve an owner to for a given request,
+  which silently reopens the hole for that user and for nobody else. Reading back your own
+  upload is therefore watermarked.
+- **That is the side to err on**, and it matches how the same function already treats a
+  session-less background job. The cost of over-watermarking is visible to the person it
+  happens to; the cost of under-watermarking is a leak nobody sees.
+- An admin who wants Team folder reads left clean should use `on_download` (which
+  watermarks regardless of who is asking) or exclude the folder with the tag scope, rather
+  than relying on `on_share` to skip them.
+
+`testATeamFolderIsShareAccessForTheMemberItReportsAsOwnerToo` pins the uncomfortable half
+specifically, because the tempting "fix" is the faked exemption above.
+
+### Preserved originals go in the Team folder, not a home {#team-folders-originals}
+
+[`OriginalStore`](#security) picks the backup location from the file's owner, which for a
+Team folder file is a question with two wrong answers. A **null** owner writes no backup
+at all - so an on-demand watermark in a Team folder would be silently irreversible, which
+is precisely the failure the whole class exists to prevent. A **non-null** one files the
+team's document in one member's home, against one member's quota, where it disappears the
+day that member is deprovisioned.
+
+So a Team folder keeps its own: `{team folder}/.files_watermark/originals/{fileId}`, the
+same layout one level down. This holds every property that
+[moving originals out of appdata](#security) was for - it is written through the Files API,
+so the storage layer encrypts it with the selected module exactly as it does for a home -
+and adds one the home route never had: the copy belongs to the folder rather than to a
+person, so it survives anyone leaving the team.
+
+The Team folder is checked **before** the owner, and the order is the decision rather than
+a detail: a node in a Team folder may well report a real owner for the request that
+resolved it, and taking that answer quietly reintroduces both problems above.
+`testTheTeamFolderRootIsPreferredOverAnOwnerThatAlsoResolves` is what keeps the cheap
+reordering from passing.
+
+### `isBackup()` was anchored to `/files/`, and that was the bug {#team-folders-isbackup}
+
+The guard that stops the app watermarking its own backups matched
+`/files/.files_watermark/originals/` - correct while every copy sat at the top of a home,
+and wrong the moment one sits a level deeper. A Team folder's copies are at
+`/alice/files/Team A/.files_watermark/originals/11`, which the anchored test called an
+ordinary document.
+
+That is the worst of the three to get wrong. The recursion it prevents - store a copy,
+which fires `NodeWrittenEvent`, which queues a watermark of the copy, which stores a copy
+of the copy - runs *harder* in a Team folder than in a home, because every member's upload
+trigger sees the same set of copies. The anchor is gone; the folder/subfolder **pair** is
+still required, so a user who makes a folder of that name themselves does not accidentally
+exclude their own files from the policy.
+
+`HideOriginalsPlugin` needed no change and that is not luck: it was already segment-wise
+rather than a substring test, for [a different reason](#open-1) (a `DELETE` on the folder
+itself normalises without a trailing slash). A guard written to be positional rather than
+anchored kept working at a depth nobody had in mind when it was written.
+
+### Detection does not depend on the groupfolders app
+
+`groupfolders` is optional and is deliberately **not** added to `appinfo/info.xml`: an app
+that watermarks files must not refuse to install because an unrelated app is absent.
+Nothing in `TeamFolder` references a groupfolders class, and it reads two `IMountPoint`
+values that core provides whether or not the app is installed:
+
+- `getMountProvider()`, compared against the provider class name **as a string**, so the
+  class never has to exist here
+- `getMountType()`, which reports `group` for the same mounts. Core's own types are
+  `shared` and `external`, so there is no collision
+
+Either is sufficient. Both are read because `getMountProvider()` returns the empty string
+for a mount whose provider did not set one, and because a mount type is easier for a future
+groupfolders release to keep stable than an internal class name. Anything that throws is
+treated as an ordinary node, which leaves the app behaving exactly as it did before Team
+folders were considered.
+
+### What is still unverified {#team-folders-unverified}
+
+`groupfolders` is not in `docker-compose.yml`, so none of this has met a real Team folder.
+The 15 unit tests drive `IMountPoint` directly: they pin which signals are read, in what
+order, and what happens when one is missing or throws - and all four behavioural ones were
+confirmed to fail against the previous code before being kept. What they **cannot** prove
+is the premise underneath them: that a real Team folder mount reports
+`OCA\GroupFolders\Mount\MountProvider` and the `group` mount type, and that
+`IRootFolder::get()` resolves its mount point path to a writable folder.
+
+That is one afternoon on an instance with the app installed, and it is the difference
+between this being written and this being done:
+
+1. install `groupfolders`, create a Team folder, and confirm `TeamFolder::contains()`
+   answers true for a file in it - if both signals are wrong the feature is inert and
+   fails silent, which is why this is first
+2. `on_share` + a PDF in a Team folder: every member gets a watermark, the uploader
+   included
+3. on-demand watermark then remove, as a second member - proves the backup landed in the
+   Team folder and is readable by someone other than whoever burned it
+4. confirm `.files_watermark` inside the Team folder is invisible to every member over
+   WebDAV, and that no member's upload trigger ever watermarks a file inside it
+
+---
+
 ## Arabic and RTL support
 
 **Position: both halves are done.** Arabic is shaped, reordered and drawn correctly in PDFs
@@ -1343,8 +1479,8 @@ than the one before it.
     declares only `php` and `nextcloud`), to `ci/php.Dockerfile` via `install-php-extensions
     bcmath`, and to the compose entrypoint. Composer resolution **fails outright** without
     it - verified
-  - confirm `php-bcmath` is in RHEL 9 AppStream on the real target, same open question as
-    `qpdf` and `poppler-utils` under [Renderers](#open-1)
+  - `php-bcmath` was the one host-package question this raised, and it is **confirmed in
+    RHEL 9 AppStream** on the real target - see [Environment](#open-env)
   - it pulls **13 transitive `tc-lib-*` packages** (unicode, font, graph, image, page,
     filter, encrypt, color, file, barcode, sign, unicode-data). Check each against the app
     store's bundled-dependency rules before packaging
@@ -1628,10 +1764,6 @@ still missing.
 
 ### Notes and open questions {#open-env}
 
-- Confirm **`php-bcmath`** is in RHEL 9 AppStream on the real target build, alongside the
-  the last such question standing - `qpdf` and `poppler-utils` are no longer used. The
-  extension is wired everywhere it needs to be; only the RHEL package availability is
-  unverified from here
 - Headless LibreOffice / Collabora in the Docker dev environment - blocked on Office
   support being designed
 - PHP `exif` / metadata libraries, for the invisible metadata watermark
@@ -1651,7 +1783,10 @@ still missing.
   - they pull **13 transitive `tc-lib-*` packages**, every one of which must also appear in
     `Application::RUNTIME_VENDOR_PACKAGES` or its classes will not load inside Nextcloud;
     `RuntimeVendorPackagesTest` enforces that against `composer.lock` in both directions
-- **`ext-bcmath`** - a hard requirement of `tc-lib-pdf`, declared in `composer.json` and in
+- **`ext-bcmath`** - a hard requirement of `tc-lib-pdf`, and **confirmed present in RHEL 9
+  AppStream on the real target build**, which was the last packaging question standing
+  (`qpdf` and `poppler-utils` are no longer used, so nothing else needs a host package).
+  Declared in `composer.json` and in
   `<dependencies>` in `appinfo/info.xml`, so Nextcloud refuses to enable the app on a host
   without it rather than fatalling on the first PDF. Composer will not even resolve without it.
   `install-php-extensions bcmath` in `ci/php.Dockerfile`, `docker-php-ext-install bcmath` in

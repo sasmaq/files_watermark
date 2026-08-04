@@ -58,6 +58,26 @@ use Psr\Log\LoggerInterface;
  * upgrade would need every owner's storage mounted at once, and a copy that is never
  * restored is one that never needed moving. New copies are always written to the owner.
  * ---------------------------------------------------------------------------
+ * TEAM FOLDERS HAVE NO OWNER, SO THEY KEEP THEIR OWN.
+ *
+ * A file in a Team folder gets its backup at `{team folder}/.files_watermark/originals/`
+ * - the same layout, one level down - rather than in anybody's home. The owner-based
+ * route has no correct answer there: `getOwner()` on such a node is not a user who owns
+ * the bytes, and either outcome it produces is wrong. A null owner means no backup is
+ * written at all, so an on-demand watermark in a Team folder is silently irreversible;
+ * a non-null one puts the team's document in one member's home, against one member's
+ * quota, where it disappears the day that member is deprovisioned.
+ *
+ * Keeping the copy inside the Team folder holds every property the move to owner storage
+ * was made for. It is written through the Files API, so the storage layer encrypts it
+ * with the selected module exactly as it does for a home. It is reachable by anyone who
+ * can reach the file it backs, which is the set of people who can be asked to undo the
+ * watermark. And it survives any individual leaving the team, because it belongs to the
+ * folder rather than to a person.
+ *
+ * {@see TeamFolder} is what recognises the mount, without depending on the groupfolders
+ * app being installed.
+ * ---------------------------------------------------------------------------
  *
  * Every method degrades to a no-op / null on storage errors rather than throwing: a failure
  * here must never take down the watermark operation it accompanies. The cost of a lost
@@ -80,6 +100,7 @@ class OriginalStore {
 	public function __construct(
 		private IAppDataFactory $appDataFactory,
 		private IRootFolder $rootFolder,
+		private TeamFolder $teamFolder,
 		private LoggerInterface $logger,
 	) {
 	}
@@ -94,9 +115,18 @@ class OriginalStore {
 	 *
 	 * Matched on the path rather than on a marker inside the file: the bytes are the
 	 * user's own document and carry nothing this app puts there.
+	 *
+	 * **Not anchored to `/files/`.** It used to be, which was exactly right while every
+	 * copy sat at the top of a home. A Team folder's copies are one level further down
+	 * (`/alice/files/Team A/.files_watermark/originals/11`), so the anchored test called
+	 * them ordinary documents - and the recursion this guard exists to stop is worse there
+	 * than in a home, because every member's upload trigger sees the same copies.
+	 *
+	 * The folder/subfolder **pair** is still required, so a user who makes a folder of
+	 * that name themselves does not accidentally exclude their own files from the policy.
 	 */
 	public function isBackup(Node $node): bool {
-		return str_contains($node->getPath(), '/files/' . self::HOME_FOLDER . '/' . self::HOME_SUBFOLDER . '/');
+		return str_contains($node->getPath(), '/' . self::HOME_FOLDER . '/' . self::HOME_SUBFOLDER . '/');
 	}
 
 	/**
@@ -240,14 +270,56 @@ class OriginalStore {
 	}
 
 	/**
-	 * The originals folder inside the *owner's* home, not the acting user's.
-	 *
-	 * A shared file's backup belongs to whoever owns the bytes: the recipient may lose
-	 * access tomorrow, and their quota is not where the owner's document should sit.
+	 * The originals folder for $file, or null when there is nowhere to put one.
 	 *
 	 * @param bool $create create the folder when it does not exist yet
 	 */
 	private function homeFolder(File $file, bool $create): ?Folder {
+		$base = $this->baseFolder($file);
+		if ($base === null) {
+			return null;
+		}
+
+		$path = self::HOME_FOLDER . '/' . self::HOME_SUBFOLDER;
+
+		try {
+			try {
+				$folder = $base->get($path);
+				return $folder instanceof Folder ? $folder : null;
+			} catch (NotFoundException) {
+				if (!$create) {
+					return null;
+				}
+			}
+
+			return $base->newFolder($path);
+		} catch (\Throwable $e) {
+			$this->logger->error('files_watermark: storage unavailable for original backups', [
+				'base' => $base->getPath(),
+				'exception' => $e,
+			]);
+			return null;
+		}
+	}
+
+	/**
+	 * The folder the originals folder hangs off: the Team folder's root, or the owner's home.
+	 *
+	 * **The Team folder is checked first, and the order is the point.** A node in a Team
+	 * folder may well answer `getOwner()` with a real user - whoever the mount resolves to
+	 * for this request - and taking that answer would file the team's document under one
+	 * member's home and quota. There is no owner to prefer there; see the class docblock.
+	 *
+	 * For everything else the copy goes to the *owner's* home, not the acting user's. A
+	 * shared file's backup belongs to whoever owns the bytes: the recipient may lose access
+	 * tomorrow, and their quota is not where the owner's document should sit.
+	 */
+	private function baseFolder(File $file): ?Folder {
+		$teamRoot = $this->teamFolder->rootOf($file);
+		if ($teamRoot !== null) {
+			return $teamRoot;
+		}
+
 		$uid = $file->getOwner()?->getUID();
 		if ($uid === null || $uid === '') {
 			// No owner to attribute the copy to - an external or system-mounted node.
@@ -256,19 +328,7 @@ class OriginalStore {
 		}
 
 		try {
-			$userFolder = $this->rootFolder->getUserFolder($uid);
-			$path = self::HOME_FOLDER . '/' . self::HOME_SUBFOLDER;
-
-			try {
-				$folder = $userFolder->get($path);
-				return $folder instanceof Folder ? $folder : null;
-			} catch (NotFoundException) {
-				if (!$create) {
-					return null;
-				}
-			}
-
-			return $userFolder->newFolder($path);
+			return $this->rootFolder->getUserFolder($uid);
 		} catch (\Throwable $e) {
 			$this->logger->error('files_watermark: owner storage unavailable for original backups', [
 				'uid' => $uid,

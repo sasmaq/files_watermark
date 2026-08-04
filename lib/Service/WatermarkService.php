@@ -50,6 +50,7 @@ class WatermarkService {
 		private LoggerInterface $logger,
 		private OriginalStore $originalStore,
 		private WatermarkImageStore $imageStore,
+		private TeamFolder $teamFolder,
 		private IL10N $l,
 	) {
 	}
@@ -241,10 +242,25 @@ class WatermarkService {
 	 *    context flag to pass, such as public preview requests. Background jobs with no
 	 *    session (e.g. preview pre-generation) fall in here too and are treated as share
 	 *    access; erring towards watermarking/blocking keeps content from leaking.
+	 *
+	 * A **Team folder** is the fourth, and it is the one that is a judgement rather than a
+	 * mechanism. Such a mount is not an `ISharedStorage` and the reader is a real session
+	 * user, so both tests above report owner access and `on_share` watermarked nothing in a
+	 * Team folder for anybody - the one place on the server where content is multi-user by
+	 * construction. It is counted as share access for **every** member, the uploader
+	 * included, because a Team folder has no owner to exempt: nothing in the file cache
+	 * records who put a file there, so "everyone but the author" is not a rule this app can
+	 * implement honestly. Watermarking one person's own reads is the visible cost of that,
+	 * and it is the side to err on - the alternative is the silent one.
+	 *
+	 * An admin who wants Team folder reads left clean should use `on_download` (which
+	 * watermarks regardless of who is asking) or exempt the folder with the tag scope,
+	 * rather than relying on `on_share` to skip them.
 	 */
 	public function isShareAccess(FileInfo $file, bool $publicContext = false): bool {
 		return $publicContext
 			|| $this->isReceivedShare($file)
+			|| $this->teamFolder->contains($file)
 			|| $this->userSession->getUser() === null;
 	}
 

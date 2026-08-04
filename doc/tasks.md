@@ -6,7 +6,10 @@ This file is the checklist and nothing else. The reasoning - how each thing was 
 what was measured, why a design is what it is - lives in
 [development.md](development.md), and every item here links to it.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **500 PHPUnit**,
+**Closed items are deleted from here, not ticked.** What was done, and what it cost to
+learn, is recorded in `development.md`; everything below is genuinely still open.
+
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **583 PHPUnit**,
 **91 Jest**, **89 Cypress**, no host-conditional skips.
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -18,10 +21,6 @@ The two things standing between this and a 1.0 release are **Office support** an
 
 Things that produce a wrong file, or say something untrue about one.
 
-- [X] **Content lost on some Windows "Microsoft Print to PDF" files.** Reported from the
-  field, **not reproduced** - 30+ synthetic variants of that producer's structure all
-  round-trip intact. `tests/diagnose-pdf.php` is the instrument for a real file.
-  [notes](development.md#open-1)
 - [ ] **A skipped file is silent to the end user.** An on-demand apply reports the error,
   but an `on_upload` or `on_share` file that could not be watermarked shows up only in the
   audit log. Now narrow - only encrypted PDFs can be skipped - but still worth surfacing.
@@ -44,7 +43,6 @@ Things that produce a wrong file, or say something untrue about one.
   acting user and timestamp, `metadata` accepted as a `type` (needs both `VALID_TYPES` and
   a migration), usable alongside *or* instead of a visible mark, and proven to survive the
   download path. [notes](development.md#open-2)
-- [ ] **Team folders** support.
 - [ ] **`{date}` / `{datetime}` are locale-free** - ASCII digits, Gregorian, server
   timezone. For an Arabic deployment, decide on Arabic-Indic digits and/or a Hijri date,
   and whether that follows the viewer's locale or a config field. The bundled font carries
@@ -74,9 +72,10 @@ Things that produce a wrong file, or say something untrue about one.
 
 ## Testing and CI
 
-- [ ] **Psalm level 2: 48 findings**, 38 of them `ClassMustBeFinal` - a design opinion the
+- [ ] **Psalm level 2: 50 findings**, 39 of them `ClassMustBeFinal` - a design opinion the
   test doubles contradict, not a type check. Behind it: 4 redundant casts, 3 truthy
-  comparisons, 3 `PropertyNotSetInConstructor`. [notes](development.md#open-testing)
+  comparisons, 3 `PropertyNotSetInConstructor`, 1 docblock contradiction.
+  [notes](development.md#open-testing)
 - [ ] **`ZipInterceptorPlugin::streamNode` drift.** It duplicates core's and the stubs
   cannot catch it drifting; re-diff against core on every Nextcloud upgrade.
   [notes](development.md#open-testing)
@@ -90,10 +89,11 @@ Things that produce a wrong file, or say something untrue about one.
 
 ### End-to-end gaps
 
+- [ ] **A real Team folder, on an instance with `groupfolders` installed.** The support is
+  built and unit-tested, but nothing has met an actual Team folder mount - if neither
+  detection signal matches, the feature is inert and fails silent. Four checks, listed in
+  order. [notes](development.md#team-folders-unverified)
 - [ ] **Encrypted / password-protected PDF** through every trigger.
-- [x] **The admin UI under an Arabic locale** - settings, audit log and the live preview at
-  `dir="rtl"`, with the preview matching the rendered output rather than merely looking
-  plausible. [notes](development.md#admin-ui-arabic-interface)
 - [ ] **Concurrent uploads of the same path** - `suppressFor()` is a per-process static and
   does not span two PHP workers; confirm `isAlreadyWatermarked()` is what actually prevents
   a double burn. [notes](development.md#manual-verification-matrix)
@@ -106,8 +106,6 @@ Things that produce a wrong file, or say something untrue about one.
 
 ## Environment
 
-- [x] Confirm **`php-bcmath`** is in RHEL 9 AppStream on the real target build.
-  [notes](development.md#open-env)
 - [ ] Headless **LibreOffice / Collabora** in the Docker dev environment - blocked on
   Office support.
 - [ ] PHP **`exif` / metadata libraries** - blocked on the invisible metadata watermark.
@@ -137,6 +135,7 @@ Things that produce a wrong file, or say something untrue about one.
 | [Delivery and triggers](development.md#3-delivery-and-triggers-goal-3) | All four triggers, single-file and archive, on every access path; caps are `occ` settings | Tar (core bug), file-drop uploads |
 | [Admin UI and file actions](development.md#4-admin-ui-and-file-actions-goal-4) | **Complete** | - |
 | [Storage backends](development.md#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | - |
+| [Team folders](development.md#team-folders) | Built: `on_share` no longer exempts the whole team, originals stay in the folder. No dependency on `groupfolders` | Never met a real Team folder mount |
 | [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** - watermark shaped and reordered, UI translated and RTL-clean. Two `tc-lib-unicode` bugs found and [patched](development.md#vendor-patches) | `{date}` localisation, a real Arabic instance, upstream PRs for both patches |
 | [No external binaries](development.md#no-external-binaries) | **Done.** No `exec()` anywhere | A rule that keeps it that way |
 | [PDF stack migration](development.md#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone | - |
