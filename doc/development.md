@@ -1787,6 +1787,30 @@ still missing.
 
 ### Notes and open questions {#open-data}
 
+- **The whole chain is one file now** - `Version1002Date20260804120000` replaces 1003
+  (itself a squash of 1000-1002), 1004, 1005, 1006, 1007 and 1008, and the app version is
+  reset to **1.2.0** to match. Nextcloud derives the recorded version string from the class
+  name and ignores rows whose class is gone, so the squashed file is a name no instance has
+  seen: it runs everywhere, once
+  - **which is exactly why it is harder to get right than 1003 was.** 1003 met instances that
+    were behind it; this one also meets instances that are already *finished*, so every step
+    has to be a no-op against the current schema. `SchemaConvergenceTest` gained an
+    applied-1003-through-1008 starting state for it
+  - **one step was not idempotent and had to be gated.** The `{username}` → `{displayname}`
+    rewrite (formerly 1004) relied on Nextcloud never re-running it. Run twice it would
+    rewrite a `{username}` an admin typed *after* the token changed meaning, silently turning
+    an account name back into a display name. It is now gated on `log_delivery` - present
+    means the instance reached 1007, therefore ran 1004 - decided in `preSchemaChange`,
+    before `changeSchema` adds that very column
+  - the gate is a proxy, not a proof: an instance that stopped between 1004 and 1007 would be
+    rewritten twice. Nothing in the database distinguishes a token stored before the meaning
+    changed from one typed after it. That window is every install that ran exactly 1.4.0-1.6.0
+    and then typed a fresh `{username}`, which for an unreleased app is empty
+  - **the version went down, 1.8.0 → 1.2.0, and that has a consequence worth knowing.**
+    Nextcloud upgrades an app only when `info.xml` declares a version *higher* than the
+    installed one, so an instance already carrying 1.8.0 will not run this migration at all.
+    A dev instance needs the app removed and reinstalled (or its `oc_appconfig` version row
+    cleared); a fresh install is unaffected
 - Verify the migrations run cleanly on **MySQL, PostgreSQL and SQLite**. They use the
   portable schema builder and run on SQLite; a cross-DB run has not been done
 - `metadata` is not an accepted `type` - needs both `VALID_TYPES` and a migration
@@ -1901,8 +1925,9 @@ still missing.
 
 ### Notes and open questions {#open-security}
 
-- **Legacy `image_path` rows - cleared** by `Version1003Date20260730120000`'s
-  `postSchemaChange()`. Configs predating the reference check survived in the database and
+- **Legacy `image_path` rows - cleared** by the schema migration's `postSchemaChange()`
+  (`Version1003Date20260730120000` when this was written, `Version1002Date20260804120000`
+  since the squash). Configs predating the reference check survived in the database and
   still looked valid in the admin form while resolving to no image; they are now nulled, which
   is the honest state. Affected admins must re-upload, which was always true
   - the test is `WatermarkImageStore::isReference()`, not a SQL pattern, so there is one
@@ -2246,11 +2271,14 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
   overlap at any rotation, a lattice spanning the whole page, and off-page tiles keeping their
   negative offsets (the regression test for the smear, verified to fail against the old
   placement code)
-- `SchemaConvergenceTest` (9) - the schema arrives in **two** steps (1003 builds it, 1005
-  drops `group_id`), which between them meet four different starting states (fresh,
-  applied-1000, applied-1000-and-1001, applied-1003) and have to land all of them on identical
-  columns. Also: the flattening columns dropped on upgrade, `group_id` and its index dropped on
-  upgrade and skipped on a fresh install, and running twice changing nothing
+- `SchemaConvergenceTest` (10) - the schema now arrives in **one** step
+  (`Version1002Date20260804120000`), which meets five different starting states (fresh,
+  applied-1000, applied-1000-and-1001, applied-1003, applied-1003-through-1008) and has to land
+  all of them on identical columns. Also: the flattening columns dropped on upgrade, the retired
+  columns and their indexes dropped on upgrade and skipped on a fresh install, and running twice
+  changing nothing
+  - **the fifth state is what the squash added**, and it is the one worth having: the file runs
+    against instances that are already correct, so every step has to be a no-op there
   - Doctrine is not a dependency of this app, so the schema objects are fakes. What is under
     test is the migrations' branching, not Doctrine's DDL
   - `FakeTable` records **index names** as well as columns, which it did not have to before.
@@ -2304,9 +2332,13 @@ which is why `PdfWatermarkerTest` reads 20 against 8 test methods.
 - `ApiControllerTokenTest` (9) - every token the settings form offers is accepted by
   `saveConfig`, both identity tokens work together in one template, and a near-miss token is
   rejected *by name*. This is a drift guard: the form and the server keep separate lists
-- `UsernameTokenRewriteTest` (3) - which templates `Version1004Date20260731000000`
-  rewrites, that **every** occurrence in a template is rewritten rather than the first, and
-  that an instance with nothing to migrate takes no write
+- `UsernameTokenRewriteTest` (4) - which templates the rewrite touches, that **every**
+  occurrence in a template is rewritten rather than the first, and that an instance with
+  nothing to migrate takes no write
+  - the fourth case is the **gate the squash made necessary**: an instance that already has
+    `log_delivery` reached 1007, so it already ran the rewrite, and running it again would turn
+    an account name an admin typed on purpose back into a display name. The mock serves the
+    image-path select and nothing else, so a second select fails the test
 - `ApiControllerScopeTest` (11) - unsupported and mistyped MIME types rejected, blank
   normalised to null, a tag name rejected, a non-existent tag id rejected, a real tag accepted,
   and no tag lookup when none is given

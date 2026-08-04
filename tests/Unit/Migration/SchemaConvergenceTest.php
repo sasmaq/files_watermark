@@ -4,11 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Tests\Unit\Migration;
 
-use OCA\FilesWatermark\Migration\Version1003Date20260730120000;
-use OCA\FilesWatermark\Migration\Version1005Date20260731140000;
-use OCA\FilesWatermark\Migration\Version1006Date20260731160000;
-use OCA\FilesWatermark\Migration\Version1007Date20260801120000;
-use OCA\FilesWatermark\Migration\Version1008Date20260804000000;
+use OCA\FilesWatermark\Migration\Version1002Date20260804120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -20,27 +16,29 @@ use PHPUnit\Framework\TestCase;
 /**
  * Pins the property that squashing the migration chain into one file depends on.
  *
- * `Version1003` replaced three files (1000 created the tables, 1001 added the PDF
- * flattening columns, 1002 dropped them). Nextcloud will not re-run a migration it has
- * already recorded, so the remaining steps meet instances in four different states and
- * have to land all of them on the same schema:
+ * `Version1002Date20260804120000` replaced the whole previous chain: 1003 (itself a squash
+ * of 1000-1002), 1004, 1005, 1006, 1007 and 1008. Nextcloud will not re-run a migration it
+ * has already recorded, but the squashed file carries a version string no instance has seen
+ * - so it runs everywhere, meeting instances in five different states, and has to land all
+ * of them on the same schema:
  *
  * 1. **fresh** - no tables at all;
  * 2. **applied 1000** - tables exist, no flattening columns;
  * 3. **applied 1000 + 1001** - tables exist *with* the flattening columns;
- * 4. **applied 1003** - tables exist as that step created them, scope columns included.
+ * 4. **applied 1003** - tables exist as that step created them, scope columns included;
+ * 5. **applied 1003 through 1008** - the finished schema, with nothing left to do.
  *
- * Only the first is what a developer sees locally, which is exactly why this is a test
- * and not a comment. An `addColumn` that loses its `hasColumn` guard, or a `createTable`
- * that stops checking `hasTable`, breaks the other three silently.
+ * State 5 is what the squash added and it is the one worth having: the file now runs
+ * against instances that are *already correct*, so every step has to be a no-op there.
+ * Only state 1 is what a developer sees locally, which is exactly why this is a test and
+ * not a comment. An `addColumn` that loses its `hasColumn` guard, or a `createTable` that
+ * stops checking `hasTable`, breaks the other four silently.
  *
- * The chain under test is therefore 1003, 1005, 1006, 1007 and 1008. 1003 no longer creates
- * the per-group and per-user scope columns or `position`, so a fresh install never has them;
- * 1005 drops `group_id`, 1006 drops `user_id` and 1008 drops `position` from every install
- * that does. 1004 is a data-only step and changes no schema, so it is absent here.
+ * The token rewrite is the one step not exercised here - it changes no schema, and its
+ * gate is pinned by `UsernameTokenRewriteTest`.
  *
  * Doctrine is not a dependency of this app - Nextcloud provides it at runtime - so the
- * schema objects here are fakes. That is enough: what is under test is the migrations'
+ * schema objects here are fakes. That is enough: what is under test is the migration's
  * branching, not Doctrine's DDL.
  */
 class SchemaConvergenceTest extends TestCase {
@@ -104,15 +102,18 @@ class SchemaConvergenceTest extends TestCase {
 	private const DROPPED_CONFIG_INDEXES = ['wm_config_user_idx', 'wm_config_group_idx'];
 
 	/**
-	 * @return array<string, array{bool, list<string>}> whether the tables already exist,
-	 *                                                  and any flattening columns on them
+	 * @return array<string, array{bool, list<string>, bool}> whether the tables already
+	 *                                                        exist, any flattening columns
+	 *                                                        on them, and whether the
+	 *                                                        schema is already current
 	 */
 	public static function startingStateProvider(): array {
 		return [
-			'fresh install' => [false, []],
-			'applied 1000' => [true, []],
-			'applied 1000 and 1001' => [true, ['flatten_pdf', 'flatten_dpi']],
-			'applied 1003' => [true, []],
+			'fresh install' => [false, [], false],
+			'applied 1000' => [true, [], false],
+			'applied 1000 and 1001' => [true, ['flatten_pdf', 'flatten_dpi'], false],
+			'applied 1003' => [true, [], false],
+			'applied 1003 through 1008' => [true, [], true],
 		];
 	}
 
@@ -124,12 +125,15 @@ class SchemaConvergenceTest extends TestCase {
 	public function testEveryStartingStateConvergesOnTheSameSchema(
 		bool $tablesAlreadyExist,
 		array $preexistingFlattenColumns,
+		bool $alreadyCurrent,
 	): void {
 		$schema = new FakeSchema();
 
-		// A fresh install starts empty; the other two states are pre-seeded the way the
+		// A fresh install starts empty; the upgrade states are pre-seeded the way the
 		// deleted migrations would have left them.
-		if ($tablesAlreadyExist) {
+		if ($alreadyCurrent) {
+			$this->preCreateCurrentTables($schema);
+		} elseif ($tablesAlreadyExist) {
 			$this->preCreateTables($schema, $preexistingFlattenColumns);
 		}
 
@@ -254,28 +258,35 @@ class SchemaConvergenceTest extends TestCase {
 	}
 
 	/**
-	 * Every schema-changing step, in the order Nextcloud would apply them.
+	 * The finished schema, as an instance that ran the whole old chain already has it.
 	 *
-	 * 1006's `preSchemaChange` is driven too: it deletes the per-user rows *before* the
-	 * column goes, and running the steps out of that order is the mistake worth catching.
+	 * No dropped columns and no dropped indexes, because 1005, 1006 and 1008 already took
+	 * them - and `log_delivery` present, because 1007 already added it. Every step in the
+	 * squashed migration must find nothing to do here.
+	 */
+	private function preCreateCurrentTables(FakeSchema $schema): void {
+		$config = $schema->createTable('watermark_config');
+		foreach (self::EXPECTED_CONFIG_COLUMNS as $column) {
+			$config->addColumn($column, 'string');
+		}
+		$schema->createTable('watermark_log')->addColumn('id', 'bigint');
+	}
+
+	/**
+	 * The migration's schema half, in the order Nextcloud applies it.
+	 *
+	 * `preSchemaChange` is driven too, and that is not incidental: it deletes the per-user
+	 * rows *before* `user_id` goes, and it is where the token-rewrite gate reads
+	 * `log_delivery` - before `changeSchema` adds that very column. Running the two out of
+	 * order is the mistake worth catching.
 	 */
 	private function runMigration(FakeSchema $schema): void {
 		$output = $this->createMock(IOutput::class);
 		$closure = fn (): ISchemaWrapper => $schema;
 
-		(new Version1003Date20260730120000($this->createMock(IDBConnection::class)))
-			->changeSchema($output, $closure, []);
-		(new Version1005Date20260731140000())
-			->changeSchema($output, $closure, []);
-
-		$migration1006 = new Version1006Date20260731160000($this->stubConnection());
-		$migration1006->preSchemaChange($output, $closure, []);
-		$migration1006->changeSchema($output, $closure, []);
-
-		(new Version1007Date20260801120000())
-			->changeSchema($output, $closure, []);
-		(new Version1008Date20260804000000())
-			->changeSchema($output, $closure, []);
+		$migration = new Version1002Date20260804120000($this->stubConnection());
+		$migration->preSchemaChange($output, $closure, []);
+		$migration->changeSchema($output, $closure, []);
 	}
 
 	/**

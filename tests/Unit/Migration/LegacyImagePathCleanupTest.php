@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Tests\Unit\Migration;
 
-use OCA\FilesWatermark\Migration\Version1003Date20260730120000;
+use OCA\FilesWatermark\Migration\Version1002Date20260804120000;
 use OCP\DB\IResult;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
 use OCP\DB\QueryBuilder\IQueryBuilder;
@@ -13,7 +13,7 @@ use OCP\Migration\IOutput;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The data half of {@see Version1003Date20260730120000}: clearing `image_path` values
+ * The data half of {@see Version1002Date20260804120000}: clearing `image_path` values
  * that predate upload validation.
  *
  * Those rows are the residue of a fixed vulnerability - `saveConfig` once stored whatever
@@ -24,6 +24,11 @@ use PHPUnit\Framework\TestCase;
  * and that no write happens when there is nothing to clear. The QueryBuilder is mocked,
  * so this does not prove the SQL runs - it proves the migration asks for the right thing
  * and skips the write when it should.
+ *
+ * `postSchemaChange` is called without `preSchemaChange`, which isolates this step: the
+ * token rewrite that shares the same hook is gated on a flag that defaults to *not*
+ * rewriting, so it stays out of the way here. {@see UsernameTokenRewriteTest} drives both
+ * hooks in order, which is what a real upgrade does.
  */
 class LegacyImagePathCleanupTest extends TestCase {
 
@@ -39,7 +44,7 @@ class LegacyImagePathCleanupTest extends TestCase {
 		$output = $this->createMock(IOutput::class);
 		$output->expects($this->never())->method('info');
 
-		(new Version1003Date20260730120000($db))->postSchemaChange($output, fn () => null, []);
+		(new Version1002Date20260804120000($db))->postSchemaChange($output, fn () => null, []);
 	}
 
 	/**
@@ -63,7 +68,7 @@ class LegacyImagePathCleanupTest extends TestCase {
 			->method('info')
 			->with($this->stringContains('cleared 3 watermark image reference(s)'));
 
-		(new Version1003Date20260730120000($db))->postSchemaChange($output, fn () => null, []);
+		(new Version1002Date20260804120000($db))->postSchemaChange($output, fn () => null, []);
 
 		$this->assertSame([[2, 4, 5]], $captured, 'the wrong set of rows was cleared');
 	}

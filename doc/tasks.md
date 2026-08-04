@@ -9,7 +9,7 @@ what was measured, why a design is what it is - lives in
 **Closed items are deleted from here, not ticked.** What was done, and what it cost to
 learn, is recorded in `development.md`; everything below is genuinely still open.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **620 PHPUnit**,
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. Suites green: **622 PHPUnit**,
 **93 Jest**, **89 Cypress**, no host-conditional skips.
 
 The two things standing between this and a 1.0 release are **Office support** and
@@ -166,8 +166,8 @@ Things that produce a wrong file, or say something untrue about one.
 | [No external binaries](development.md#no-external-binaries) | **Done.** No `exec()` anywhere | A rule that keeps it that way |
 | [PDF stack migration](development.md#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone | - |
 | [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | Their *name* in search and activity; a [file-versions option](development.md#open-versions-undo) to stop double-storing them |
-| [Data model](development.md#data-model) | Schema carries every implemented feature | `metadata` type, cross-DB run, one dead column |
+| [Data model](development.md#data-model) | Schema carries every implemented feature; the whole migration chain is squashed into one step at app version 1.2.0 | `metadata` type, cross-DB run |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
 | [Security](development.md#security) | Two real vulnerabilities found and fixed. On-demand applies bounded by rate limit + size cap; images by a pixel ceiling on every trigger | - |
-| [Testing](development.md#testing) | 500 PHPUnit + 91 Jest + 89 Cypress, no host-conditional skips | Psalm level 3 |
+| [Testing](development.md#testing) | 622 PHPUnit + 93 Jest + 89 Cypress, no host-conditional skips | Psalm level 3 |
 | [Docs and release](development.md#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
