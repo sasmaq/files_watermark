@@ -774,11 +774,50 @@ admin, in force server-wide. Nothing here is stored without being honoured.
     `files:node:updated` emit, without a folder reload
   - a distinct restore icon, deliberately not the Apply icon
 
+### The bundle loads before the Files app, and that is load-bearing
+
+`Util::addScript(APP_ID, 'files')` is called from `Application::boot()`
+(`FilesPageScript` decides for which paths), *in addition to* the existing call in
+`LoadAdditionalScriptsListener`. Core drops the duplicate; what it does not drop is the
+ordering, and the ordering is the whole point.
+
+The Files client builds its PROPFIND payload from the DAV properties registered **at the
+moment it fetches a directory**, and that moment is inside its own bundle: `files-main.js`
+ends in `$mount('#content')`, the file list fetches from `mounted()`, and every Nextcloud
+script tag carries `defer`, so scripts run in document order. `LoadAdditionalScriptsEvent`
+is dispatched by the Files ViewController *after* it has added its own script, so this
+app's bundle - and with it `registerDavProperty('nc:is-watermarked')` - ran too late for
+the first listing of every page load. Measured on 31.0.14.1: `files-main.js` was script
+22 in the document and this app's bundle was script 31.
+
+The user-visible result was not subtle, and it is what sent this looking:
+
+- every node in the first listing came back with **no** `is-watermarked` property, so
+  every row rendered as un-watermarked;
+- **Apply** was offered on files that are watermarked, **Remove** was missing from exactly
+  those rows, and no badge was drawn;
+- it corrected itself as soon as the user navigated to another folder - the second
+  PROPFIND does carry the property - which is why it read as "broken after a refresh".
+
+`boot()` runs before any controller, and `\OC\AppScriptSort` emits scripts grouped by app
+in the order each app first asks for one, so asking there moves this app's bundle to
+script 22, immediately ahead of `files-main.js`. The cost is real and was accepted: the
+Files UI now waits on this bundle before its own runs. It is a bundle that already loaded
+on every one of those pages, so this moves work rather than adding it, and it buys a first
+render that is correct rather than one that is wrong until the user navigates.
+
+`10-files-app.cy.js` guards both halves - that the first PROPFIND asks for the property,
+and that a reloaded page still badges the file and offers Remove.
+
 ### Watermarked-file indicator
 
 - `PropFindPlugin` exposes `nc:is-watermarked` per node, primed with one batched
   `findWatermarkedFileIds` query per folder listing - **this is the indicator's primary status
-  source**; `GET /api/v1/watermarked` remains as a REST endpoint but the UI no longer calls it
+  source**; `GET /api/v1/watermarked` remains the fallback for a listing that carries no
+  property at all, and `reconcileMissingStatus()` chunks its ids **100 at a time**: they
+  travel in the query string, and a folder large enough to pass Apache's 8190-byte
+  `LimitRequestLine` answers 414 before any of this app's code runs, silently costing
+  every badge in that folder. One failed chunk no longer discards the answers that arrived
 - `WatermarkLogMapper::findWatermarkedFileIds()` - one batched `IN (...)` query
 - Status semantics decided and documented: resolved from the **most recent in-place event**
   per file, so apply → removed → apply resolves correctly

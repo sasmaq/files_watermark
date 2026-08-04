@@ -20,8 +20,10 @@ use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
+use OCP\IRequest;
 use OCP\Preview\BeforePreviewFetchedEvent;
 use OCP\Share\Events\BeforeShareCreatedEvent;
+use OCP\Util;
 
 class Application extends App implements IBootstrap {
 
@@ -156,7 +158,35 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(BeforeShareCreatedEvent::class, ShareGuardListener::class);
 	}
 
+	/**
+	 * Ask for the Files integration bundle early on the pages that render a file list.
+	 *
+	 * `LoadAdditionalScriptsEvent` - where this bundle was requested from, and still is -
+	 * fires *after* the Files app has added its own script, and the Files app issues its
+	 * first PROPFIND while that script runs. So the `is-watermarked` property was never
+	 * registered in time for the first listing of a page load, and every row rendered
+	 * from a listing that did not carry it: Apply offered on watermarked files, Remove
+	 * missing from them, and no badge, until the user navigated somewhere else.
+	 *
+	 * boot() runs before any controller, and Nextcloud emits scripts grouped by app in
+	 * the order each app first asks for one, so asking here is what puts this app's
+	 * bundle ahead of `files/js/main`. Duplicate requests for the same script are
+	 * dropped by core, so the listener's own call is left exactly as it was - it is what
+	 * covers a Files page reached by some route this test does not recognise.
+	 *
+	 * {@see FilesPageScript} holds the rule and the full reasoning.
+	 */
 	public function boot(IBootContext $context): void {
-		// nothing to do at boot time
+		try {
+			$pathInfo = $context->getServerContainer()->get(IRequest::class)->getPathInfo();
+		} catch (\Throwable) {
+			// No request to classify - CLI, cron, or a URI core itself could not parse.
+			// Nothing renders a file list in any of those, so there is nothing to load.
+			return;
+		}
+
+		if (FilesPageScript::wantedFor($pathInfo === false ? null : $pathInfo)) {
+			Util::addScript(self::APP_ID, FilesPageScript::SCRIPT);
+		}
 	}
 }

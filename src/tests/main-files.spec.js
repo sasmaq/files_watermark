@@ -369,6 +369,37 @@ describe('main-files', () => {
 			axios.get.mockRejectedValue(new Error('network'))
 			await expect(reconcileMissingStatus([bareNode(1)])).resolves.toBeUndefined()
 		})
+
+		it('splits a large folder across several requests', async () => {
+			// The ids travel in the query string. A folder big enough to push it past the
+			// server's request-line limit (8190 bytes on a stock Apache) answers 414
+			// before any of this app's code runs, and every badge in that folder is lost.
+			const nodes = Array.from({ length: 250 }, (_, i) => bareNode(i + 1))
+			axios.get.mockResolvedValue({ data: { watermarked: [] } })
+
+			await reconcileMissingStatus(nodes)
+
+			expect(axios.get).toHaveBeenCalledTimes(3)
+			const sent = axios.get.mock.calls.map(([, config]) => config.params.ids.split(','))
+			expect(sent.map((ids) => ids.length)).toEqual([100, 100, 50])
+			// Every id is asked about exactly once, in order.
+			expect(sent.flat()).toEqual(nodes.map((node) => String(node.fileid)))
+		})
+
+		it('keeps the answers that arrived when one chunk fails', async () => {
+			// Half a folder badged correctly beats none of it, so a rejected chunk must
+			// not discard the others.
+			const nodes = Array.from({ length: 150 }, (_, i) => bareNode(i + 1))
+			nodes.forEach((node) => addRow(node.fileid))
+			axios.get
+				.mockRejectedValueOnce(new Error('414'))
+				.mockResolvedValueOnce({ data: { watermarked: [101] } })
+
+			await reconcileMissingStatus(nodes)
+
+			expect(document.querySelector('[data-cy-files-list-row-fileid="101"]').querySelector(INDICATOR_SELECTOR)).not.toBeNull()
+			expect(document.querySelector('[data-cy-files-list-row-fileid="1"]').querySelector(INDICATOR_SELECTOR)).toBeNull()
+		})
 	})
 
 	describe('startIndicator', () => {

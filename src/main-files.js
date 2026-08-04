@@ -19,6 +19,12 @@ const SUPPORTED_MIME = [
 // client fetch it with every listing, so a node carries its watermarked status by
 // the time its row renders - letting `enabled()` decide synchronously on the first
 // (and, in Nextcloud, memoized) evaluation instead of racing an async lookup.
+//
+// **This line only reaches the first listing of a page load because the server loads
+// this bundle ahead of the Files app's own** - the Files app builds its PROPFIND while
+// its script runs, so a registration made after that is a registration the first
+// listing never sees. `Application::boot()` is what buys the ordering, and
+// `FilesPageScript` explains why nothing later can.
 const DAV_WATERMARKED_PROP = 'is-watermarked'
 registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns' })
 
@@ -38,9 +44,9 @@ export function isNodeWatermarked(node) {
 /**
  * Whether a node explicitly reports itself as *not* watermarked, as opposed to not
  * carrying the property at all. The distinction matters when clearing state after a
- * removal: a missing property means "unknown" (the hard-refresh race the REST reconcile
- * covers), and treating that as "not watermarked" would wipe ids we legitimately learned
- * from elsewhere.
+ * removal: a missing property means "unknown" (a listing fetched before the property
+ * was registered), and treating that as "not watermarked" would wipe ids we
+ * legitimately learned from elsewhere.
  * @param {object} node - a Files `Node`
  * @return {boolean} true when the property is present and false
  */
@@ -344,12 +350,31 @@ export function unmarkWatermarked(id) {
 }
 
 /**
+ * How many ids one status request may carry.
+ *
+ * The ids travel in the query string, and a folder is as big as a user makes it: at
+ * ~8 characters an id, a few hundred files is already several KB of URI, and the
+ * default `LimitRequestLine` on Apache (which RHEL/Debian packages ship unchanged) is
+ * 8190 bytes. Past that the server answers **414 before any of this app's code runs**,
+ * the catch below swallows it, and every watermarked file in that folder silently loses
+ * its badge and offers Apply instead of Remove. Chunking keeps each request far inside
+ * the limit whatever the folder holds; the requests run in parallel, so a big folder
+ * costs round trips, not latency.
+ */
+const STATUS_QUERY_CHUNK = 100
+
+/**
  * Fallback status lookup for a listing whose nodes carry NO `is-watermarked`
- * attribute at all - which happens when our DAV property was registered after the
- * Files app built its initial PROPFIND (a hard-refresh race), so the property is
- * simply missing rather than present-and-false. For those ids only, ask the REST
- * endpoint and fold any watermarked ones into the set. A present-but-0 value is
- * trusted and never re-queried, so the DAV property stays the primary source.
+ * attribute at all - which happens when the listing was fetched before our DAV property
+ * was registered, so the property is simply missing rather than present-and-false. For
+ * those ids only, ask the REST endpoint and fold any watermarked ones into the set. A
+ * present-but-0 value is trusted and never re-queried, so the DAV property stays the
+ * primary source.
+ *
+ * With the early `dav-property` bundle in place this should now find nothing to do on a
+ * normal Files page: the property arrives with the first listing. It stays because it is
+ * the only cover for a page that bundle does not reach, and it is what has to work when
+ * it is needed - hence the chunking above.
  * @param {object[]} nodes - the folder's Files `Node` objects
  * @return {Promise<void>}
  */
@@ -372,12 +397,26 @@ export async function reconcileMissingStatus(nodes) {
 		return
 	}
 
-	try {
-		const res = await axios.get(generateUrl('/apps/files_watermark/api/v1/watermarked'), {
-			params: { ids: missing.join(',') },
-		})
-		let changed = false
-		for (const raw of res?.data?.watermarked ?? []) {
+	const chunks = []
+	for (let i = 0; i < missing.length; i += STATUS_QUERY_CHUNK) {
+		chunks.push(missing.slice(i, i + STATUS_QUERY_CHUNK))
+	}
+
+	// Settled, not all: one failed chunk must not discard the answers that arrived. A
+	// folder where half the badges are right is strictly better than one where none are.
+	const responses = await Promise.allSettled(chunks.map((chunk) =>
+		axios.get(generateUrl('/apps/files_watermark/api/v1/watermarked'), {
+			params: { ids: chunk.join(',') },
+		}),
+	))
+
+	let changed = false
+	for (const response of responses) {
+		if (response.status !== 'fulfilled') {
+			// Best-effort: the indicator must never block or break the file list.
+			continue
+		}
+		for (const raw of response.value?.data?.watermarked ?? []) {
 			const id = Number(raw)
 			if (Number.isInteger(id) && id > 0 && !watermarkedIds.has(id)) {
 				watermarkedIds.add(id)
@@ -397,11 +436,10 @@ export async function reconcileMissingStatus(nodes) {
 				}
 			}
 		}
-		if (changed) {
-			decorateRows()
-		}
-	} catch (e) {
-		// Best-effort: the indicator must never block or break the file list.
+	}
+
+	if (changed) {
+		decorateRows()
 	}
 }
 

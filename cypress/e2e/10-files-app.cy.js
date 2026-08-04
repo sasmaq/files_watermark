@@ -7,6 +7,13 @@
  * watermarked, which is precisely where this app has been wrong before: Nextcloud
  * memoises `FileAction.enabled()` per node, so the just-watermarked file kept
  * offering Apply until the code started emitting `files:node:updated` itself.
+ *
+ * **A reload is part of the sequence, deliberately.** Every check up to that point can
+ * pass on state this app is holding in the page - the id set it wrote when the apply
+ * returned. Only a fresh page load makes the row prove itself from what the server
+ * says, and that is where this went wrong in production: the badge disappeared and the
+ * menu offered Apply on a watermarked file, so Remove - the only route back to the
+ * original - was gone. The restore below runs on that reloaded page for the same reason.
  */
 
 const folder = 'e2e-files-ui'
@@ -75,6 +82,37 @@ describe('Files app actions', () => {
 	})
 
 	it('swaps to Remove watermark without a folder reload', () => {
+		openRowMenu().within(() => {
+			cy.contains('Remove watermark').should('exist')
+			cy.contains('Apply watermark').should('not.exist')
+		})
+	})
+
+	it('asks for the watermark status on the very first listing of a page load', () => {
+		// The Files app builds its PROPFIND payload from the registered DAV properties
+		// while its own bundle runs - so this app's bundle has to be loaded *ahead* of
+		// it, which is what `Application::boot()` arranges. Regress that ordering and
+		// this property is missing from the request below, every node in the first
+		// listing comes back with no status, and the rest of this spec's symptoms
+		// follow: no badge, and Apply offered on a file that is watermarked.
+		cy.intercept({ method: 'PROPFIND', url: '**/remote.php/dav/files/**' }).as('listing')
+		cy.visit(`/apps/files/files?dir=/${folder}`)
+		cy.wait('@listing', { timeout: 30000 })
+			.its('request.body')
+			.should('contain', 'is-watermarked')
+	})
+
+	it('still badges the file and offers Remove after a page reload', () => {
+		// The regression this spec exists for: everything above passes on the state the
+		// browser is already holding. A reload throws that away, so the row has to be
+		// rebuilt from what the server says - and when it could not be, the badge
+		// vanished and the menu offered Apply on a file that is watermarked, which is
+		// how a user loses the ability to restore their original.
+		cy.visit(`/apps/files/files?dir=/${folder}`)
+
+		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 20000 })
+			.should('exist')
+
 		openRowMenu().within(() => {
 			cy.contains('Remove watermark').should('exist')
 			cy.contains('Apply watermark').should('not.exist')
