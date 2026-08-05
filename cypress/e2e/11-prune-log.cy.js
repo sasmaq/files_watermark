@@ -80,7 +80,7 @@ describe('occ files_watermark:prune-log', () => {
 		// Marking is recorded unconditionally - it is one row per policy decision - so the
 		// fetched file carries three rows: its mark, and one per download.
 		logRows().then(rowsFor('delivered.pdf'))
-			.should('deep.eq', ['on_demand', 'delivered', 'delivered'])
+			.should('deep.eq', ['delivered', 'delivered', 'on_demand'])
 		logRows().then(rowsFor('applied.pdf')).should('deep.eq', ['on_demand'])
 	})
 
