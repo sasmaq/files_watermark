@@ -56,7 +56,13 @@ final class ShapedText {
 		try {
 			// The pre-8.3 idiom for mb_scrub(): converting UTF-8 to UTF-8 re-encodes what is
 			// valid and applies the substitution rule - here, dropping - to what is not.
-			return mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+			$scrubbed = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+
+			// Only reachable if mbstring rejects the encoding names, which are literals here -
+			// an unknown one is a ValueError on PHP 8, not a `false`. Returning `$text` would
+			// hand back the malformed bytes this exists to remove, so an empty watermark line
+			// is the only fallback that keeps the promise the return type makes.
+			return $scrubbed === false ? '' : $scrubbed;
 		} finally {
 			mb_substitute_character($previous);
 		}
