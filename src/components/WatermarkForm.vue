@@ -908,6 +908,7 @@ const contentLines = [
 }
 .wm-field--stacked {
     margin-bottom: 14px;
+    margin-top: 14px;
 }
 .wm-field--stacked:last-child {
     margin-bottom: 0;
