@@ -66,18 +66,22 @@ effect - a suite re-run inside that window is testing the code you just replaced
 
 | Spec | Covers |
 | --- | --- |
-| `01-on-demand` | apply in place, the badge, the already-watermarked skip, byte-identical restore, the audit trail |
-| `02-on-upload` | plain PUT and chunked PUT+MOVE, both asserted **before cron could have run** |
-| `03-on-download` | per-fetch rendering for the owner, stored bytes untouched, `/api/v1/download` |
-| `04-on-share` | recipient vs owner, public DAV, the share page's download link, preview blocking |
+| `01-on-demand` | marking, the badge, the already-marked no-op, **the stored file never changing**, the audit trail |
+| `02-on-upload` | plain PUT and chunked PUT+MOVE, the overwrite that keeps its mark |
+| `03-per-reader` | two readers of one file get two different documents and two different previews; public DAV, the share page's download link, the preview cache |
 | `05-archives` | folder and multi-select ZIPs on both DAV servers, unsupported members, the received single-file share |
-| `06-archive-caps` | over-cap `on_share` denies, over-cap `on_download` degrades, and a cap set with a real `occ` command |
+| `06-archive-caps` | an over-cap archive is denied for every reader, an unmarked one is left to core, and a cap set with a real `occ` command |
 | `07-arabic` | shaping and the lam-alef ligature, read off the delivered PDF |
 | `08-images` | ink on the canvas, size preserved, JPEG round trip |
 | `09-admin-settings` | the settings page mounts, persists, and previews what it saves |
 | `10-files-app` | the file actions, their mirroring, and the row badge |
-| `11-prune-log` | the retention command, and the in-place rows it must refuse to touch |
-| `12-trigger-matrix` | all four triggers × all six access paths, in one table |
+| `11-prune-log` | the retention command, which can now reach every row |
+| `12-trigger-matrix` | both triggers × all six access paths, in one table |
+
+`03-on-download` and `04-on-share` are gone with the triggers they were named after. What
+they covered is not: per-fetch rendering, the public DAV server, the share page's download
+link and the preview path all moved into `03-per-reader`, where they are asserted against
+two readers rather than one.
 
 ## How it is put together
 

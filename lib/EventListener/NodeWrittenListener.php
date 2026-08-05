@@ -4,10 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\EventListener;
 
-use OCA\FilesWatermark\BackgroundJob\WatermarkOnUploadJob;
-use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\WatermarkService;
-use OCP\BackgroundJob\IJobList;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Files\Events\Node\NodeWrittenEvent;
@@ -16,25 +13,23 @@ use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
 /**
- * Queue the on-upload watermark for a freshly written file.
+ * Marks a freshly written file when the policy is `on_upload`.
  *
- * This listener deliberately does not watermark inline. `NodeWrittenEvent` fires while the
- * triggering write still holds a lock on the node, so writing the watermarked bytes back
- * from here throws `LockedException` - on WebDAV uploads and plain Files-API writes alike.
- * The actual burn happens in {@see WatermarkOnUploadJob}, once the lock is gone.
+ * **Inline, in the event.** That is worth naming because it used to be impossible: the
+ * watermark was burned into the file, `NodeWrittenEvent` fires while the triggering write
+ * still holds a lock on the node, and writing from here threw `LockedException`. The whole
+ * apparatus that existed to work around it - a background job, a second DAV plugin to beat
+ * cron to it, and a static suppression map so this app's own writes did not re-trigger
+ * themselves - is gone with the burn. Marking touches no content, takes no lock, and costs
+ * one insert.
  *
  * @template-implements IEventListener<NodeWrittenEvent>
  */
 class NodeWrittenListener implements IEventListener {
 
-	/** File IDs whose writes must not queue a job; see {@see suppressFor}. */
-	private static array $suppressed = [];
-
 	public function __construct(
 		private WatermarkService $watermarkService,
-		private OriginalStore $originalStore,
 		private IUserSession $userSession,
-		private IJobList $jobList,
 		private LoggerInterface $logger,
 	) {
 	}
@@ -54,66 +49,30 @@ class NodeWrittenListener implements IEventListener {
 			return;
 		}
 
-		// Storing a preserved original is itself a write of a supported file into the
-		// owner's storage, so without this every backup queues a job to watermark the
-		// backup. watermarkInPlace() refuses those anyway; this keeps the pointless job
-		// out of the queue rather than relying on it being rejected at the far end.
-		if ($this->originalStore->isBackup($node)) {
+		if ($this->watermarkService->effectiveTrigger() !== WatermarkService::TRIGGER_ON_UPLOAD) {
 			return;
 		}
 
-		$fileId = $node->getId();
-		if (isset(self::$suppressed[$fileId])) {
-			return;
-		}
-
-		// Past this point the write is the *user's*, not one of ours - which is the only
-		// moment an overwrite of watermarked content can be recognised for what it is.
-		// Ahead of every policy check below on purpose: the watermarked bytes are gone
-		// whatever the current trigger is, and a badge that outlives them is a lie the
-		// admin never configured.
-		$this->watermarkService->noteContentReplaced($node);
-
-		$uid = $this->userSession->getUser()?->getUID();
-		if ($uid === null) {
-			// No session to attribute the watermark to, and the job needs a uid to
-			// re-resolve the node. Nothing sensible to queue.
-			return;
-		}
-
+		// An overwrite of an already-marked file leaves the mark standing - the mark is a
+		// policy on the file id, not a claim about a particular set of bytes - so this
+		// returning false is the ordinary outcome for every write after the first.
 		try {
-			$config = $this->watermarkService->resolveConfig();
-		} catch (\Throwable) {
-			return;
-		}
-
-		if ($config->getTrigger() !== 'on_upload') {
-			return;
-		}
-
-		// Already burned in - the job would only skip it again. Cheap filter for the
-		// common case of a file being written repeatedly after its first watermark.
-		if ($this->watermarkService->isAlreadyWatermarked($fileId)) {
-			return;
-		}
-
-		$this->jobList->add(WatermarkOnUploadJob::class, ['fileId' => $fileId, 'uid' => $uid]);
-	}
-
-	/**
-	 * Run $callback with the on-upload trigger disabled for $fileId.
-	 *
-	 * The job's own `putContent()` fires another `NodeWrittenEvent`, which would queue a
-	 * second job for the same file. That second job would skip harmlessly (the audit row
-	 * exists by then), but it is a wasted cron cycle per upload - and the audit row is
-	 * written *after* the content, so there is a window where it would not skip.
-	 */
-	public static function suppressFor(int $fileId, callable $callback): mixed {
-		self::$suppressed[$fileId] = true;
-		try {
-			return $callback();
-		} finally {
-			unset(self::$suppressed[$fileId]);
+			$this->watermarkService->mark(
+				$node,
+				WatermarkService::TRIGGER_ON_UPLOAD,
+				$this->userSession->getUser(),
+			);
+		} catch (\Throwable $e) {
+			// **The upload still succeeds.** A file that cannot be marked is a file served
+			// exactly as it was uploaded, which is the only failure mode available here that
+			// does not lose the user's data. It is logged at warning because it is also the
+			// only place an oversized upload is ever mentioned: nothing downstream refuses
+			// the file later, so this line is the whole record that a policy did not apply.
+			$this->logger->warning('files_watermark: could not mark {path} on upload: {reason}', [
+				'path' => $node->getPath(),
+				'reason' => $e->getMessage(),
+				'exception' => $e,
+			]);
 		}
 	}
 }

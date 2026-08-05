@@ -7,7 +7,6 @@ namespace OCA\FilesWatermark\Tests\Unit\Controller;
 use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
-use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
@@ -53,7 +52,6 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
-			$this->createMock(ApplyLimits::class),
 			$this->l10n(),
 		);
 	}
@@ -74,7 +72,7 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 
 	public function testReturnsEmptyWhenNoIdsGiven(): void {
 		$this->loginAlice();
-		$this->logMapper->expects($this->never())->method('findWatermarkedFileIds');
+		$this->watermarkService->expects($this->never())->method('markedFileIds');
 
 		$response = $this->controller->getWatermarkedStatus('');
 
@@ -84,7 +82,7 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 
 	public function testReturnsEmptyWhenIdsAreAllInvalid(): void {
 		$this->loginAlice();
-		$this->logMapper->expects($this->never())->method('findWatermarkedFileIds');
+		$this->watermarkService->expects($this->never())->method('markedFileIds');
 
 		$response = $this->controller->getWatermarkedStatus('0,-3,abc');
 
@@ -102,8 +100,8 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($folder);
 
 		// Only the accessible ids reach the mapper; id 2 is never queried.
-		$this->logMapper->expects($this->once())
-			->method('findWatermarkedFileIds')
+		$this->watermarkService->expects($this->once())
+			->method('markedFileIds')
 			->with([1, 3])
 			->willReturn([3]);
 
@@ -120,7 +118,7 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 		$folder->method('getById')->willReturn([]);
 		$this->rootFolder->method('getUserFolder')->willReturn($folder);
 
-		$this->logMapper->expects($this->never())->method('findWatermarkedFileIds');
+		$this->watermarkService->expects($this->never())->method('markedFileIds');
 
 		$response = $this->controller->getWatermarkedStatus('1,2');
 

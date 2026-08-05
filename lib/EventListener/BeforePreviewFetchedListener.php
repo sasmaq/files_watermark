@@ -4,27 +4,28 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\EventListener;
 
+use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
-use OCP\Files\NotFoundException;
+use OCP\Files\File;
 use OCP\Preview\BeforePreviewFetchedEvent;
 
 /**
- * Denies file previews to share recipients and public-link visitors when the file's
- * policy is `on_share`.
+ * Notes that this request is fetching a preview of a marked file.
  *
- * On-share watermarking is applied at download time (a streamed watermarked copy),
- * but previews are rendered from the clean original and cached globally - so without
- * this a recipient could read the unwatermarked content straight from its thumbnail,
- * bypassing the watermark entirely.
+ * It does not block anything and it does not watermark anything. Every preview endpoint in
+ * the server passes through this event, so it is the one place that can see *which* file a
+ * preview request is for without knowing what route asked - and {@see PreviewRequestContext}
+ * explains at length why that matters. The watermarking happens in
+ * {@see \OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware}, once the controller has
+ * run.
  *
- * Preview caches are keyed by file + size, never by viewer, so a watermarked preview
- * cannot be shown to recipients alone. Instead we block the preview outright for
- * non-owners (they get the generic file-type icon); the owner's own previews are left
- * untouched. Blocking is the one thing {@see BeforePreviewFetchedEvent} supports - it
- * runs per request, so it can tell owner from recipient, and throwing
- * NotFoundException aborts the preview.
+ * This listener used to throw, denying previews of shared files outright, because a
+ * watermarked preview could not be produced safely: core's preview cache is keyed by file
+ * and size and never by viewer, so one recipient's stamped thumbnail would have been served
+ * to the next with the first one's name on it. Nothing watermarked goes into that cache now
+ * - the stamping happens per response, after the cache - so the previews can come back.
  *
  * @template-implements IEventListener<BeforePreviewFetchedEvent>
  */
@@ -32,6 +33,7 @@ class BeforePreviewFetchedListener implements IEventListener {
 
 	public function __construct(
 		private WatermarkService $watermarkService,
+		private PreviewRequestContext $context,
 	) {
 	}
 
@@ -41,31 +43,21 @@ class BeforePreviewFetchedListener implements IEventListener {
 		}
 
 		$node = $event->getNode();
-
-		// Only guard the types we actually watermark; other types never carry a
-		// watermark on download, so denying their previews would protect nothing.
-		if (!$this->watermarkService->isSupported($node->getMimetype())) {
+		if (!($node instanceof File)) {
 			return;
 		}
 
-		// Only restrict share recipients / public-link visitors - the owner viewing
-		// their own file keeps normal previews. Detected from the storage backend plus
-		// the anonymous-request signal, not by comparing user ids (which is unreliable
-		// in the preview request context). The anonymous half is what covers the public
-		// share page: its previews are rendered from the owner's own storage, so the
-		// storage test alone would wave them through unwatermarked.
-		if (!$this->watermarkService->isShareAccess($node)) {
+		// Only files this app can watermark, and only marked ones. Anything else is served
+		// by core untouched, which is both correct and the cheap path - this runs on every
+		// thumbnail in every folder listing.
+		if (!$this->watermarkService->isDeliveryCandidate($node)) {
 			return;
 		}
 
-		try {
-			$config = $this->watermarkService->resolveConfig();
-		} catch (\Throwable) {
-			return;
-		}
-
-		if ($config->getTrigger() === 'on_share') {
-			throw new NotFoundException('Preview blocked: file is watermarked on share.');
-		}
+		// The dimensions are nullable on the event and are a *request*, not a promise: core
+		// clamps them to its configured maxima and to the source's own size. They are
+		// recorded as a hint for scaling the watermark, and the middleware re-measures the
+		// image it actually gets.
+		$this->context->record($node, $event->getWidth() ?? 0, $event->getHeight() ?? 0);
 	}
 }

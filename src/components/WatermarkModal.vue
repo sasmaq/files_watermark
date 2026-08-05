@@ -7,8 +7,8 @@
 				{{ t('files_watermark', 'Apply watermark to: {file}', { file: fileName }) }}
 			</p>
 
-			<p v-if="estimatedSeconds" class="time-hint">
-				{{ estimateHint }}
+			<p class="wm-hint">
+				{{ t('files_watermark', 'The file itself is not changed. From now on, every download and every preview of it carries a watermark naming whoever fetched it.') }}
 			</p>
 
 			<NcNoteCard v-if="done" type="success">
@@ -40,10 +40,10 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
-import { n, t } from '@nextcloud/l10n'
+import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
@@ -52,7 +52,6 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 const props = defineProps({
 	filePath: { type: String, required: true },
 	fileName: { type: String, required: true },
-	fileSize: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['close', 'watermarked'])
@@ -61,24 +60,6 @@ const applying = ref(false)
 const done = ref(false)
 const alreadyWatermarked = ref(false)
 const applyError = ref(null)
-
-// Rough estimate: ~1 second per MB, minimum 1s, only shown for files > 1 MB.
-const estimatedSeconds = computed(() => {
-	if (!props.fileSize || props.fileSize < 1024 * 1024) return null
-	return Math.max(1, Math.round(props.fileSize / 1024 / 1024))
-})
-
-// A real plural call rather than "second(s)". The parenthesised form is a workaround for
-// English having two forms and is unusable in Arabic, which has six and inflects the noun
-// differently in each - "ثانية واحدة", "ثانيتان", "3 ثوانٍ", "11 ثانية" are not one string
-// with a number swapped in. This is the app's only plural, and the `pluralForm` line in
-// l10n/ar.json is what makes it pick correctly.
-const estimateHint = computed(() => n(
-	'files_watermark',
-	'Estimated processing time: about %n second for large files.',
-	'Estimated processing time: about %n seconds for large files.',
-	estimatedSeconds.value ?? 0,
-))
 
 /**
  *
@@ -117,7 +98,7 @@ async function apply() {
 </script>
 
 <style scoped>
-.time-hint {
+.wm-hint {
   margin-top: 8px;
   font-size: 0.9em;
   color: var(--color-text-lighter);

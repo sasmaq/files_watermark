@@ -7,7 +7,7 @@ namespace OCA\FilesWatermark\Controller;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
-use OCA\FilesWatermark\Service\ApplyLimits;
+use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -38,7 +38,6 @@ class ApiController extends Controller {
 		private IGroupManager $groupManager,
 		private WatermarkImageStore $imageStore,
 		private ISystemTagManager $tagManager,
-		private ApplyLimits $applyLimits,
 		private IL10N $l,
 	) {
 		parent::__construct($appName, $request);
@@ -77,7 +76,16 @@ class ApiController extends Controller {
 	}
 
 	private const VALID_TYPES = ['text', 'image', 'combined'];
-	private const VALID_TRIGGERS = ['on_demand', 'on_download', 'on_upload', 'on_share'];
+
+	/**
+	 * The two triggers, read from the service rather than repeated here.
+	 *
+	 * There used to be four: `on_download` and `on_share` decided *when* a watermark was
+	 * produced, back when the other two burned it into the file instead. Delivery is now the
+	 * only way one is ever produced, so those two have nothing left to select and a policy
+	 * still set to either is rejected here rather than quietly mapped onto a live one.
+	 */
+	private const VALID_TRIGGERS = WatermarkService::TRIGGERS;
 	private const VALID_TOKENS = ['username', 'displayname', 'email', 'date', 'datetime', 'filename'];
 
 	/**
@@ -284,26 +292,22 @@ class ApiController extends Controller {
 	}
 
 	/**
-	 * Watermark a file in place, on the user's own request.
+	 * Mark a file, on the user's own request, so every fetch of it is watermarked.
 	 *
-	 * The one expensive operation an ordinary user can trigger directly, and it runs
-	 * **synchronously inside the request** - the render, a full read of the content, and a
-	 * second full read for the preserved original all land on one PHP worker. Two bounds
-	 * sit on it, because they stop different things:
+	 * **Nothing is rendered here and nothing is written to the file.** This used to be the
+	 * one expensive thing an ordinary user could trigger - a full render plus two full reads
+	 * of the content, synchronously, on one PHP worker - and it is now a row. The ceilings
+	 * still apply, but they moved with the cost: {@see WatermarkService::mark()} checks them
+	 * because a file this app will not render is a file it must not promise a watermark for,
+	 * not because this request would struggle.
 	 *
-	 *  - **frequency**, the `UserRateLimit` below. 20 a minute per user is far above what
-	 *    the file action can produce by hand - each apply needs its own modal confirmation
-	 *    - and far below what a script can. Core's rate-limiting middleware enforces it and
-	 *    answers 429; nothing in this method runs.
-	 *  - **magnitude**, {@see ApplyLimits}. Frequency alone does not help against a single
-	 *    file large enough to exhaust the worker's memory, and one request is all that
-	 *    takes.
-	 *
-	 * `removeWatermark()` carries the same rate limit and no size cap: it restores a copy
-	 * this app wrote, so its cost is bounded by a file that already passed the cap here.
+	 * The rate limit is sized for what is left. 120 a minute is well above what the file
+	 * action can produce by hand - each mark needs its own modal confirmation - and still
+	 * bounds a script, which matters because this is the only route to marking from the UI.
+	 * Core's rate-limiting middleware enforces it and answers 429 before anything here runs.
 	 */
 	#[NoAdminRequired]
-	#[UserRateLimit(limit: 20, period: 60)]
+	#[UserRateLimit(limit: 120, period: 60)]
 	public function applyWatermark(string $path): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
@@ -325,8 +329,10 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $this->l->t('Path is not a file')], Http::STATUS_BAD_REQUEST);
 		}
 
-		// The watermark is applied in place, so the acting user must be able to
-		// both read the original content and write the result back.
+		// Marking changes the file's *policy*, not its content, so it is the permission to
+		// change the file that is required - the same one that governs renaming it. Read
+		// permission is checked as well: a user who cannot read the file has no business
+		// deciding how it is handed to other people.
 		if (!$node->isReadable()) {
 			return new DataResponse(['error' => $this->l->t('You do not have permission to read this file')], Http::STATUS_FORBIDDEN);
 		}
@@ -343,39 +349,19 @@ class ApiController extends Controller {
 			);
 		}
 
-		// Checked from the file cache, before a single byte is read. The point of the cap
-		// is to refuse the work rather than to survive it, so anything that loads the
-		// content first - including asking the renderer to try - has already spent what
-		// this exists to save.
-		$maxBytes = $this->applyLimits->maxBytes();
-		// `getSize()` is documented as float|int - the cache widens it so a size can
-		// outrun a 32-bit int. Narrowed once here rather than at each use.
-		$size = (int)$node->getSize();
-		if ($size > $maxBytes) {
-			return new DataResponse(
-				[
-					'error' => $this->l->t(
-						'This file is too large to watermark on demand (%1$s; the limit is %2$s).',
-						[$this->humanBytes($size), $this->humanBytes($maxBytes)],
-					),
-				],
-				Http::STATUS_REQUEST_ENTITY_TOO_LARGE,
-			);
-		}
-
 		try {
-			$applied = $this->watermarkService->watermarkInPlace($node, 'on_demand');
-		} catch (ImageTooLargeException $e) {
-			// Caught ahead of RuntimeException, which it extends. The byte cap above
-			// already answers 413 for a file that is too big; an image that is too big
-			// once decoded is the same refusal and must not arrive as a different status.
+			$applied = $this->watermarkService->mark($node, WatermarkService::TRIGGER_ON_DEMAND, $user);
+		} catch (FileTooLargeException|ImageTooLargeException $e) {
+			// Both are the same refusal measured differently - bytes on disk and pixels once
+			// decoded - and both must arrive as 413. Caught ahead of RuntimeException, which
+			// they extend, or the size refusal would answer 422 and read as a broken file.
 			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_REQUEST_ENTITY_TOO_LARGE);
 		} catch (\RuntimeException $e) {
 			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
 		}
 
-		// Already watermarked - a benign no-op, not an error. The UI branches on
-		// this status to inform the user rather than showing a failure.
+		// Already marked - a benign no-op, not an error. The UI branches on this status to
+		// inform the user rather than showing a failure.
 		if (!$applied) {
 			return new DataResponse(['status' => 'already_watermarked', 'path' => $path]);
 		}
@@ -384,14 +370,14 @@ class ApiController extends Controller {
 	}
 
 	/**
-	 * Undo an on-demand watermark by restoring the preserved original.
+	 * Take the mark off a file, so it is served as it is stored again.
 	 *
-	 * The watermark is burned into the file content, so this restores the copy taken
-	 * before the burn rather than stripping anything. 422 when no such copy exists -
-	 * a file watermarked before this feature landed, or one whose backup failed.
+	 * Instant and complete: nothing was overwritten, so there is nothing to restore and no
+	 * way for this to half-succeed. It used to rewrite the file with a preserved copy, and
+	 * could fail for want of one - the 422 that said so has nothing left to describe.
 	 */
 	#[NoAdminRequired]
-	#[UserRateLimit(limit: 20, period: 60)]
+	#[UserRateLimit(limit: 120, period: 60)]
 	public function removeWatermark(string $path): DataResponse {
 		$user = $this->userSession->getUser();
 		if ($user === null) {
@@ -410,8 +396,9 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $this->l->t('Path is not a file')], Http::STATUS_BAD_REQUEST);
 		}
 
-		// Restoring rewrites the file, so the same read + write permissions the apply
-		// path demands are required here.
+		// Unmarking is a policy change like marking, so it asks for the same permissions -
+		// and asks for them symmetrically, so a user who could mark a file can always
+		// unmark it.
 		if (!$node->isReadable()) {
 			return new DataResponse(['error' => $this->l->t('You do not have permission to read this file')], Http::STATUS_FORBIDDEN);
 		}
@@ -420,55 +407,17 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $this->l->t('You do not have permission to modify this file')], Http::STATUS_FORBIDDEN);
 		}
 
-		try {
-			$removed = $this->watermarkService->removeWatermark($node);
-		} catch (\RuntimeException $e) {
-			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
-		}
-
-		if (!$removed) {
-			return new DataResponse(
-				['error' => $this->l->t('No preserved original is available for this file, so its watermark cannot be removed.')],
-				Http::STATUS_UNPROCESSABLE_ENTITY,
-			);
+		if (!$this->watermarkService->unmark($node)) {
+			// Not marked in the first place. A no-op rather than a failure: the caller asked
+			// for this file not to be watermarked, and it is not.
+			return new DataResponse(['status' => 'not_watermarked', 'path' => $path]);
 		}
 
 		return new DataResponse(['status' => 'removed', 'path' => $path]);
 	}
 
 	/**
-	 * A byte count as something an admin can act on, e.g. `210.4 MB`.
-	 *
-	 * The 413 exists to be actionable - it names both the file's size and the ceiling so
-	 * the admin knows what to set `apply_max_bytes` to. Raw byte counts in the tens of
-	 * millions do not read as anything, and this message reaches an end user, not a log.
-	 *
-	 * Decimal units, matching what the Files app shows for the same file: a user comparing
-	 * this message against the size in the list must not find two different numbers.
-	 */
-	private function humanBytes(int $bytes): string {
-		// Whole bytes stay whole; anything scaled gets one decimal, which is enough to
-		// tell 64.0 MB from 64.9 MB without implying precision the cache does not have.
-		if ($bytes < 1000) {
-			return $bytes . ' B';
-		}
-
-		$value = (float)$bytes;
-		$unit = 'KB';
-
-		foreach (['KB', 'MB', 'GB', 'TB'] as $candidate) {
-			$unit = $candidate;
-			$value /= 1000;
-			if ($value < 1000) {
-				break;
-			}
-		}
-
-		return round($value, 1) . ' ' . $unit;
-	}
-
-	/**
-	 * Report which of the given file ids have ever been watermarked.
+	 * Report which of the given file ids are marked.
 	 *
 	 * The query is scoped to ids the acting user can actually access, so the
 	 * response never reveals whether another user's files are watermarked.
@@ -502,7 +451,7 @@ class ApiController extends Controller {
 			return new DataResponse(['watermarked' => []]);
 		}
 
-		$watermarked = $this->logMapper->findWatermarkedFileIds($accessible);
+		$watermarked = $this->watermarkService->markedFileIds($accessible);
 
 		return new DataResponse(['watermarked' => $watermarked]);
 	}

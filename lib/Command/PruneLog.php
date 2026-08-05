@@ -14,19 +14,15 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Retention for `watermark_log`: `occ files_watermark:prune-log`.
  *
- * The table has no expiry of its own, and delivery triggers render - and so record - per
- * fetch, which is what makes one necessary. Since 1.6.0 delivery rows are only written
- * when the policy asks for them, but an instance that has been running with them on has
- * the backlog either way.
+ * The table has no expiry of its own, and a marked file records a row on every fetch when
+ * `log_delivery` is on, which is what makes one necessary.
  *
- * **Delivery rows only, with no way to ask for more.** The in-place rows (`on_demand`,
- * `on_upload`, `removed`) are not history: they are how the app knows a file's stored bytes
- * carry a watermark. Deleting one un-badges its file in the Files list *and* clears the
- * guard that stops it being stamped a second time - so the badge is never something a
- * retention command can take away. An earlier draft offered `--include-applied` for it,
- * which was the wrong shape: a flag whose help text has to warn you not to use it is a flag
- * that should not exist. `WatermarkLogMapper::deleteBefore()` cannot reach those rows at all
- * now, so this holds for any future caller too.
+ * **Every row is reachable now**, which is a change worth stating rather than leaving to be
+ * discovered. This command used to be able to delete delivery rows and nothing else,
+ * because the other rows were not history at all - they were how the app knew which files
+ * carried a watermark, so deleting one un-badged its file and let it be stamped twice. The
+ * mark is its own table now. Nothing in this log is load-bearing, so retention here deletes
+ * exactly what it says and leaves no file's status behind.
  */
 class PruneLog extends Command {
 
@@ -84,17 +80,16 @@ class PruneLog extends Command {
 				->modify('-' . (int)$days . ' days')
 				->format('Y-m-d H:i:s');
 
-		$scope = 'delivery rows only (on_download, on_share)';
 		$age = $cutoff === null ? 'any age' : "older than $cutoff";
 
 		if ($dryRun) {
 			$count = $this->logMapper->countBefore($cutoff);
-			$output->writeln("Would delete <info>$count</info> row(s): $scope, $age.");
+			$output->writeln("Would delete <info>$count</info> audit row(s) of $age.");
 			return 0;
 		}
 
 		$deleted = $this->logMapper->deleteBefore($cutoff);
-		$output->writeln("Deleted <info>$deleted</info> row(s): $scope, $age.");
+		$output->writeln("Deleted <info>$deleted</info> audit row(s) of $age.");
 
 		return 0;
 	}

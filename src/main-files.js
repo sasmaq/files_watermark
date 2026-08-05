@@ -29,8 +29,8 @@ const DAV_WATERMARKED_PROP = 'is-watermarked'
 registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns' })
 
 /**
- * Whether a Files `Node` is already watermarked, read from the WebDAV property
- * delivered with the listing. The plugin returns '1' for watermarked, '0' otherwise
+ * Whether a Files `Node` is marked - that is, whether downloading or previewing it
+ * produces a watermarked copy. Read from the WebDAV property delivered with the listing. The plugin returns '1' for watermarked, '0' otherwise
  * - but the webdav client parses tag values (`parseTagValue: true`), so the value
  * reaches us as the *number* 1/0, not a string. Accept both to be safe.
  * @param {object} node - a Files `Node`
@@ -60,16 +60,16 @@ export function isNodeExplicitlyNotWatermarked(node) {
  * (the global policy, or the built-in default) and handed over as initial state by
  * LoadAdditionalScriptsListener. Defaults to `on_demand` when the state is
  * absent so the manual actions degrade to available rather than silently gone.
- * @return {string} one of on_demand / on_upload / on_download / on_share
+ * @return {string} either on_demand or on_upload
  */
 export function getEffectiveTrigger() {
 	return loadState('files_watermark', 'effective-trigger', 'on_demand')
 }
 
 /**
- * Whether watermarking is on-demand. The manual Apply (and Remove) file actions
- * are only offered in this mode; in on_upload / on_download / on_share the app
- * applies watermarks itself, so the actions are hidden.
+ * Whether watermarking is on-demand. The manual Apply and Remove actions are only offered
+ * in this mode; under on_upload the app marks every supported upload itself, so a manual
+ * action would only ever contradict the policy.
  * @return {boolean} true when the effective trigger is `on_demand`
  */
 export function isOnDemandTrigger() {
@@ -144,17 +144,16 @@ const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24
 
 /**
  * Mounts WatermarkModal and returns a Promise that resolves with:
- *   true  - watermark was applied successfully
+ *   true  - the file was marked
  *   null  - user cancelled before applying
  *
  * Keeping exec() awaiting this Promise lets Nextcloud Files show a spinner
  * on the file row and auto-refresh the file when exec resolves with true.
  * @param {string} filePath - Path of the file to watermark
  * @param {string} fileName - Display name shown in the modal
- * @param {number} fileSize - File size in bytes, used for the time estimate
  * @return {Promise<boolean|null>} true when applied, null when cancelled
  */
-function mountModal(filePath, fileName, fileSize = 0) {
+function mountModal(filePath, fileName) {
 	return new Promise((resolve) => {
 		let watermarked = false
 		const container = document.createElement('div')
@@ -165,7 +164,6 @@ function mountModal(filePath, fileName, fileSize = 0) {
 				return h(WatermarkModal, {
 					filePath,
 					fileName,
-					fileSize,
 					onWatermarked() {
 						watermarked = true
 						resolve(true)
@@ -193,7 +191,7 @@ registerFileAction(new FileAction({
 	iconSvgInline: () => APP_ICON_SVG,
 	enabled: isApplyActionEnabled,
 	async exec(file) {
-		const result = await mountModal(file.path, file.basename, file.size ?? 0)
+		const result = await mountModal(file.path, file.basename)
 		// The file was just watermarked, so record its id ourselves and redraw the
 		// badge. We can't rely on the post-exec node refresh to re-deliver our custom
 		// `is-watermarked` DAV property - it often doesn't - which is why the badge
@@ -473,7 +471,7 @@ export function decorateRows(root = document) {
 		}
 		const badge = document.createElement('span')
 		badge.className = INDICATOR_CLASS
-		badge.title = t('files_watermark', 'This file is watermarked')
+		badge.title = t('files_watermark', 'Downloads and previews of this file are watermarked')
 		badge.setAttribute('aria-label', badge.title)
 		badge.innerHTML = INDICATOR_SVG
 		// Inline, icon-only, non-interactive. flex:0 0 auto stops the badge from

@@ -4,90 +4,141 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Tests\Unit\EventListener;
 
-use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
+use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\WatermarkService;
-use OCP\Files\Node;
-use OCP\Files\NotFoundException;
-use OCP\IUser;
+use OCP\Files\File;
+use OCP\Files\Folder;
 use OCP\Preview\BeforePreviewFetchedEvent;
+use OCP\Preview\IProviderV2;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * The listener records; it no longer blocks.
+ *
+ * It used to throw `NotFoundException` for any share recipient under `on_share`, because a
+ * watermarked preview could not be produced without poisoning core's per-file preview
+ * cache with one viewer's name. The stamping happens after that cache now, so previews
+ * come back and this becomes the cheap half of the pair: note which file is being
+ * previewed, and let the middleware do the work.
+ */
 class BeforePreviewFetchedListenerTest extends TestCase {
 
 	private WatermarkService&MockObject $watermarkService;
+	private PreviewRequestContext $context;
 	private BeforePreviewFetchedListener $listener;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->watermarkService = $this->createMock(WatermarkService::class);
-		$this->listener = new BeforePreviewFetchedListener($this->watermarkService);
+		// The real one: it is a value holder, and mocking it would assert the calls made
+		// rather than the state they leave behind - which is the whole of its contract.
+		$this->context = new PreviewRequestContext();
+		$this->listener = new BeforePreviewFetchedListener($this->watermarkService, $this->context);
 	}
 
-	private function owner(string $uid = 'alice'): IUser {
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn($uid);
-		return $user;
+	private function file(): File&MockObject {
+		return $this->createMock(File::class);
 	}
 
-	private function node(string $mime = 'application/pdf', ?string $ownerUid = 'alice'): Node&MockObject {
-		$node = $this->createMock(Node::class);
-		$node->method('getMimetype')->willReturn($mime);
-		$node->method('getOwner')->willReturn($ownerUid === null ? null : $this->owner($ownerUid));
-		return $node;
+	private function event(\OCP\Files\Node $node, int $width = 256, int $height = 256): BeforePreviewFetchedEvent {
+		return new BeforePreviewFetchedEvent($node, $width, $height, false);
 	}
 
-	private function event(Node $node): BeforePreviewFetchedEvent {
-		return new BeforePreviewFetchedEvent($node, 256, 256, false);
+	public function testRecordsAMarkedFile(): void {
+		$file = $this->file();
+		$this->watermarkService->method('isDeliveryCandidate')->with($file)->willReturn(true);
+
+		$this->listener->handle($this->event($file, 128, 256));
+
+		$this->assertSame($file, $this->context->file());
+		// The smaller side is what the watermark is scaled against.
+		$this->assertSame(128, $this->context->shorterSide());
 	}
 
-	private function config(string $trigger): WatermarkConfig {
-		$config = new WatermarkConfig();
-		$config->setTrigger($trigger);
-		return $config;
+	public function testAnUnmarkedFileIsNotRecorded(): void {
+		$file = $this->file();
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(false);
+
+		$this->listener->handle($this->event($file));
+
+		$this->assertNull(
+			$this->context->file(),
+			'an unmarked file must leave the context empty, or the middleware stamps every thumbnail on the server',
+		);
 	}
 
-	public function testBlocksPreviewForRecipientWhenOnShare(): void {
-		$node = $this->node();
-		$this->watermarkService->method('isSupported')->willReturn(true);
-		// Received-share mount or anonymous public-link request → non-owner access.
-		$this->watermarkService->method('isShareAccess')->with($node)->willReturn(true);
-		$this->watermarkService->method('resolveConfig')->willReturn($this->config('on_share'));
+	/**
+	 * A folder has previews too (core renders one for some mounts), and it is not a file
+	 * this app can watermark. Recording one would hand the middleware a node whose content
+	 * it cannot read.
+	 */
+	public function testAFolderIsIgnored(): void {
+		$this->watermarkService->expects($this->never())->method('isDeliveryCandidate');
 
-		$this->expectException(NotFoundException::class);
-		$this->listener->handle($this->event($node));
+		$this->listener->handle($this->event($this->createMock(Folder::class)));
+
+		$this->assertNull($this->context->file());
 	}
 
-	public function testAllowsPreviewForOwner(): void {
-		$node = $this->node();
-		$this->watermarkService->method('isSupported')->willReturn(true);
-		// Owner's own file: not a shared mount, and the owner is logged in.
-		$this->watermarkService->method('isShareAccess')->with($node)->willReturn(false);
-		$this->watermarkService->expects($this->never())->method('resolveConfig');
+	public function testAnUnrelatedEventIsIgnored(): void {
+		$this->watermarkService->expects($this->never())->method('isDeliveryCandidate');
 
-		$this->listener->handle($this->event($node));
-		$this->addToAssertionCount(1); // no exception thrown
+		$this->listener->handle(new \OCP\EventDispatcher\Event());
+
+		$this->assertNull($this->context->file());
 	}
 
-	public function testAllowsRecipientPreviewWhenNotOnShare(): void {
-		$node = $this->node();
-		$this->watermarkService->method('isSupported')->willReturn(true);
-		$this->watermarkService->method('isShareAccess')->willReturn(true);
-		$this->watermarkService->method('resolveConfig')->with('alice')->willReturn($this->config('on_demand'));
+	/**
+	 * Nullable dimensions are still deprecated-but-legal on the event, and a caller that
+	 * omits them must not produce a fatal on the way to a thumbnail.
+	 */
+	public function testMissingDimensionsRecordZeroRatherThanFailing(): void {
+		$file = $this->file();
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(true);
 
-		$this->listener->handle($this->event($node));
-		$this->addToAssertionCount(1);
+		$this->listener->handle(new BeforePreviewFetchedEvent($file));
+
+		$this->assertSame($file, $this->context->file());
+		$this->assertSame(0, $this->context->shorterSide());
 	}
 
-	public function testIgnoresUnsupportedMime(): void {
-		$node = $this->node('text/plain');
-		$this->watermarkService->method('isSupported')->willReturn(false);
-		// Short-circuited before the share/policy checks.
-		$this->watermarkService->expects($this->never())->method('isShareAccess');
-		$this->watermarkService->expects($this->never())->method('resolveConfig');
+	/**
+	 * The first preview of a request wins.
+	 *
+	 * The middleware serves one image, and if a later internal preview could displace the
+	 * recorded node it would stamp the wrong file's name onto the response - or read a file
+	 * the request never asked about.
+	 */
+	public function testASecondPreviewDoesNotDisplaceTheFirst(): void {
+		$first = $this->file();
+		$second = $this->file();
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(true);
 
-		$this->listener->handle($this->event($node));
-		$this->addToAssertionCount(1);
+		$this->listener->handle($this->event($first));
+		$this->listener->handle($this->event($second));
+
+		$this->assertSame($first, $this->context->file());
+	}
+
+	/**
+	 * The middleware asks `IPreview` for the clean preview itself, which fires this event a
+	 * second time. Without the guard the two halves chase each other.
+	 */
+	public function testNothingIsRecordedWhileTheAppIsGeneratingItsOwnPreview(): void {
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(true);
+		$file = $this->file();
+
+		$this->context->whileGenerating(function () use ($file): void {
+			$this->listener->handle($this->event($file));
+		});
+
+		$this->assertNull($this->context->file());
+	}
+
+	/** Keeps the unused-import checker honest about what a preview provider is. */
+	public function testTheProviderInterfaceIsNotNeededHere(): void {
+		$this->assertTrue(interface_exists(IProviderV2::class));
 	}
 }

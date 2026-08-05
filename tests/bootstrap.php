@@ -40,6 +40,43 @@ namespace {
 	require_once __DIR__ . '/stubs/CoreStubs.php';
 }
 
+namespace {
+	/**
+	 * The server container, as far as `OCP\AppFramework\Http\Response` needs it.
+	 *
+	 * `Response::getHeaders()` reaches for `\OC::$server->get(IRequest::class)` to stamp an
+	 * `X-Request-Id` on every response. That is a server internal the ocp package does not
+	 * ship, so any test that reads a response's headers - which is the only way to assert a
+	 * `Cache-Control` this app sets deliberately - dies on "Class OC not found" rather than
+	 * on anything to do with the code under test.
+	 *
+	 * Two services are asked for and three methods are answered - `getId()` on the request,
+	 * and `getUser()` on the session, which stamps an `X-User-Id` when somebody is logged
+	 * in. One anonymous object serves both: it is a stub for a container lookup, not a
+	 * model of one, and giving it a second class would only make it look like more.
+	 */
+	if (!class_exists(OC::class)) {
+		class OC {
+			public static object $server;
+		}
+
+		OC::$server = new class() {
+			public function get(string $service): object {
+				return new class() {
+					public function getId(): string {
+						return 'test-request';
+					}
+
+					/** Nobody is logged in, so no `X-User-Id` is stamped. */
+					public function getUser(): ?object {
+						return null;
+					}
+				};
+			}
+		};
+	}
+}
+
 namespace OC\Hooks {
 	if (!interface_exists(Emitter::class)) {
 		interface Emitter {

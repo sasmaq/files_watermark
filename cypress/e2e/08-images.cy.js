@@ -10,6 +10,10 @@
  * The JPEG case is here for the *other* reason: it is the format the delivery path
  * meets most often on a real instance, and the one where a mis-detected type shows up
  * as a corrupt file rather than as a missing watermark.
+ *
+ * Every render here happens at fetch time, so the stored file is expected to be unchanged
+ * throughout - which is why the blank control can be compared against the *original*
+ * upload after the watermark has been taken off again.
  */
 
 const folder = 'e2e-images'
@@ -71,7 +75,9 @@ describe('Image watermarking', () => {
 		})
 	})
 
-	it('restores the blank original byte for byte', () => {
+	it('gives the blank original back byte for byte when unmarked', () => {
+		// Not a restore - there is nothing to restore. The stored file was never touched,
+		// so unmarking simply stops the render standing between it and the download.
 		cy.wmRemove(png).its('status').should('eq', 200)
 		cy.wmDownload(png).should('eq', original)
 	})
@@ -79,12 +85,11 @@ describe('Image watermarking', () => {
 	it('delivers a watermarked JPEG that is still a JPEG of the same size', () => {
 		let clean
 
-		cy.wmSetPolicy({ trigger: 'on_demand' })
 		cy.wmDownload(jpeg).then((base64) => {
 			clean = base64
 			return cy.task('probe:image', { base64 })
 		}).then((before) => {
-			cy.wmSetPolicy({ trigger: 'on_download' })
+			cy.wmApply(jpeg).its('status').should('eq', 200)
 
 			cy.wmDownload(jpeg).then((base64) => {
 				expect(base64, 'the delivered JPEG is the stored one').to.not.eq(clean)
@@ -98,8 +103,8 @@ describe('Image watermarking', () => {
 		})
 	})
 
-	it('leaves the stored JPEG untouched, since on_download renders per fetch', () => {
-		cy.wmSetPolicy({ trigger: 'on_demand' })
+	it('leaves the stored JPEG untouched, since the render happens per fetch', () => {
+		cy.wmRemove(jpeg).its('status').should('eq', 200)
 		cy.wmDownload(jpeg).then((base64) => {
 			cy.task('probe:image', { base64 }).its('format').should('eq', 'jpeg')
 		})

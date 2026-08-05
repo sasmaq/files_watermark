@@ -121,11 +121,14 @@ const error = ref(null)
 const limit = ref(50)
 const offset = ref(0)
 
+// Two of these are policies - which trigger marked the file - and two are events the log
+// records on its own: a mark taken off, and one watermarked copy handed to one reader.
+// `removed` and `replaced` are gone with the burn that produced them.
 const TRIGGER_LABELS = {
 	on_demand: t('files_watermark', 'On demand'),
-	on_download: t('files_watermark', 'On download'),
-	on_share: t('files_watermark', 'On share'),
 	on_upload: t('files_watermark', 'On upload'),
+	unmarked: t('files_watermark', 'Watermark removed'),
+	delivered: t('files_watermark', 'Downloaded'),
 }
 
 // Precompute display-friendly fields so the template stays declarative.
@@ -317,8 +320,8 @@ onMounted(fetchLog)
 	border-radius: 50%;
 	background: var(--color-text-maxcontrast);
 }
-.trigger-badge--on_download .trigger-dot { background: #4a90d9; }
-.trigger-badge--on_share .trigger-dot { background: #a05fd6; }
+.trigger-badge--delivered .trigger-dot { background: #4a90d9; }
+.trigger-badge--unmarked .trigger-dot { background: #a05fd6; }
 .trigger-badge--on_upload .trigger-dot { background: #45ad66; }
 
 .empty-state {

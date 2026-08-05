@@ -327,45 +327,46 @@ describe('WatermarkForm', () => {
 			return box.exists() ? box : null
 		}
 
-		it('is offered for the triggers that render per fetch', () => {
-			for (const trigger of ['on_download', 'on_share']) {
+		it('is offered under both triggers, which both render per fetch', () => {
+			// It used to be hidden for these two, back when they burned the watermark into
+			// the stored file and had nothing per-download to record. Every marked file is
+			// now rendered on every fetch whichever trigger marked it.
+			for (const trigger of ['on_demand', 'on_upload']) {
 				expect(auditBox(mountForm({ modelValue: { trigger } }))).not.toBeNull()
 			}
 		})
 
-		it('is hidden for the in-place triggers, which are always recorded', () => {
-			// Those rows are not optional history - the Files-list badge and the guard
-			// against a second burn read them - so offering a switch would promise
-			// something the server will not do.
-			for (const trigger of ['on_demand', 'on_upload']) {
-				expect(auditBox(mountForm({ modelValue: { trigger } }))).toBeNull()
-			}
-		})
-
 		it('defaults to off, matching the column default', () => {
-			const wrapper = mountForm({ modelValue: { trigger: 'on_download' } })
+			const wrapper = mountForm({ modelValue: { trigger: 'on_demand' } })
 			expect(auditBox(wrapper).element.checked).toBe(false)
 			expect(wrapper.vm.form.logDelivery).toBe(false)
 		})
 
 		it('reflects a stored value', () => {
-			const wrapper = mountForm({ modelValue: { trigger: 'on_share', logDelivery: true } })
+			const wrapper = mountForm({ modelValue: { trigger: 'on_upload', logDelivery: true } })
 			expect(auditBox(wrapper).element.checked).toBe(true)
 		})
 
 		it('writes the change back to the form', async () => {
-			const wrapper = mountForm({ modelValue: { trigger: 'on_download' } })
+			const wrapper = mountForm({ modelValue: { trigger: 'on_demand' } })
 			await auditBox(wrapper).setValue(true)
 			expect(wrapper.vm.form.logDelivery).toBe(true)
 		})
 
 		it('is included in the payload the server is asked to save', async () => {
-			const wrapper = mountForm({ modelValue: { trigger: 'on_download' } })
+			const wrapper = mountForm({ modelValue: { trigger: 'on_demand' } })
 			await auditBox(wrapper).setValue(true)
 			await wrapper.find('.wm-save').trigger('click')
 
 			const [payload] = wrapper.emitted('save')[0]
 			expect(payload.logDelivery).toBe(true)
+		})
+
+		it('offers exactly the two triggers the server accepts', () => {
+			// The radio group is the only place an admin can pick one, so an option here
+			// that saveConfig() rejects is a form that fails on submit with no way back.
+			const values = mountForm().findAll('input[name="wm-trigger"]').map((i) => i.element.value)
+			expect(values).toEqual(['on_demand', 'on_upload'])
 		})
 	})
 

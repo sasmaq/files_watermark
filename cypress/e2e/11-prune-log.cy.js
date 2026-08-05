@@ -51,7 +51,8 @@ describe('occ files_watermark:prune-log', () => {
 		cy.wmFileId(delivered).then((id) => {
 			ids['delivered.pdf'] = id
 		})
-		cy.wmSetPolicy({ trigger: 'on_download', logDelivery: true })
+		cy.wmSetPolicy({ trigger: 'on_demand', logDelivery: true })
+		cy.wmApply(delivered)
 		cy.wmDownload(delivered)
 		cy.wmDownload(delivered)
 	})
@@ -68,8 +69,11 @@ describe('occ files_watermark:prune-log', () => {
 		})
 	})
 
-	it('starts from two delivery rows and one apply row', () => {
-		logRows().then(rowsFor('delivered.pdf')).should('deep.eq', ['on_download', 'on_download'])
+	it('starts from two delivery rows and two mark rows', () => {
+		// The mark itself is recorded too, so the marked-and-fetched file carries three
+		// rows: the mark, and one per download.
+		logRows().then(rowsFor('delivered.pdf'))
+			.should('deep.eq', ['on_demand', 'delivered', 'delivered'])
 		logRows().then(rowsFor('applied.pdf')).should('deep.eq', ['on_demand'])
 	})
 

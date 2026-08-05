@@ -12,7 +12,8 @@ use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
-use OCA\FilesWatermark\EventListener\ShareGuardListener;
+use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
+use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\PdfFontPath;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
@@ -22,8 +23,8 @@ use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\IRequest;
 use OCP\Preview\BeforePreviewFetchedEvent;
-use OCP\Share\Events\BeforeShareCreatedEvent;
 use OCP\Util;
+use Psr\Container\ContainerInterface;
 
 class Application extends App implements IBootstrap {
 
@@ -152,10 +153,22 @@ class Application extends App implements IBootstrap {
 		// SabrePluginAddEvent - it needs its own registration to be watermarked.
 		$context->registerEventListener(BeforeSabrePubliclyLoadedEvent::class, SabrePublicPluginAddListener::class);
 		$context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
-		// A share is created from a path through the Files API, so it never passes the DAV
-		// guard that hides the preserved originals - this is what keeps one from being
-		// handed out through a public link.
-		$context->registerEventListener(BeforeShareCreatedEvent::class, ShareGuardListener::class);
+
+		// The preview pair. The listener notes *which* file a preview request is for - it
+		// is the only hook every preview endpoint passes through - and the middleware
+		// replaces the response with one carrying the viewer's own name.
+		//
+		// **Global, which is unusual and load-bearing:** the controllers serving previews
+		// belong to core and to files_sharing, and an app's middleware reaches them only
+		// with this flag. Registered app-local it would run on this app's own six routes,
+		// none of which serves a preview, and every thumbnail on the server would go out
+		// clean with nothing to show for it.
+		$context->registerMiddleware(WatermarkPreviewMiddleware::class, true);
+		// One instance per request, shared by both halves above: the middleware reads what
+		// the listener recorded, and two instances would leave it reading an empty one.
+		$context->registerService(PreviewRequestContext::class, static fn (
+			ContainerInterface $c,
+		): PreviewRequestContext => new PreviewRequestContext(), true);
 	}
 
 	/**

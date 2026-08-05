@@ -8,6 +8,7 @@ use OC\Streamer;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\Node as DavNode;
 use OCA\FilesWatermark\Service\ArchiveLimits;
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\Files\Events\BeforeZipCreatedEvent;
@@ -39,14 +40,15 @@ use Sabre\HTTP\ResponseInterface;
  * archive is byte-for-byte the same shape as core's, only with watermarked members. When
  * no delivery trigger applies it defers to core rather than duplicating the work.
  *
- * `on_share` must never leak a clean original, so members are rendered *before* any bytes
- * go out: a failed render can then abort with a real 403 instead of a truncated archive.
- * That costs a bounded amount of temp disk, which is what {@see ArchiveLimits} caps -
- * defaults an admin can raise or lower per host. `on_download` keeps its best-effort
- * contract and degrades to core's plain archive when the caps are exceeded.
+ * A marked member must never leave as a clean original, so members are rendered *before*
+ * any bytes go out: a failed render can then abort with a real 403 instead of a truncated
+ * archive. That costs a bounded amount of temp disk, which is what {@see ArchiveLimits}
+ * caps - defaults an admin can raise or lower per host. Exceeding a cap denies the archive
+ * rather than falling back to core's plain one, because that fallback is a bulk leak of
+ * exactly the files the marks protect.
  *
- * Registered on both DAV servers, with $publicContext set on the public one - see
- * {@see DownloadInterceptorPlugin} for why that flag is needed.
+ * Registered on both DAV servers. Neither instance needs to know which it is: a mark
+ * applies to every reader, so a public-link archive and an owner's own are the same case.
  */
 class ZipInterceptorPlugin extends ServerPlugin {
 
@@ -62,7 +64,6 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		private IEventDispatcher $eventDispatcher,
 		private LoggerInterface $logger,
 		private ArchiveLimits $limits,
-		private bool $publicContext = false,
 	) {
 	}
 
@@ -115,20 +116,13 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 		$folder = $node->getNode();
 
-		// Coarse gate: with no delivery-triggered policy anywhere, no member of any archive
-		// can need a watermark (on_demand / on_upload burn it into the stored bytes, so a
-		// plain archive already carries it) and core's path is left completely untouched.
-		//
-		// This deliberately does *not* test the container. `deliveryApplies($folder)` was
-		// the gate here and it leaked: a shared *single file* is mounted in the recipient's
-		// own home, so the folder reports "owner access" under on_share while the member
-		// itself is a received share - every "download selected" on a single-file share
-		// shipped the clean original. Only members can answer this, and preRender asks them
-		// one by one; when it finds nothing to substitute we hand the request back to core
-		// below, so being permissive here costs nothing.
-		if (!$this->watermarkService->hasDeliveryTriggerConfigured()) {
-			return true;
-		}
+		// There is deliberately no coarse gate ahead of this. The one that used to sit here
+		// tested the *container*, and it leaked: a shared single file is mounted in the
+		// recipient's own home, so the folder reported owner access while the member itself
+		// was a received share, and every "download selected" on a single-file share shipped
+		// the clean original. Only the members can answer the question, and preRender asks
+		// them in one batched query; when nothing is marked the request goes back to core
+		// below, so being permissive here costs a query rather than a leak.
 
 		// Core dispatches this so apps can veto a folder download; honour it identically,
 		// otherwise taking over would silently bypass those vetoes.
@@ -157,29 +151,21 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		try {
 			$rendered = $this->preRender($content);
 		} catch (WatermarkRequiredException $e) {
-			// on_share: a member that had to be watermarked could not be. Nothing has been
-			// written yet, so this is a clean denial rather than a truncated download.
+			// A marked member could not be watermarked - a failed render, or one the caps
+			// refused to attempt. Nothing has been written yet, so this is a clean denial
+			// rather than a truncated download.
 			$this->cleanup();
 			$this->logger->warning('files_watermark: denying archive download, a member could not be watermarked', [
 				'path' => $e->getPath(),
-			]);
-			throw new Forbidden('This shared folder is only available watermarked, which could not be generated.');
-		} catch (ArchiveTooLargeException $e) {
-			$this->cleanup();
-			// Best-effort trigger: fall back to core's plain archive rather than failing
-			// the download outright. on_share never reaches here (preRender denies first).
-			$this->logger->warning('files_watermark: archive too large to watermark, serving it unwatermarked', [
 				'reason' => $e->getMessage(),
-				'path' => $folder->getPath(),
 			]);
-			return true;
+			throw new Forbidden('This folder contains a watermarked file whose watermark could not be generated, so it cannot be downloaded as an archive.');
 		}
 
 		if ($rendered === []) {
-			// No member needed substituting - every one would be streamed from its own
-			// bytes, so core's archive is identical to the one we would build. Hand it
-			// back rather than duplicating the work. (on_share never reaches here with a
-			// member it failed to render: preRender denies first.)
+			// No member is marked - every one would be streamed from its own bytes, so
+			// core's archive is identical to the one we would build. Hand it back rather
+			// than duplicating the work.
 			$this->cleanup();
 			return true;
 		}
@@ -287,15 +273,15 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	}
 
 	/**
-	 * Render every member the policy applies to, before a single byte is sent.
+	 * Render every marked member, before a single byte is sent.
 	 *
-	 * Doing this up front is what makes a clean 403 possible for `on_share`; streaming
-	 * lazily would only ever produce a truncated archive once headers were out.
+	 * Doing this up front is what makes a clean 403 possible; streaming lazily would only
+	 * ever produce a truncated archive once the headers were out.
 	 *
 	 * @param Node[] $content
 	 * @return array<int, string> file id → path of the watermarked temp copy
-	 * @throws WatermarkRequiredException an on_share member could not be watermarked
-	 * @throws ArchiveTooLargeException the caps were exceeded (on_download only)
+	 * @throws WatermarkRequiredException a marked member could not be watermarked, or the
+	 *                                    caps refused to render it
 	 */
 	private function preRender(array $content): array {
 		$rendered = [];
@@ -308,33 +294,29 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		$maxMembers = $this->limits->maxMembers();
 		$maxBytes = $this->limits->maxBytes();
 
-		foreach ($this->flatten($content) as $file) {
-			$trigger = $this->watermarkService->deliveryTriggerFor($file, $this->publicContext);
-			if ($trigger === null || !$this->watermarkService->isSupported($file->getMimeType())) {
-				// Never a candidate - streamed untouched, and not counted against the caps.
-				continue;
-			}
-
+		foreach ($this->markedMembers($content) as $file) {
 			$count++;
 			$bytes += max(0, $file->getSize());
 			if ($count > $maxMembers || $bytes > $maxBytes) {
-				if ($trigger === 'on_share') {
-					throw new WatermarkRequiredException($file->getPath());
-				}
-				throw new ArchiveTooLargeException(
-					"archive exceeds the watermarking cap ($count members, $bytes bytes)"
+				// **The caps deny now; they used to degrade.** Falling back to core's plain
+				// archive was defensible when the cap could only be reached by a policy that
+				// watermarked on the way out. It is not defensible for a marked file: the
+				// fallback ships precisely the clean originals the marks were placed to
+				// prevent, and it does it silently, in bulk, at the moment the download is
+				// big enough for nobody to check.
+				throw new WatermarkRequiredException(
+					$file->getPath(),
+					"archive exceeds the watermarking cap ($count members, $bytes bytes)",
 				);
 			}
 
-			$tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
+			// Throws WatermarkRequiredException of its own if the render fails, which is the
+			// same denial by a different route.
+			$tmpPath = $this->watermarkService->watermarkForDownload($file);
 			if ($tmpPath === null) {
-				// Either the config excludes this file (fine - stream it as-is) or the
-				// render failed. Under on_share the two are indistinguishable here, and
-				// shipping the original on a failed render is exactly the leak we guard
-				// against, so deny; watermarkForDownload has already logged the cause.
-				if ($trigger === 'on_share' && $this->watermarkService->deliveryTrigger($file, $this->publicContext) === 'on_share') {
-					throw new WatermarkRequiredException($file->getPath());
-				}
+				// The mark went away between the batch query and here. Vanishingly rare and
+				// entirely benign: the file is not marked, so streaming it as stored is
+				// exactly right.
 				continue;
 			}
 
@@ -343,6 +325,33 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		}
 
 		return $rendered;
+	}
+
+	/**
+	 * The members of this archive that carry a mark, in walk order.
+	 *
+	 * One query for the whole archive rather than one per member: a folder download of a
+	 * few hundred files is the ordinary case, and asking the mark table per file is what
+	 * would make this plugin the slowest thing in a download.
+	 *
+	 * @param Node[] $content
+	 * @return File[]
+	 */
+	private function markedMembers(array $content): array {
+		$candidates = [];
+		foreach ($this->flatten($content) as $file) {
+			if ($this->watermarkService->isSupported($file->getMimeType())) {
+				$candidates[$file->getId()] = $file;
+			}
+		}
+
+		if ($candidates === []) {
+			return [];
+		}
+
+		$marked = $this->watermarkService->markedFileIds(array_keys($candidates));
+
+		return array_values(array_intersect_key($candidates, array_flip($marked)));
 	}
 
 	/**

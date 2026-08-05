@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Controller;
 
 use OCA\FilesWatermark\Controller\DownloadController;
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\StreamResponse;
@@ -20,6 +22,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 class DownloadControllerTest extends TestCase {
+
+	use L10nMock;
 
 	private WatermarkService&MockObject $watermarkService;
 	private IRootFolder&MockObject $rootFolder;
@@ -38,6 +42,7 @@ class DownloadControllerTest extends TestCase {
 			$this->watermarkService,
 			$this->rootFolder,
 			$this->userSession,
+			$this->l10n(),
 		);
 	}
 
@@ -71,8 +76,8 @@ class DownloadControllerTest extends TestCase {
 		file_put_contents($this->tmpPath, '%PDF-watermarked');
 
 		$this->watermarkService->expects($this->once())
-			->method('watermarkFile')
-			->with($node, 'on_download')
+			->method('watermarkForDownload')
+			->with($node)
 			->willReturn($this->tmpPath);
 
 		$response = $this->controller->download('doc.pdf');
@@ -102,7 +107,11 @@ class DownloadControllerTest extends TestCase {
 		$this->assertSame(Http::STATUS_NOT_FOUND, $response->getStatus());
 	}
 
-	public function testReturnsUnprocessableOnWatermarkFailure(): void {
+	/**
+	 * A marked file that will not render is refused, not served clean - the same denial
+	 * the DAV path makes, because this endpoint reaches the same files by another route.
+	 */
+	public function testAFailedRenderIsForbiddenRatherThanUnprocessable(): void {
 		$this->loginAlice();
 
 		$node = $this->createMock(File::class);
@@ -110,12 +119,40 @@ class DownloadControllerTest extends TestCase {
 		$folder->method('get')->willReturn($node);
 		$this->rootFolder->method('getUserFolder')->willReturn($folder);
 
-		$this->watermarkService->method('watermarkFile')
-			->willThrowException(new \RuntimeException('cannot process'));
+		$this->watermarkService->method('watermarkForDownload')
+			->willThrowException(new WatermarkRequiredException('/doc.pdf'));
 
 		$response = $this->controller->download('doc.pdf');
 
 		$this->assertInstanceOf(DataResponse::class, $response);
-		$this->assertSame(Http::STATUS_UNPROCESSABLE_ENTITY, $response->getStatus());
+		$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+	}
+
+	/**
+	 * An unmarked file is streamed as it is stored.
+	 *
+	 * This endpoint reports what the policy says; it does not overrule it. Watermarking
+	 * everything that arrives here would put a watermark on files no trigger ever marked,
+	 * reachable by anyone who knows the URL.
+	 */
+	public function testAnUnmarkedFileIsStreamedAsStored(): void {
+		$this->loginAlice();
+
+		$this->tmpPath = tempnam(sys_get_temp_dir(), 'wm_dl_');
+		file_put_contents($this->tmpPath, '%PDF-original');
+
+		$node = $this->createMock(File::class);
+		$node->method('getName')->willReturn('doc.pdf');
+		$node->method('getMimeType')->willReturn('application/pdf');
+		$node->method('getSize')->willReturn(13);
+		$node->method('fopen')->willReturn(fopen($this->tmpPath, 'rb'));
+
+		$folder = $this->createMock(Folder::class);
+		$folder->method('get')->willReturn($node);
+		$this->rootFolder->method('getUserFolder')->willReturn($folder);
+
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+
+		$this->assertInstanceOf(StreamResponse::class, $this->controller->download('doc.pdf'));
 	}
 }

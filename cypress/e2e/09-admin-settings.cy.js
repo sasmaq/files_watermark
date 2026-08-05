@@ -50,7 +50,7 @@ describe('Admin settings page', () => {
 			// `{displayname}` is a template token, not a Cypress key sequence.
 			.type(template, { force: true, parseSpecialCharSequences: false })
 
-		cy.get('input[name="wm-trigger"][value="on_download"]').check({ force: true })
+		cy.get('input[name="wm-trigger"][value="on_upload"]').check({ force: true })
 
 		cy.get('.wm-save').scrollIntoView().click({ force: true })
 		cy.get('.wm-status--success', { timeout: 20000 }).should('contain', 'Saved')
@@ -60,7 +60,7 @@ describe('Admin settings page', () => {
 		openSettings()
 
 		cy.get('.watermark-form input[type="text"]').first().should('have.value', template)
-		cy.get('input[name="wm-trigger"][value="on_download"]').should('be.checked')
+		cy.get('input[name="wm-trigger"][value="on_upload"]').should('be.checked')
 	})
 
 	it('stored exactly what the form showed', () => {
@@ -70,7 +70,7 @@ describe('Admin settings page', () => {
 		cy.wmApi('GET', '/api/v1/config').then((response) => {
 			const config = response.body.configs[0]
 			expect(config.textTemplate).to.eq(template)
-			expect(config.trigger).to.eq('on_download')
+			expect(config.trigger).to.eq('on_upload')
 		})
 	})
 

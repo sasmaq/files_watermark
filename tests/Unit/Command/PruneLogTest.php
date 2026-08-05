@@ -35,15 +35,14 @@ class PruneLogTest extends TestCase {
 		$this->command = new CommandTester(new PruneLog($this->logMapper, $time));
 	}
 
-	public function testDefaultsToNinetyDaysOfDeliveryRows(): void {
+	public function testDefaultsToNinetyDays(): void {
 		$this->logMapper->expects($this->once())
 			->method('deleteBefore')
 			->with('2026-05-03 12:00:00')
 			->willReturn(12);
 
 		$this->assertSame(0, $this->command->execute([]));
-		$this->assertStringContainsString('Deleted 12 row(s)', $this->command->getDisplay());
-		$this->assertStringContainsString('delivery rows only', $this->command->getDisplay());
+		$this->assertStringContainsString('Deleted 12 audit row(s)', $this->command->getDisplay());
 	}
 
 	public function testDaysMovesTheCutoff(): void {
@@ -106,15 +105,18 @@ class PruneLogTest extends TestCase {
 		$this->logMapper->expects($this->never())->method('deleteBefore');
 
 		$this->assertSame(0, $this->command->execute(['--dry-run' => true]));
-		$this->assertStringContainsString('Would delete 87 row(s)', $this->command->getDisplay());
+		$this->assertStringContainsString('Would delete 87 audit row(s)', $this->command->getDisplay());
 	}
 
 	/**
-	 * The badge is not something a retention command can take away, and the guarantee is
-	 * structural: there is no option for it, and `deleteBefore()` cannot reach those rows
-	 * at all. An unknown option is a usage error rather than a silently ignored flag.
+	 * There is still no flag for a wider scope, for a different reason than there used to be.
+	 *
+	 * The carve-out this command was built around is gone: no row in `watermark_log` decides
+	 * whether a file is watermarked any more, so every row is now deletable and `--days`
+	 * plus `--all` already express the whole of what retention means. `--include-applied`
+	 * has nothing left to include.
 	 */
-	public function testThereIsNoWayToAskForTheInPlaceRows(): void {
+	public function testThereIsNoScopeOption(): void {
 		$this->logMapper->expects($this->never())->method('deleteBefore');
 
 		$this->expectException(InvalidOptionException::class);
@@ -122,13 +124,13 @@ class PruneLogTest extends TestCase {
 		$this->command->execute(['--include-applied' => true]);
 	}
 
-	public function testEveryRunSaysItTookDeliveryRowsOnly(): void {
-		// The scope is stated on every run, so an admin reading the output never has to
+	public function testEveryRunSaysWhatAgeItTook(): void {
+		// The cutoff is stated on every run, so an admin reading the output never has to
 		// wonder whether this one took more than the last.
 		$this->logMapper->method('deleteBefore')->willReturn(9);
 
 		$this->command->execute([]);
 
-		$this->assertStringContainsString('delivery rows only (on_download, on_share)', $this->command->getDisplay());
+		$this->assertStringContainsString('older than 2026-05-03 12:00:00', $this->command->getDisplay());
 	}
 }

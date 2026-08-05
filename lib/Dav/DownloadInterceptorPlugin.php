@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Dav;
 
 use OCA\DAV\Connector\Sabre\File as DavFile;
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
 use Sabre\DAV\Exception\Forbidden;
@@ -15,28 +16,25 @@ use Sabre\HTTP\RequestInterface;
 use Sabre\HTTP\ResponseInterface;
 
 /**
- * Watermarks files on download.
+ * Watermarks marked files on download.
  *
- * The `on_download` trigger streams a freshly watermarked copy in place of the
- * original whenever a file is fetched over WebDAV - the web Files app's Download
- * action, desktop/mobile sync clients and direct DAV links all issue a plain
- * `GET` on the file node, so intercepting `beforeMethod:GET` here is the single
- * point that covers them all. The original on storage is never modified; the
- * watermarked bytes live only in the streamed temp copy.
+ * A marked file is never served as it is stored: a freshly rendered copy, carrying the
+ * name of whoever is fetching it, goes out instead. The web Files app's Download action,
+ * desktop and mobile sync clients and direct DAV links all issue a plain `GET` on the file
+ * node, so intercepting `method:GET` here is the single point that covers them all. The
+ * file on storage is never modified - the watermarked bytes exist only in the temp copy
+ * this streams and then deletes.
  *
- * This complements {@see PropFindPlugin} (which serves the watermarked *status*).
- * The decision and rendering - supported-type check, trigger gating and watermark
- * generation - live in {@see WatermarkService::watermarkForDownload}; this plugin is
+ * This complements {@see PropFindPlugin} (which serves the marked *status*). The decision
+ * and the rendering live in {@see WatermarkService::watermarkForDownload}; this plugin is
  * the thin Sabre adapter that resolves the node, streams the copy and cleans up.
  *
- * The plugin is registered on two DAV servers, which is what gives public links the
- * same treatment as internal shares: the authenticated Files server (via
+ * Registered on both DAV servers - the authenticated Files server (via
  * {@see \OCA\FilesWatermark\EventListener\SabrePluginAddListener}) and the public-link
  * server behind `public.php/dav` (via
- * {@see \OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener}). The public
- * instance is constructed with $publicContext = true because a public link is served
- * off the owner's own storage, so the service cannot tell it is share access from the
- * mount alone - see {@see WatermarkService::isShareAccess}.
+ * {@see \OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener}). Neither needs to
+ * be told which it is any more: the mark decides whether to watermark, and who is asking
+ * only decides what the watermark says.
  */
 class DownloadInterceptorPlugin extends ServerPlugin {
 
@@ -44,7 +42,6 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 
 	public function __construct(
 		private WatermarkService $watermarkService,
-		private bool $publicContext = false,
 	) {
 	}
 
@@ -86,17 +83,18 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			return true;
 		}
 
-		$tmpPath = $this->watermarkService->watermarkForDownload($file, $this->publicContext);
+		try {
+			$tmpPath = $this->watermarkService->watermarkForDownload($file);
+		} catch (WatermarkRequiredException $e) {
+			// The file is marked and the render failed. Serving the stored bytes here would
+			// hand the clean original to exactly the reader the mark exists to name, so the
+			// download is refused instead. The cause is already in the log; the client gets
+			// a 403 rather than a file that looks fine and identifies nobody.
+			throw new Forbidden($e->getMessage(), 0, $e);
+		}
+
 		if ($tmpPath === null) {
-			// No watermarked copy was produced. For `on_share` a recipient must never
-			// receive the clean original - so if the file *should* have been
-			// watermarked for this shared access but couldn't be (e.g. a PDF the
-			// renderer can't parse), deny the fetch instead of leaking the original.
-			// This closes the viewer/inline-view bypass. (`on_download` keeps its
-			// best-effort fallback of serving the original on failure.)
-			if ($this->watermarkService->deliveryTrigger($file, $this->publicContext) === 'on_share') {
-				throw new Forbidden('This shared file is only available watermarked, which could not be generated.');
-			}
+			// Not marked: nothing to do, and core serves the file as it is stored.
 			return true;
 		}
 

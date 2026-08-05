@@ -28,9 +28,11 @@ use Psr\Log\LoggerInterface;
  * the interceptor is simply absent there and every public-link download - including the
  * inline fetch the viewer makes on the share page - serves the clean original.
  *
- * The plugin is built by hand rather than pulled from the container because this
- * instance must carry $publicContext = true: the public endpoint mounts the file from
- * the owner's own storage, so share access is not detectable from the mount.
+ * The plugins are built by hand because this is not a container the app's services are
+ * wired into; they are the same plugins the authenticated server gets, configured
+ * identically. They used to need a `$publicContext` flag to tell them a public visitor was
+ * a share recipient - that question is gone, because a mark applies to every reader and the
+ * visitor's identity only decides what the watermark says.
  *
  * PropFindPlugin is deliberately not registered here - the `is-watermarked` property
  * only feeds the logged-in Files list, which no public visitor sees.
@@ -57,7 +59,6 @@ class SabrePublicPluginAddListener implements IEventListener {
 
 		$server->addPlugin(new DownloadInterceptorPlugin(
 			$this->container->get(WatermarkService::class),
-			true,
 		));
 
 		// Folder shares are downloaded as an archive, which the single-file interceptor
@@ -68,7 +69,6 @@ class SabrePublicPluginAddListener implements IEventListener {
 			$this->container->get(IEventDispatcher::class),
 			$this->container->get(LoggerInterface::class),
 			$this->container->get(ArchiveLimits::class),
-			true,
 		));
 	}
 }

@@ -7,7 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Dav;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\FilesWatermark\Dav\PropFindPlugin;
-use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -23,13 +23,13 @@ class PropFindPluginTest extends TestCase {
 
 	private const PROP = PropFindPlugin::WATERMARKED_PROPERTY;
 
-	private WatermarkLogMapper&MockObject $logMapper;
+	private WatermarkMarkMapper&MockObject $markMapper;
 	private PropFindPlugin $plugin;
 
 	protected function setUp(): void {
 		parent::setUp();
-		$this->logMapper = $this->createMock(WatermarkLogMapper::class);
-		$this->plugin = new PropFindPlugin($this->logMapper);
+		$this->markMapper = $this->createMock(WatermarkMarkMapper::class);
+		$this->plugin = new PropFindPlugin($this->markMapper);
 	}
 
 	private function davFile(int $id): DavFile {
@@ -67,7 +67,7 @@ class PropFindPluginTest extends TestCase {
 	}
 
 	public function testReportsWatermarkedFile(): void {
-		$this->logMapper->method('findWatermarkedFileIds')->with([7])->willReturn([7]);
+		$this->markMapper->method('markedFileIds')->with([7])->willReturn([7]);
 
 		$propFind = $this->propFind();
 		$this->plugin->propFind($propFind, $this->davFile(7));
@@ -76,7 +76,7 @@ class PropFindPluginTest extends TestCase {
 	}
 
 	public function testReportsCleanFile(): void {
-		$this->logMapper->method('findWatermarkedFileIds')->with([7])->willReturn([]);
+		$this->markMapper->method('markedFileIds')->with([7])->willReturn([]);
 
 		$propFind = $this->propFind();
 		$this->plugin->propFind($propFind, $this->davFile(7));
@@ -85,7 +85,7 @@ class PropFindPluginTest extends TestCase {
 	}
 
 	public function testUnrequestedPropertyCostsNoQuery(): void {
-		$this->logMapper->expects($this->never())->method('findWatermarkedFileIds');
+		$this->markMapper->expects($this->never())->method('markedFileIds');
 
 		$propFind = $this->propFind(properties: ['{DAV:}getcontentlength']);
 		$this->plugin->propFind($propFind, $this->davFile(7));
@@ -95,7 +95,7 @@ class PropFindPluginTest extends TestCase {
 
 	public function testNonNextcloudNodeIsIgnored(): void {
 		// A plain Sabre node has no file id to report a status for.
-		$this->logMapper->expects($this->never())->method('findWatermarkedFileIds');
+		$this->markMapper->expects($this->never())->method('markedFileIds');
 
 		$propFind = $this->propFind();
 		$this->plugin->propFind($propFind, new SimpleCollection('nope'));
@@ -107,7 +107,7 @@ class PropFindPluginTest extends TestCase {
 		$davDir = $this->davDirectory(1, [10, 11, 12]);
 
 		$queries = [];
-		$this->logMapper->method('findWatermarkedFileIds')
+		$this->markMapper->method('markedFileIds')
 			->willReturnCallback(static function (array $ids) use (&$queries): array {
 				$queries[] = $ids;
 				return array_values(array_intersect($ids, [11]));
@@ -135,8 +135,8 @@ class PropFindPluginTest extends TestCase {
 		$davDir = $this->davDirectory(1, [10, 11]);
 
 		// A depth-0 PROPFIND asks about the folder alone, so listing it would be wasted work.
-		$this->logMapper->expects($this->once())
-			->method('findWatermarkedFileIds')
+		$this->markMapper->expects($this->once())
+			->method('markedFileIds')
 			->with([1])
 			->willReturn([]);
 
@@ -150,8 +150,8 @@ class PropFindPluginTest extends TestCase {
 		$davDir = $this->davDirectory(1, []);
 
 		// No children to batch; only the folder's own lookup happens.
-		$this->logMapper->expects($this->once())
-			->method('findWatermarkedFileIds')
+		$this->markMapper->expects($this->once())
+			->method('markedFileIds')
 			->with([1])
 			->willReturn([]);
 
@@ -162,8 +162,8 @@ class PropFindPluginTest extends TestCase {
 	}
 
 	public function testRepeatedLookupsForTheSameFileAreCached(): void {
-		$this->logMapper->expects($this->once())
-			->method('findWatermarkedFileIds')
+		$this->markMapper->expects($this->once())
+			->method('markedFileIds')
 			->willReturn([7]);
 
 		foreach (range(1, 3) as $_) {

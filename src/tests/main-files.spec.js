@@ -137,7 +137,7 @@ describe('main-files', () => {
 		})
 
 		it('is disabled when the effective trigger is not on_demand', () => {
-			for (const trigger of ['on_upload', 'on_download', 'on_share']) {
+			for (const trigger of ['on_upload']) {
 				__setState('files_watermark', 'effective-trigger', trigger)
 				expect(isApplyActionEnabled([node()])).toBe(false)
 			}
@@ -173,7 +173,7 @@ describe('main-files', () => {
 		})
 
 		it('is disabled when the effective trigger is not on_demand', () => {
-			for (const trigger of ['on_upload', 'on_download', 'on_share']) {
+			for (const trigger of ['on_upload']) {
 				__setState('files_watermark', 'effective-trigger', trigger)
 				expect(isRemoveActionEnabled([node({ watermarked: true })])).toBe(false)
 			}
@@ -225,7 +225,7 @@ describe('main-files', () => {
 		it('isOnDemandTrigger is true only for on_demand', () => {
 			__setState('files_watermark', 'effective-trigger', 'on_demand')
 			expect(isOnDemandTrigger()).toBe(true)
-			__setState('files_watermark', 'effective-trigger', 'on_share')
+			__setState('files_watermark', 'effective-trigger', 'on_upload')
 			expect(isOnDemandTrigger()).toBe(false)
 		})
 
@@ -309,7 +309,8 @@ describe('main-files', () => {
 			addRow(1)
 			syncWatermarkedIds([node({ fileid: 1, watermarked: true })])
 			decorateRows()
-			expect(document.querySelector(INDICATOR_SELECTOR).title).toBe('This file is watermarked')
+			expect(document.querySelector(INDICATOR_SELECTOR).title)
+				.toBe('Downloads and previews of this file are watermarked')
 		})
 	})
 

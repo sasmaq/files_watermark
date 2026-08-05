@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Migration;
 
 use OCA\FilesWatermark\Migration\Version1002Date20260804120000;
+use OCA\FilesWatermark\Migration\Version1003Date20260806120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -145,6 +146,12 @@ class SchemaConvergenceTest extends TestCase {
 			'watermark_config did not converge on the expected columns',
 		);
 		$this->assertTrue($schema->hasTable('watermark_log'), 'watermark_log is missing');
+		$this->assertTrue($schema->hasTable('watermark_mark'), 'watermark_mark is missing');
+		$this->assertContains(
+			'wm_mark_file_idx',
+			$schema->getTable('watermark_mark')->indexNames(),
+			'the mark table needs its unique file_id index - it is what makes marking idempotent',
+		);
 	}
 
 	/** The flattening columns must be gone whichever state we started from. */
@@ -287,6 +294,11 @@ class SchemaConvergenceTest extends TestCase {
 		$migration = new Version1002Date20260804120000($this->stubConnection());
 		$migration->preSchemaChange($output, $closure, []);
 		$migration->changeSchema($output, $closure, []);
+
+		// 1003 rides along rather than getting its own runner: every state above reaches it
+		// too, and the property under test is that the whole chain converges - not that each
+		// file converges on its own.
+		(new Version1003Date20260806120000())->changeSchema($output, $closure, []);
 	}
 
 	/**

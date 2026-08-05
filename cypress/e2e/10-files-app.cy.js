@@ -135,10 +135,12 @@ describe('Files app actions', () => {
 		})
 	})
 
-	it('hides both actions when the policy is not on_demand', () => {
+	it('hides both actions when the policy is on_upload', () => {
 		// The actions are gated on the effective trigger, which reaches the client as
-		// initial state - so this needs a fresh page load to take effect.
-		cy.wmSetPolicy({ trigger: 'on_download' })
+		// initial state - so this needs a fresh page load to take effect. Under on_upload
+		// the app marks every supported upload itself, so a manual action could only ever
+		// contradict the policy.
+		cy.wmSetPolicy({ trigger: 'on_upload' })
 		cy.visit(`/apps/files/files?dir=/${folder}`)
 
 		openRowMenu().within(() => {

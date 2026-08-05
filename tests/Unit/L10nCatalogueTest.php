@@ -150,9 +150,20 @@ class L10nCatalogueTest extends TestCase {
 		$this->assertStringContainsString('%n', $form, "Plural form $index dropped its count");
 	}
 
-	/** @return array<string, array{string, string, int}> */
+	/**
+	 * @return array<string, array{string, string, int}>
+	 */
 	public static function pluralFormProvider(): array {
-		$cases = [];
+		$cases = [
+			// The app has no plural strings at the moment - the one it had described a
+			// render that no longer happens when the button is pressed. The two checks
+			// above are kept rather than deleted with it: `pluralForm` is still declared in
+			// both catalogues, still asserted, and the first `n()` call anyone adds needs
+			// these waiting for it. An empty provider is a PHPUnit error, not a pass, so
+			// the case has to be here.
+			'no plural strings in the app' => ['', '', 0],
+		];
+
 		foreach (self::catalogue() as $source => $target) {
 			if (!is_array($target)) {
 				continue;

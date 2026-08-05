@@ -57,6 +57,14 @@ class FakeTable {
 		return $this;
 	}
 
+	/**
+	 * Recorded in the same list as an ordinary index: uniqueness is a constraint the
+	 * database enforces, and no migration here branches on whether an index has it.
+	 */
+	public function addUniqueIndex(array $columns, $indexName = null): self {
+		return $this->addIndex($columns, $indexName);
+	}
+
 	public function hasIndex(string $indexName): bool {
 		return in_array($indexName, $this->indexes, true);
 	}

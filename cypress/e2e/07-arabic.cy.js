@@ -37,9 +37,11 @@ describe('Arabic watermarks', () => {
 	it('shapes and reorders Arabic in a delivered PDF', () => {
 		const file = `${folder}/arabic.pdf`
 
-		cy.wmSetPolicy({ trigger: 'on_download', textTemplate: PROBE })
+		cy.wmSetPolicy({ trigger: 'on_demand', textTemplate: PROBE })
 		cy.task('fixture:pdf', { text: 'arabic template' })
 			.then((base64) => cy.wmUpload(file, base64))
+		// The policy decides which files are marked; the render happens on this fetch.
+		cy.wmApply(file)
 
 		cy.wmDownload(file).then((base64) => {
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
@@ -60,9 +62,11 @@ describe('Arabic watermarks', () => {
 	it('keeps a mixed Arabic and token template renderable', () => {
 		const file = `${folder}/mixed.pdf`
 
-		cy.wmSetPolicy({ trigger: 'on_download', textTemplate: `${CONFIDENTIAL} - {date}` })
+		cy.wmSetPolicy({ trigger: 'on_demand', textTemplate: `${CONFIDENTIAL} - {date}` })
 		cy.task('fixture:pdf', { text: 'mixed template' })
 			.then((base64) => cy.wmUpload(file, base64))
+		// The policy decides which files are marked; the render happens on this fetch.
+		cy.wmApply(file)
 
 		cy.wmDownload(file).then((base64) => {
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
@@ -88,8 +92,10 @@ describe('Arabic watermarks', () => {
 	it.skip('keeps Latin words in reading order inside an RTL watermark', () => {
 		const file = `${folder}/bidi.pdf`
 
-		cy.wmSetPolicy({ trigger: 'on_download', textTemplate: `${CONFIDENTIAL} - John Doe` })
+		cy.wmSetPolicy({ trigger: 'on_demand', textTemplate: `${CONFIDENTIAL} - John Doe` })
 		cy.task('fixture:pdf', { text: 'bidi' }).then((base64) => cy.wmUpload(file, base64))
+		// The policy decides which files are marked; the render happens on this fetch.
+		cy.wmApply(file)
 
 		cy.wmDownload(file).then((base64) => {
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
@@ -107,9 +113,11 @@ describe('Arabic watermarks', () => {
 	it('draws an Arabic watermark on an image too', () => {
 		const file = `${folder}/arabic.png`
 
-		cy.wmSetPolicy({ trigger: 'on_download', textTemplate: CONFIDENTIAL })
+		cy.wmSetPolicy({ trigger: 'on_demand', textTemplate: CONFIDENTIAL })
 		cy.task('fixture:png', { width: 600, height: 400 })
 			.then((base64) => cy.wmUpload(file, base64, { contentType: 'image/png' }))
+		// The policy decides which files are marked; the render happens on this fetch.
+		cy.wmApply(file)
 
 		cy.wmDownload(file).then((base64) => {
 			cy.task('probe:image', { base64 }).then((image) => {

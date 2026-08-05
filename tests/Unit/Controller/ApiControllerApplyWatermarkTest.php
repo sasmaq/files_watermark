@@ -7,7 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Controller;
 use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
-use OCA\FilesWatermark\Service\ApplyLimits;
+use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -35,7 +35,6 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 	private IRootFolder&MockObject $rootFolder;
 	private IUserSession&MockObject $userSession;
 	private IGroupManager&MockObject $groupManager;
-	private ApplyLimits&MockObject $applyLimits;
 	private ApiController $controller;
 
 	protected function setUp(): void {
@@ -48,8 +47,6 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 		$this->groupManager = $this->createMock(IGroupManager::class);
 		// The shipped default unless a test says otherwise. Left unstubbed a mock answers
 		// 0, which every file exceeds - the whole suite would then be testing the 413.
-		$this->applyLimits = $this->createMock(ApplyLimits::class);
-		$this->applyLimits->method('maxBytes')->willReturn(ApplyLimits::DEFAULT_MAX_BYTES);
 		$this->controller = new ApiController(
 			'files_watermark',
 			$this->createMock(IRequest::class),
@@ -61,7 +58,6 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 			$this->groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
-			$this->applyLimits,
 			$this->l10n(),
 		);
 	}
@@ -113,7 +109,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 		$this->loginAlice();
 		$this->mockFile(readable: false, updateable: true);
 
-		$this->watermarkService->expects($this->never())->method('watermarkInPlace');
+		$this->watermarkService->expects($this->never())->method('mark');
 
 		$response = $this->controller->applyWatermark('doc.pdf');
 
@@ -124,7 +120,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 		$this->loginAlice();
 		$this->mockFile(readable: true, updateable: false);
 
-		$this->watermarkService->expects($this->never())->method('watermarkInPlace');
+		$this->watermarkService->expects($this->never())->method('mark');
 
 		$response = $this->controller->applyWatermark('doc.pdf');
 
@@ -136,7 +132,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 		$node = $this->mockFile(readable: true, updateable: true);
 
 		$this->watermarkService->expects($this->once())
-			->method('watermarkInPlace')
+			->method('mark')
 			->with($node, 'on_demand')
 			->willReturn(true);
 
@@ -152,7 +148,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 
 		// The service reports the file was already watermarked (skipped).
 		$this->watermarkService->expects($this->once())
-			->method('watermarkInPlace')
+			->method('mark')
 			->with($node, 'on_demand')
 			->willReturn(false);
 
@@ -164,115 +160,62 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 	}
 
 	/**
-	 * The size cap, and the assertion that matters is `never()`.
+	 * Both ceilings arrive as **413**, and neither is enforced here any more.
 	 *
-	 * An on-demand apply renders synchronously inside the request and holds several times
-	 * the file's size in memory while doing it. A cap that let the service start and
-	 * failed afterwards would have spent exactly what it exists to save, so the refusal
-	 * has to happen before `watermarkInPlace()` is reached at all.
+	 * The byte cap used to live in this method, checked against the file cache before the
+	 * service was called, because an apply rendered the whole file inside the request. An
+	 * apply is a database write now, and the ceilings moved to `mark()` with the reason for
+	 * them: a file this app will not render is a file it must not promise a watermark for.
+	 * What this endpoint still owes is the status - a refusal on size must not arrive as
+	 * the 422 that means "this file is broken".
+	 *
+	 * `FileTooLargeException` and `ImageTooLargeException` both extend `RuntimeException`,
+	 * which the catch below maps to 422, so the order of the two catch blocks is the whole
+	 * of this behaviour.
+	 *
+	 * @dataProvider oversizeProvider
 	 */
-	public function testAFileOverTheCapIsRefusedBeforeAnyWorkIsDone(): void {
+	public function testEitherCeilingAnswers413(\RuntimeException $refusal, string $expected): void {
 		$this->loginAlice();
-		$this->mockFile(readable: true, updateable: true, size: ApplyLimits::DEFAULT_MAX_BYTES + 1);
+		$this->mockFile(readable: true, updateable: true);
 
-		$this->watermarkService->expects($this->never())->method('watermarkInPlace');
+		$this->watermarkService->method('mark')->willThrowException($refusal);
 
 		$response = $this->controller->applyWatermark('huge.pdf');
 
 		$this->assertSame(Http::STATUS_REQUEST_ENTITY_TOO_LARGE, $response->getStatus());
+		// The message reaches an end user and has to be actionable: it names the file's
+		// size and the ceiling, so an admin knows what to raise.
+		$this->assertStringContainsString($expected, $response->getData()['error']);
 	}
 
-	public function testAFileExactlyOnTheCapIsAccepted(): void {
-		// The comparison is `>`, not `>=`: a cap of N bytes must accept a file of N bytes,
-		// or the number an admin sets is not the number they get.
-		$this->loginAlice();
-		$this->mockFile(readable: true, updateable: true, size: ApplyLimits::DEFAULT_MAX_BYTES);
-
-		$this->watermarkService->expects($this->once())->method('watermarkInPlace')->willReturn(true);
-
-		$this->assertSame(Http::STATUS_OK, $this->controller->applyWatermark('big.pdf')->getStatus());
+	/** @return array<string, array{\RuntimeException, string}> */
+	public static function oversizeProvider(): array {
+		return [
+			'too many bytes' => [
+				new FileTooLargeException('This file is too large to watermark (210.4 MB; the limit is 67.1 MB).'),
+				'210.4 MB',
+			],
+			// Small on disk, enormous decoded - the byte cap cannot be what refuses this.
+			'too many pixels' => [
+				new ImageTooLargeException('This image is too large to watermark (400 megapixels; the limit is 40).'),
+				'400 megapixels',
+			],
+		];
 	}
 
-	public function testTheConfiguredCapIsWhatApplies(): void {
-		// Not the shipped default: an admin who lowers the ceiling must see it take effect,
-		// which a test pinned only to DEFAULT_MAX_BYTES would not notice.
-		$this->applyLimits = $this->createMock(ApplyLimits::class);
-		$this->applyLimits->method('maxBytes')->willReturn(2048);
-		$this->controller = new ApiController(
-			'files_watermark',
-			$this->createMock(IRequest::class),
-			$this->configMapper,
-			$this->logMapper,
-			$this->watermarkService,
-			$this->rootFolder,
-			$this->userSession,
-			$this->groupManager,
-			$this->createMock(WatermarkImageStore::class),
-			$this->createMock(ISystemTagManager::class),
-			$this->applyLimits,
-			$this->l10n(),
-		);
-
-		$this->loginAlice();
-		// Well under the shipped default, so only the configured value can refuse it.
-		$this->mockFile(readable: true, updateable: true, size: 4096);
-
-		$this->watermarkService->expects($this->never())->method('watermarkInPlace');
-
-		$this->assertSame(
-			Http::STATUS_REQUEST_ENTITY_TOO_LARGE,
-			$this->controller->applyWatermark('doc.pdf')->getStatus(),
-		);
-	}
-
-	/**
-	 * A decompression bomb passes the byte cap and is refused by the pixel ceiling, which
-	 * the service raises mid-render. It must arrive as the **same** 413 the byte cap gives:
-	 * `ImageTooLargeException` extends `RuntimeException`, which this controller otherwise
-	 * maps to 422, so without the narrower catch a user meets two statuses for one class of
-	 * refusal - and the order of the two catch blocks is the whole of that behaviour.
-	 */
-	public function testAnImageRefusedForItsPixelCountAnswersTheSame413AsTheByteCap(): void {
-		$this->loginAlice();
-		// Small on disk - it is the decoded size that is the problem, so the byte cap
-		// above cannot be what refuses this.
-		$this->mockFile(readable: true, updateable: true, size: 4096);
-
-		$this->watermarkService->method('watermarkInPlace')
-			->willThrowException(new ImageTooLargeException('This image is too large to watermark (400 megapixels; the limit is 40).'));
-
-		$response = $this->controller->applyWatermark('bomb.png');
-
-		$this->assertSame(Http::STATUS_REQUEST_ENTITY_TOO_LARGE, $response->getStatus());
-		$this->assertStringContainsString('400 megapixels', $response->getData()['error']);
-	}
-
-	public function testAnOrdinaryRenderFailureIsStill422(): void {
-		// The catch order must not have swallowed the general case: a PDF the renderer
-		// cannot parse is "unprocessable", not "too large".
+	public function testAnOrdinaryRefusalIsStill422(): void {
+		// The catch order must not have swallowed the general case: a type the policy
+		// excludes is "unprocessable", not "too large".
 		$this->loginAlice();
 		$this->mockFile(readable: true, updateable: true);
 
-		$this->watermarkService->method('watermarkInPlace')
-			->willThrowException(new \RuntimeException('cannot parse PDF'));
+		$this->watermarkService->method('mark')
+			->willThrowException(new \RuntimeException('MIME type is not in the configured whitelist.'));
 
 		$this->assertSame(
 			Http::STATUS_UNPROCESSABLE_ENTITY,
 			$this->controller->applyWatermark('broken.pdf')->getStatus(),
 		);
-	}
-
-	/**
-	 * The 413 has to be actionable: it names the file's size and the ceiling, so the admin
-	 * knows what to set `apply_max_bytes` to. Raw byte counts do not read as anything.
-	 */
-	public function testTheRefusalNamesBothSizes(): void {
-		$this->loginAlice();
-		$this->mockFile(readable: true, updateable: true, size: 210_400_000);
-
-		$data = $this->controller->applyWatermark('huge.pdf')->getData();
-
-		$this->assertStringContainsString('210.4 MB', $data['error']);
-		$this->assertStringContainsString('67.1 MB', $data['error']);
 	}
 }

@@ -9,6 +9,7 @@ use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
 use OCA\FilesWatermark\Service\ArchiveLimits;
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\Files\Events\BeforeZipCreatedEvent;
@@ -49,8 +50,6 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->server = new Server();
 		$this->server->tree = $this->tree;
 
-		// The coarse gate: on by default so tests exercise the per-member logic.
-		$this->watermarkService->method('hasDeliveryTriggerConfigured')->willReturn(true);
 		$this->watermarkService->method('isSupported')->willReturn(true);
 	}
 
@@ -65,17 +64,29 @@ class ZipInterceptorPluginTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function plugin(bool $publicContext = false, ?ArchiveLimits $limits = null): ZipInterceptorPlugin {
+	private function plugin(?ArchiveLimits $limits = null): ZipInterceptorPlugin {
 		$plugin = new ZipInterceptorPlugin(
 			$this->watermarkService,
 			$this->createMock(IDateTimeZone::class),
 			$this->eventDispatcher,
 			$this->createMock(LoggerInterface::class),
 			$limits ?? $this->limits(),
-			$publicContext,
 		);
 		$plugin->initialize($this->server);
 		return $plugin;
+	}
+
+	/**
+	 * Declare which member ids carry a mark, as the batched lookup would report them.
+	 *
+	 * @param int[]|null $ids null marks every candidate
+	 */
+	private function marked(?array $ids = null): void {
+		$this->watermarkService->method('markedFileIds')->willReturnCallback(
+			static fn (array $candidates): array => $ids === null
+				? $candidates
+				: array_values(array_intersect($candidates, $ids)),
+		);
 	}
 
 	/**
@@ -170,8 +181,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
 
 		// The container answers "no trigger" - the old gate stopped right here.
-		$this->watermarkService->method('deliveryTriggerFor')
-			->willReturnCallback(static fn ($node) => $node->getId() === 1 ? 'on_share' : null);
+		$this->marked([1]);
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(fn ($file) => $file->getId() === 1 ? $this->renderedCopy() : null);
 
@@ -203,8 +213,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$substituted, $untouched]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')
-			->willReturnCallback(static fn ($node) => $node->getId() === 1 ? 'on_share' : null);
+		$this->marked([1]);
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturn($this->renderedCopy('WATERMARKED'));
 
@@ -246,8 +255,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$first, $second, $skipped]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')
-			->willReturnCallback(static fn ($node) => $node->getId() === 3 ? null : 'on_share');
+		$this->marked([1, 2]);
 
 		$rendered = [];
 		$this->watermarkService->expects($this->exactly(2))
@@ -271,7 +279,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
 
 		$this->plugin()->httpGet($this->zipRequest(), new Response());
@@ -292,7 +300,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$davDir->expects($this->once())->method('getChild')->with('a.pdf')->willReturn($davChild);
 
 		$this->tree->method('getNodeForPath')->willReturn($davDir);
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
 
 		$request = $this->zipRequest(query: ['files' => '["a.pdf"]']);
@@ -314,7 +322,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$davDir->expects($this->once())->method('getChild')->with('a.pdf')->willReturn($davChild);
 
 		$this->tree->method('getNodeForPath')->willReturn($davDir);
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
 
 		$request = new Request('GET', '/files/bob/Shared');
@@ -332,7 +340,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
 
 		$request = new Request('GET', '/files/bob/Shared?accept=zip');
@@ -358,7 +366,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
 
 		$request = new Request('GET', '/files/bob/Shared');
@@ -400,7 +408,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
 		$request = $this->zipRequest();
@@ -446,24 +454,24 @@ class ZipInterceptorPluginTest extends TestCase {
 	// Deferral and vetoes
 	// ---------------------------------------------------------------------
 
-	public function testDefersToCoreWhenNoTriggerIsConfiguredAtAll(): void {
-		$service = $this->createMock(WatermarkService::class);
-		$service->method('hasDeliveryTriggerConfigured')->willReturn(false);
-		$service->expects($this->never())->method('watermarkForDownload');
+	/**
+	 * An archive with no marked member goes back to core untouched.
+	 *
+	 * This replaces a coarse "is any delivery trigger configured at all" gate that used to
+	 * run before the members were looked at. That gate tested the *container*, and it
+	 * leaked: a shared single file is mounted inside the recipient's own home, so the
+	 * folder reported owner access while the member itself was a received share. The
+	 * members answer for themselves now, in one batched query.
+	 */
+	public function testDefersToCoreWhenNoMemberIsMarked(): void {
+		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
-		$plugin = new ZipInterceptorPlugin(
-			$service,
-			$this->createMock(IDateTimeZone::class),
-			$this->eventDispatcher,
-			$this->createMock(LoggerInterface::class),
-			$this->limits(),
-		);
-		$plugin->initialize($this->server);
-
-		$folder = $this->folder('/bob/files/Shared', 'Shared', []);
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->marked([]);
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
-		$this->assertTrue($plugin->httpGet($this->zipRequest(), new Response()));
+		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
 	}
 
 	public function testDefersToCoreWhenNothingWasSubstituted(): void {
@@ -472,7 +480,7 @@ class ZipInterceptorPluginTest extends TestCase {
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
 		// Owner access: no member needs substituting, so core's archive is identical.
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn(null);
+		$this->marked([]);
 
 		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
 		$this->assertSame([], Streamer::members());
@@ -513,7 +521,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', $children);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(fn () => $this->renderedCopy());
 
@@ -531,7 +539,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', $children);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(fn () => $this->renderedCopy());
 
@@ -543,64 +551,55 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->assertCount(201, Streamer::members());
 	}
 
-	public function testALoweredByteCapDegradesUnderOnDownload(): void {
+	public function testALoweredByteCapIsWhatApplies(): void {
 		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf', size: 1024);
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_download');
-		// Stubbed deliberately: without a render to hand back, the plugin would defer to
-		// core for having nothing to substitute, and this test would pass at any cap.
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(fn () => $this->renderedCopy());
 
-		// 1 KiB is nowhere near the 256 MiB default, so this can only degrade if the
-		// configured ceiling is the one being read.
-		$this->assertTrue(
-			$this->plugin(limits: $this->limits(maxBytes: 512))->httpGet($this->zipRequest(), new Response()),
-			'the lowered byte cap was ignored',
-		);
-		$this->assertSame([], Streamer::members());
-
-		// The control: the same folder at the default cap is claimed and rebuilt.
-		Streamer::reset();
+		// The control first: the same folder at the default cap is claimed and rebuilt, so
+		// a denial below can only come from the configured ceiling.
 		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
 		$this->assertCount(1, Streamer::members());
+
+		Streamer::reset();
+		$this->expectException(Forbidden::class);
+		$this->plugin(limits: $this->limits(maxBytes: 512))->httpGet($this->zipRequest(), new Response());
 	}
 
-	public function testExceedingTheByteCapDeniesUnderOnShare(): void {
+	/**
+	 * **The caps deny now; they used to degrade.**
+	 *
+	 * Falling back to core's plain archive was defensible when the cap could only be
+	 * reached by a policy that watermarked on the way out. It is not defensible for a
+	 * marked file: the fallback ships precisely the clean originals the marks were placed
+	 * to prevent, and it does it silently, in bulk, at the moment the download is big
+	 * enough that nobody checks.
+	 */
+	public function testExceedingTheByteCapDeniesTheArchive(): void {
 		// One member over MAX_BYTES (256 MiB) is enough to trip the cap.
 		$file = $this->file(1, '/bob/files/Shared/huge.pdf', 'huge.pdf', size: 268435457);
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
 		$this->expectException(Forbidden::class);
 		$this->plugin()->httpGet($this->zipRequest(), new Response());
 	}
 
-	public function testExceedingTheByteCapDegradesToAPlainArchiveUnderOnDownload(): void {
-		$file = $this->file(1, '/bob/files/Shared/huge.pdf', 'huge.pdf', size: 268435457);
-		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
-
-		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_download');
-
-		// Best-effort trigger: hand back to core rather than failing the download.
-		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
-		$this->assertSame([], Streamer::members());
-	}
-
 	/**
-	 * The member cap needs its own degradation test, and not because it is symmetrical
-	 * with the byte cap - because it is not reached the same way. The byte cap trips on
-	 * `getSize()` before anything is rendered; the member cap trips **mid-render**, with
-	 * temp copies already on disk. Falling back to core there has to clean them up, or a
-	 * best-effort download leaves 200 plaintext copies of user content in the temp dir.
+	 * The member cap gets its own test, and not because it is symmetrical with the byte cap
+	 * - because it is not reached the same way. The byte cap trips on `getSize()` before
+	 * anything is rendered; the member cap trips **mid-render**, with temp copies already on
+	 * disk. Aborting there has to sweep them, or a denied download leaves 200 plaintext
+	 * copies of user content in the temp dir.
 	 */
-	public function testExceedingTheMemberCapDegradesAndCleansUpUnderOnDownload(): void {
+	public function testExceedingTheMemberCapDeniesAndCleansUpTheRendersItHadMade(): void {
 		$children = [];
 		for ($i = 1; $i <= 201; $i++) {
 			$children[] = $this->file($i, "/bob/files/Shared/f$i.pdf", "f$i.pdf", size: 1);
@@ -609,7 +608,7 @@ class ZipInterceptorPluginTest extends TestCase {
 
 		$rendered = [];
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_download');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(function () use (&$rendered) {
 				$path = $this->renderedCopy();
@@ -617,43 +616,34 @@ class ZipInterceptorPluginTest extends TestCase {
 				return $path;
 			});
 
-		$this->assertTrue($this->plugin()->httpGet($this->zipRequest(), new Response()));
-		$this->assertSame([], Streamer::members(), 'a partial archive was streamed');
+		try {
+			$this->plugin()->httpGet($this->zipRequest(), new Response());
+			$this->fail('an over-cap archive must be denied');
+		} catch (Forbidden) {
+			// expected
+		}
 
+		$this->assertSame([], Streamer::members(), 'a partial archive was streamed');
 		$this->assertNotEmpty($rendered, 'nothing was rendered, so the cap was hit too early to prove anything');
 		foreach ($rendered as $path) {
 			$this->assertFileDoesNotExist($path, 'a temp copy outlived the abandoned render');
 		}
 	}
 
-	public function testExceedingTheMemberCapDeniesUnderOnShare(): void {
-		$children = [];
-		for ($i = 1; $i <= 201; $i++) {
-			$children[] = $this->file($i, "/bob/files/Shared/f$i.pdf", "f$i.pdf", size: 1);
-		}
-		$folder = $this->folder('/bob/files/Shared', 'Shared', $children);
-
-		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
-		$this->watermarkService->method('watermarkForDownload')
-			->willReturnCallback(fn () => $this->renderedCopy());
-
-		$this->expectException(Forbidden::class);
-		$this->plugin()->httpGet($this->zipRequest(), new Response());
-	}
-
 	// ---------------------------------------------------------------------
 	// Failed renders
 	// ---------------------------------------------------------------------
 
-	public function testOnShareDeniesWhenAMemberCannotBeRendered(): void {
+	public function testDeniesWhenAMarkedMemberCannotBeRendered(): void {
 		$file = $this->file(1, '/bob/files/Shared/broken.pdf', 'broken.pdf');
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
-		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
-		$this->watermarkService->method('deliveryTrigger')->willReturn('on_share');
+		$this->marked();
+		// The service refuses rather than answering null: null now means "not marked", and
+		// this member is marked and unrenderable, which is the case that must deny.
+		$this->watermarkService->method('watermarkForDownload')
+			->willThrowException(new WatermarkRequiredException('/bob/files/Shared/broken.pdf'));
 
 		// Denied before a single byte goes out, so this is a clean 403 rather than a
 		// truncated archive containing the clean original.
@@ -672,7 +662,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$top, $sub]);
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturnCallback(fn () => $this->renderedCopy());
 
@@ -690,7 +680,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$tmp = $this->renderedCopy();
 
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($tmp);
 
 		$this->plugin()->httpGet($this->zipRequest(), new Response());
@@ -706,7 +696,7 @@ class ZipInterceptorPluginTest extends TestCase {
 		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
 		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
 		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
-		$this->watermarkService->method('deliveryTriggerFor')->willReturn('on_share');
+		$this->marked();
 		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
 
 		$plugin->httpGet($this->zipRequest(), new Response());

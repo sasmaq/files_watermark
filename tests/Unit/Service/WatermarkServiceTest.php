@@ -6,21 +6,21 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
-use OCA\FilesWatermark\Db\WatermarkLog;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Db\WatermarkMarkMapper;
+use OCA\FilesWatermark\Service\ApplyLimits;
+use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
-use OCA\FilesWatermark\Service\OriginalStore;
 use OCA\FilesWatermark\Service\PdfWatermarker;
-use OCA\FilesWatermark\Service\TeamFolder;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
 use OCP\Files\Folder;
-use OCP\Files\IRootFolder;
 use OCP\IUser;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
@@ -29,22 +29,31 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
+/**
+ * The service, against the model it actually implements now.
+ *
+ * Roughly half of what this file used to assert is gone rather than rewritten, and the
+ * deletions are the point: there is no in-place burn, so nothing preserves an original and
+ * nothing can fail to restore one; there is no `on_share`, so there is no owner to exempt
+ * and no Team folder to detect; and there is no `on_download`, so a delivery no longer has
+ * a trigger of its own to resolve. What is left divides in two - **which files get marked**,
+ * and **what a fetch of a marked file produces** - and that is how this file is laid out.
+ */
 class WatermarkServiceTest extends TestCase {
 
 	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
 	private WatermarkLogMapper&MockObject $logMapper;
+	private WatermarkMarkMapper&MockObject $markMapper;
 	private PdfWatermarker&MockObject $pdfWatermarker;
 	private ImageWatermarker&MockObject $imageWatermarker;
-	private IRootFolder&MockObject $rootFolder;
 	private IUserSession&MockObject $userSession;
 	private ISystemTagObjectMapper&MockObject $tagObjectMapper;
 	private LoggerInterface&MockObject $logger;
-	private OriginalStore&MockObject $originalStore;
 	private WatermarkImageStore&MockObject $imageStore;
-	private TeamFolder&MockObject $teamFolder;
 	private ImageLimits&MockObject $imageLimits;
+	private ApplyLimits&MockObject $applyLimits;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -52,48 +61,95 @@ class WatermarkServiceTest extends TestCase {
 
 		$this->configMapper = $this->createMock(WatermarkConfigMapper::class);
 		$this->logMapper = $this->createMock(WatermarkLogMapper::class);
+		$this->markMapper = $this->createMock(WatermarkMarkMapper::class);
 		$this->pdfWatermarker = $this->createMock(PdfWatermarker::class);
 		$this->imageWatermarker = $this->createMock(ImageWatermarker::class);
-		$this->rootFolder = $this->createMock(IRootFolder::class);
 		$this->userSession = $this->createMock(IUserSession::class);
 		$this->tagObjectMapper = $this->createMock(ISystemTagObjectMapper::class);
 		$this->logger = $this->createMock(LoggerInterface::class);
-		$this->originalStore = $this->createMock(OriginalStore::class);
 		$this->imageStore = $this->createMock(WatermarkImageStore::class);
-		$this->teamFolder = $this->createMock(TeamFolder::class);
-		// The shipped default unless a test says otherwise: an unstubbed mock answers 0,
-		// which every image exceeds.
+		// The shipped defaults unless a test says otherwise: an unstubbed mock answers 0,
+		// which every file and every image exceeds.
 		$this->imageLimits = $this->createMock(ImageLimits::class);
 		$this->imageLimits->method('maxPixels')->willReturn(ImageLimits::DEFAULT_MAX_PIXELS);
+		$this->applyLimits = $this->createMock(ApplyLimits::class);
+		$this->applyLimits->method('maxBytes')->willReturn(ApplyLimits::DEFAULT_MAX_BYTES);
 
 		$this->service = new WatermarkService(
 			$this->configMapper,
 			$this->logMapper,
+			$this->markMapper,
 			$this->pdfWatermarker,
 			$this->imageWatermarker,
-			$this->rootFolder,
 			$this->userSession,
 			$this->tagObjectMapper,
 			$this->logger,
-			$this->originalStore,
 			$this->imageStore,
-			$this->teamFolder,
 			$this->imageLimits,
+			$this->applyLimits,
 			$this->l10n(),
 		);
 	}
 
-	/**
-	 * A storage mock that reports whether it is a received-share storage, so
-	 * WatermarkService::isReceivedShare() can distinguish recipient from owner access.
-	 */
-	private function storage(bool $shared): \OCP\Files\Storage\IStorage&MockObject {
-		$storage = $this->createMock(\OCP\Files\Storage\IStorage::class);
-		$storage->method('instanceOfStorage')->willReturnCallback(
-			fn (string $class): bool => $shared && $class === \OCP\Files\Storage\ISharedStorage::class,
-		);
-		return $storage;
+	// -----------------------------------------------------------------------
+	// Helpers
+	// -----------------------------------------------------------------------
+
+	private function config(string $trigger = WatermarkService::TRIGGER_ON_DEMAND): WatermarkConfig {
+		$config = new WatermarkConfig();
+		$config->setType('text');
+		$config->setTextTemplate('{displayname}');
+		$config->setTrigger($trigger);
+		return $config;
 	}
+
+	private function user(string $uid, string $displayName = '', string $email = ''): IUser&MockObject {
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn($uid);
+		$user->method('getDisplayName')->willReturn($displayName !== '' ? $displayName : $uid);
+		$user->method('getEMailAddress')->willReturn($email);
+		return $user;
+	}
+
+	/**
+	 * @param int $size bytes, as the file cache reports them
+	 */
+	private function file(
+		string $mime = 'application/pdf',
+		int $id = 42,
+		string $content = 'ORIGINAL',
+		int $size = 1024,
+		?IUser $owner = null,
+	): File&MockObject {
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn($mime);
+		$file->method('getId')->willReturn($id);
+		$file->method('getName')->willReturn('report.pdf');
+		$file->method('getPath')->willReturn('/alice/files/report.pdf');
+		$file->method('getContent')->willReturn($content);
+		$file->method('getSize')->willReturn($size);
+		$file->method('getOwner')->willReturn($owner);
+		// Only images are header-checked, and only PNG/JPEG/WEBP reach that path; a stream
+		// of the content is enough for `getimagesizefromstring()` to decline, which is the
+		// documented "cannot tell, allow through" case.
+		$file->method('fopen')->willReturnCallback(static function () use ($content) {
+			$handle = fopen('php://memory', 'r+');
+			fwrite($handle, $content);
+			rewind($handle);
+			return $handle;
+		});
+		return $file;
+	}
+
+	private function markedFile(string $mime = 'application/pdf', int $id = 42): File&MockObject {
+		$this->markMapper->method('isMarked')->with($id)->willReturn(true);
+		$this->markMapper->method('markedFileIds')->willReturn([$id]);
+		return $this->file($mime, $id);
+	}
+
+	// -----------------------------------------------------------------------
+	// Which files get marked
+	// -----------------------------------------------------------------------
 
 	public function testIsSupportedMatchesKnownTypes(): void {
 		$this->assertTrue($this->service->isSupported('application/pdf'));
@@ -101,1662 +157,737 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertTrue($this->service->isSupported('image/png'));
 		$this->assertTrue($this->service->isSupported('image/webp'));
 		$this->assertFalse($this->service->isSupported('text/plain'));
-		$this->assertFalse($this->service->isSupported('application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
+		$this->assertFalse($this->service->isSupported('application/zip'));
 	}
 
-	public function testResolveConfigReturnsTheGlobalPolicy(): void {
-		$globalConfig = new WatermarkConfig();
-		$globalConfig->setType('image');
+	public function testMarkWritesTheMarkAndAnAuditRow(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->file();
+		$alice = $this->user('alice');
 
-		$this->configMapper->expects($this->once())
-			->method('findGlobal')
-			->willReturn($globalConfig);
+		$this->markMapper->expects($this->once())
+			->method('mark')
+			->with(42, 'alice', WatermarkService::TRIGGER_ON_DEMAND, null)
+			->willReturn(true);
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('alice', 42, '/alice/files/report.pdf', WatermarkService::TRIGGER_ON_DEMAND, null);
 
-		$this->assertSame($globalConfig, $this->service->resolveConfig());
+		$this->assertTrue($this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND, $alice));
 	}
 
-	public function testResolveConfigReturnsDefaultWhenNoneExist(): void {
-		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException(''));
+	/**
+	 * Marking never touches the file. It is the whole premise, and it is cheap to assert
+	 * outright rather than leave to be inferred from what the test does not stub.
+	 */
+	public function testMarkNeverReadsOrWritesTheFile(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('mark')->willReturn(true);
 
-		$result = $this->service->resolveConfig();
-		$this->assertSame('text', $result->getType());
-		$this->assertSame(40, $result->getOpacity());
-		$this->assertSame('#808080', $result->getColor());
-		$this->assertSame(45, $result->getRotation());
-	}
-
-	public function testWatermarkFileThrowsForUnsupportedMime(): void {
 		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('video/mp4');
+		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getId')->willReturn(42);
+		$file->method('getPath')->willReturn('/alice/files/report.pdf');
+		$file->method('getSize')->willReturn(1024);
+		$file->expects($this->never())->method('getContent');
+		$file->expects($this->never())->method('putContent');
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$this->imageWatermarker->expects($this->never())->method('apply');
+
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND, $this->user('alice'));
+	}
+
+	/**
+	 * A second mark is a no-op, not a failure - and it says so by returning false rather
+	 * than by throwing. `on_upload` fires on every write, so this is the ordinary path for
+	 * every file after its first save.
+	 */
+	public function testMarkingAnAlreadyMarkedFileIsANoOp(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('mark')->willReturn(false);
+		$this->logMapper->expects($this->never())->method('insertLog');
+
+		$this->assertFalse(
+			$this->service->mark($this->file(), WatermarkService::TRIGGER_ON_UPLOAD, $this->user('alice')),
+		);
+	}
+
+	public function testMarkRefusesAnUnsupportedType(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->expects($this->never())->method('mark');
 
 		$this->expectException(\RuntimeException::class);
 		$this->expectExceptionMessage('Unsupported file type');
-
-		$this->service->watermarkFile($file, 'on_demand');
+		$this->service->mark($this->file('text/plain'), WatermarkService::TRIGGER_ON_DEMAND);
 	}
 
-	public function testWatermarkFileCleansUpTempFilesWhenRenderFails(): void {
-		// A failed render must not leave the plaintext source copy behind: the caller
-		// only receives an exception, so it has no path it could clean up itself.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
+	public function testMarkRefusesAMimeOutsideTheWhitelist(): void {
+		$config = $this->config();
+		$config->setMimeTypes('image/png');
 		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('broken.pdf');
-		$file->method('getContent')->willReturn('not really a pdf');
-
-		$captured = null;
-		$this->pdfWatermarker->method('apply')->willReturnCallback(
-			function (string $src) use (&$captured): void {
-				$captured = $src;
-				throw new \RuntimeException('cannot parse PDF');
-			},
-		);
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		try {
-			$this->service->watermarkFile($file, 'on_demand');
-			$this->fail('Expected the render failure to propagate');
-		} catch (\RuntimeException) {
-			// expected
-		}
-
-		$this->assertNotNull($captured, 'renderer should have been handed a source path');
-		$this->assertFileDoesNotExist($captured, 'plaintext source copy leaked');
-		$this->assertDirectoryDoesNotExist(dirname($captured), 'temp dir leaked');
-	}
-
-	public function testWatermarkFileHandsRendererTheResolvedLogoPath(): void {
-		// The config stores an opaque reference; the renderer must receive a real local
-		// path, and the temp copy must not survive the render.
-		$config = new WatermarkConfig();
-		$config->setType('image');
-		$config->setImagePath(str_repeat('a', 32) . '.png');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(21);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-
-		$logoTmp = sys_get_temp_dir() . '/wm_logo_' . bin2hex(random_bytes(6)) . '.png';
-		file_put_contents($logoTmp, 'logo-bytes');
-		$this->imageStore->method('localPath')
-			->with(str_repeat('a', 32) . '.png')
-			->willReturn($logoTmp);
-
-		$seen = null;
-		$this->pdfWatermarker->method('apply')->willReturnCallback(
-			function (string $src, string $dest, WatermarkConfig $c) use (&$seen): void {
-				$seen = $c->getImagePath();
-				file_put_contents($dest, 'out');
-			},
-		);
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand');
-
-		$this->assertSame($logoTmp, $seen, 'renderer should get the materialised path');
-		$this->assertFileDoesNotExist($logoTmp, 'logo temp copy leaked');
-		// The stored config keeps its reference - only the render-time copy was rewritten.
-		$this->assertSame(str_repeat('a', 32) . '.png', $config->getImagePath());
-
-		@unlink($tmpPath);
-		@rmdir(dirname($tmpPath));
-	}
-
-	public function testWatermarkFileNeverPassesAnUnresolvableImageToRenderer(): void {
-		// A config left over from the free-text-path era: the store refuses it, and the
-		// renderer must be told there is no image rather than the raw path.
-		$config = new WatermarkConfig();
-		$config->setType('combined');
-		$config->setTextTemplate('{username}');
-		$config->setImagePath('/var/www/html/core/img/logo/logo.png');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(22);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-
-		$this->imageStore->method('localPath')->willReturn(null);
-
-		$seen = 'unset';
-		$this->pdfWatermarker->method('apply')->willReturnCallback(
-			function (string $src, string $dest, WatermarkConfig $c) use (&$seen): void {
-				$seen = $c->getImagePath();
-				file_put_contents($dest, 'out');
-			},
-		);
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand');
-
-		$this->assertNull($seen, 'legacy server path must not reach the renderer');
-
-		@unlink($tmpPath);
-		@rmdir(dirname($tmpPath));
-	}
-
-	public function testWatermarkFileThrowsWhenMimeNotInWhitelist(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setMimeTypes('application/pdf');
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/jpeg');
+		$this->markMapper->expects($this->never())->method('mark');
 
 		$this->expectException(\RuntimeException::class);
-		$this->expectExceptionMessage('MIME type');
-
-		$this->service->watermarkFile($file, 'on_demand', $config);
-	}
-
-	public function testWatermarkFileDelegatesImageToImageWatermarker(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$user->method('getEMailAddress')->willReturn('alice@example.com');
-
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/jpeg');
-		$file->method('getName')->willReturn('photo.jpg');
-		$file->method('getId')->willReturn(42);
-		$file->method('getPath')->willReturn('/alice/files/photo.jpg');
-		$file->method('getContent')->willReturn('fake-image-data');
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$this->imageWatermarker->expects($this->once())
-			->method('apply');
-
-		$this->logMapper->expects($this->once())
-			->method('insertLog');
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
-		$this->assertStringContainsString('photo.jpg', $tmpPath);
-
-		// clean up
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
+		$this->expectExceptionMessage('not in the configured whitelist');
+		$this->service->mark($this->file(), WatermarkService::TRIGGER_ON_DEMAND);
 	}
 
 	/**
-	 * A display name that is not valid UTF-8 reaches the renderer repaired, and the admin
-	 * is told which field it came from.
+	 * The byte ceiling is enforced when the file is marked, not when it is fetched.
 	 *
-	 * The repair is what keeps the watermark shaped - see {@see ShapedText::toValidUtf8()}
-	 * and the image-renderer tests. The *log line* is the other half, and it is the half
-	 * only this class can provide: by the time the renderer sees the string, the bad bytes
-	 * are one substring of a resolved template and nothing can say which value they came
-	 * from. An admin looking at a mangled name needs to know whether to fix the user
-	 * backend or the file.
+	 * That is the only moment where refusing is still a choice: a marked file is promised a
+	 * watermark on every fetch, so a ceiling discovered at download time would deny a file
+	 * nobody was ever warned about.
 	 */
-	public function testInvalidUtf8InAPlaceholderIsRepairedAndReported(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{displayname}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_demand');
+	public function testMarkRefusesAFileOverTheByteCeiling(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->expects($this->never())->method('mark');
 
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		// What an LDAP or AD attribute looks like after a latin-1 round trip.
-		$user->method('getDisplayName')->willReturn("Ahmed\xD8");
-		$user->method('getEMailAddress')->willReturn('ahmed@example.com');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/jpeg');
-		$file->method('getName')->willReturn('photo.jpg');
-		$file->method('getId')->willReturn(42);
-		$file->method('getPath')->willReturn('/alice/files/photo.jpg');
-		$file->method('getContent')->willReturn('fake-image-data');
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$this->imageWatermarker->expects($this->once())
-			->method('apply')
-			->with(
-				$this->anything(),
-				$this->anything(),
-				$this->anything(),
-				$this->callback(function (array $placeholders): bool {
-					$this->assertSame('Ahmed', $placeholders['displayname'], 'the bad byte reached the renderer');
-					$this->assertTrue(mb_check_encoding(implode('', $placeholders), 'UTF-8'));
-					return true;
-				}),
-			);
-
-		// Named, so the admin knows which field to go and fix; the bytes themselves are
-		// not worth putting in a log line.
-		$this->logger->expects($this->once())
-			->method('warning')
-			->with(
-				$this->stringContains('invalid UTF-8'),
-				$this->callback(fn (array $context): bool => $context['fields'] === 'displayname'),
-			);
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
-
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
+		$this->expectException(FileTooLargeException::class);
+		$this->service->mark(
+			$this->file('application/pdf', 42, 'ORIGINAL', ApplyLimits::DEFAULT_MAX_BYTES + 1),
+			WatermarkService::TRIGGER_ON_DEMAND,
+		);
 	}
 
-	/** Clean values must not cost a log line - a warning per watermark is noise, not signal. */
-	public function testCleanPlaceholdersAreNotReported(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{displayname}');
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('ahmed');
-		$user->method('getDisplayName')->willReturn('أحمد');
-		$user->method('getEMailAddress')->willReturn('ahmed@example.com');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/jpeg');
-		$file->method('getName')->willReturn('صورة.jpg');
-		$file->method('getId')->willReturn(42);
-		$file->method('getPath')->willReturn('/ahmed/files/صورة.jpg');
-		$file->method('getContent')->willReturn('fake-image-data');
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$this->logger->expects($this->never())->method('warning');
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
-
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
-	}
-
-	public function testWatermarkFileDelegatesPdfToPdfWatermarker(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$user->method('getEMailAddress')->willReturn('alice@example.com');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(7);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		// The PDF must go to the PDF renderer, never the image renderer.
-		$this->pdfWatermarker->expects($this->once())->method('apply');
-		$this->imageWatermarker->expects($this->never())->method('apply');
-		$this->logMapper->expects($this->once())->method('insertLog');
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
-		$this->assertStringContainsString('doc.pdf', $tmpPath);
-
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
-	}
-
-	/** A plain PDF config. */
-	private function pdfConfig(): WatermarkConfig {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_demand');
-		return $config;
-	}
-
-	/** @return File&MockObject */
-	private function pdfFile(): File {
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(7);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		return $file;
-	}
-
-	/**
-	 * @dataProvider unusableTagProvider
-	 */
-	public function testUnusableStoredFolderTagDegradesInsteadOfCrashing(\Throwable $thrown): void {
-		// saveConfig rejects both of these now, but a config stored before it did - or
-		// edited straight in the database - must still land on this app's ordinary
-		// "cannot watermark" path. InvalidArgumentException in particular is not a
-		// RuntimeException, so uncaught it sailed past every caller and turned each
-		// watermark request into an HTTP 500.
-		$config = $this->pdfConfig();
-		$config->setFolderTag('Confidential');
-
-		$file = $this->pdfFile();
-		$file->method('getParent')->willReturn($this->createMock(Folder::class));
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willThrowException($thrown);
-
-		$this->logger->expects($this->once())
-			->method('warning')
-			->with($this->stringContains('not a usable tag id'), $this->anything());
+	/** The refusal names both numbers, so an admin knows what to raise `apply_max_bytes` to. */
+	public function testTheByteRefusalNamesTheSizeAndTheLimit(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
 
 		try {
-			$this->service->watermarkFile($file, 'on_demand', $config);
-			$this->fail('Expected a RuntimeException so callers can report it');
-		} catch (\RuntimeException $e) {
-			$this->assertStringContainsString('does not exist on this server', $e->getMessage());
-			$this->assertSame($thrown, $e->getPrevious());
+			$this->service->mark(
+				$this->file('application/pdf', 42, 'ORIGINAL', 100_000_000),
+				WatermarkService::TRIGGER_ON_DEMAND,
+			);
+			$this->fail('an oversized file must be refused');
+		} catch (FileTooLargeException $e) {
+			$this->assertStringContainsString('100 MB', $e->getMessage());
+			$this->assertStringContainsString('67.1 MB', $e->getMessage());
 		}
+	}
+
+	/**
+	 * A decompression bomb is refused a mark, from its header alone.
+	 *
+	 * The pixel ceiling used to be enforced inside the render, on a temp copy that only
+	 * existed because a render was happening. With no render at mark time the check has to
+	 * read the image's first bytes instead - and reading the *whole* file to decide whether
+	 * it is safe to read the whole file would not be a check at all.
+	 */
+	public function testMarkRefusesAnImageOverThePixelCeilingFromItsHeader(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->imageLimits = $this->createMock(ImageLimits::class);
+		$this->markMapper->expects($this->never())->method('mark');
+
+		// A real 2×2 PNG, with the ceiling set below it - the smallest honest way to prove
+		// the header is being parsed rather than the size guessed at.
+		$png = (string)base64_decode(
+			'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP8//8/AzJgYkAD'
+			. 'RAsAAJUsBQXbHu4ZAAAAAElFTkSuQmCC',
+		);
+		$service = $this->serviceWithPixelCeiling(1);
+
+		$this->expectException(ImageTooLargeException::class);
+		$service->mark($this->file('image/png', 42, $png), WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	/**
+	 * An unreadable header is allowed through, deliberately.
+	 *
+	 * `getimagesizefromstring()` returns false for anything it cannot parse, corrupt files
+	 * and unknown formats alike. Refusing on that would turn "this guard cannot tell" into
+	 * "this file is a bomb" and reject files the renderer handles perfectly well.
+	 */
+	public function testAnImageWhoseHeaderCannotBeParsedIsStillMarkable(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->expects($this->once())->method('mark')->willReturn(true);
+
+		$service = $this->serviceWithPixelCeiling(1);
+		$service->mark($this->file('image/png', 42, 'not-a-png'), WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	private function serviceWithPixelCeiling(int $maxPixels): WatermarkService {
+		$limits = $this->createMock(ImageLimits::class);
+		$limits->method('maxPixels')->willReturn($maxPixels);
+
+		return new WatermarkService(
+			$this->configMapper,
+			$this->logMapper,
+			$this->markMapper,
+			$this->pdfWatermarker,
+			$this->imageWatermarker,
+			$this->userSession,
+			$this->tagObjectMapper,
+			$this->logger,
+			$this->imageStore,
+			$limits,
+			$this->applyLimits,
+			$this->l10n(),
+		);
+	}
+
+	public function testMarkRefusesAFileOutsideTheTaggedFolder(): void {
+		$config = $this->config();
+		$config->setFolderTag('7');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn(['999']);
+
+		$parent = $this->createMock(Folder::class);
+		$parent->method('getId')->willReturn(1);
+		$file = $this->file();
+		$file->method('getParent')->willReturn($parent);
+
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessage('required system tag');
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	/**
+	 * A stored tag that is not a usable id degrades to this app's ordinary refusal rather
+	 * than escaping as an HTTP 500. `InvalidArgumentException` is not a `RuntimeException`,
+	 * so uncaught it sailed past every caller's handling.
+	 *
+	 * @dataProvider unusableTagProvider
+	 */
+	public function testAnUnusableStoredFolderTagDegradesInsteadOfCrashing(\Throwable $thrown): void {
+		$config = $this->config();
+		$config->setFolderTag('not-an-id');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willThrowException($thrown);
+
+		$parent = $this->createMock(Folder::class);
+		$parent->method('getId')->willReturn(1);
+		$file = $this->file();
+		$file->method('getParent')->willReturn($parent);
+
+		$this->expectException(\RuntimeException::class);
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
 	}
 
 	/** @return array<string, array{\Throwable}> */
 	public static function unusableTagProvider(): array {
 		return [
-			'a tag name rather than an id' => [new \InvalidArgumentException('Tag id must be integer')],
-			'an id that no longer exists' => [new TagNotFoundException('tag 4242 not found')],
+			'tag no longer exists' => [new TagNotFoundException('gone')],
+			'tag id is not numeric' => [new \InvalidArgumentException('Tag id must be integer')],
 		];
 	}
 
-	public function testUnsupportedTypeIsSkippedWithLogEntryAndNoRendering(): void {
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('text/plain');
-		$file->method('getPath')->willReturn('/alice/files/notes.txt');
-
-		// Audit-log entry is written for the skip ...
-		$this->logger->expects($this->once())
-			->method('info')
-			->with(
-				$this->stringContains('unsupported'),
-				$this->callback(fn (array $ctx): bool => ($ctx['mime'] ?? null) === 'text/plain'),
-			);
-
-		// ... and no renderer is invoked.
-		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$this->imageWatermarker->expects($this->never())->method('apply');
-
-		$this->expectException(\RuntimeException::class);
-		$this->expectExceptionMessage('Unsupported file type');
-
-		$this->service->watermarkFile($file, 'on_demand');
-	}
-
-	public function testWatermarkForDownloadReturnsNullForUnsupportedType(): void {
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('text/plain');
-
-		// Gated out before any config lookup or rendering.
-		$this->configMapper->expects($this->never())->method('findGlobal');
-		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$this->imageWatermarker->expects($this->never())->method('apply');
-
-		$this->assertNull($this->service->watermarkForDownload($file));
-	}
-
-	public function testWatermarkForDownloadReturnsNullWhenTriggerIsNotOnDownload(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($user);
+	/**
+	 * The scope checks apply when a file is marked and are deliberately not consulted
+	 * again on delivery.
+	 *
+	 * The mark *is* the decision. An admin who narrows the whitelist afterwards has changed
+	 * what gets marked next; a marked file that silently stopped being watermarked because
+	 * someone moved it out of a tagged folder is the failure this app exists to prevent.
+	 */
+	public function testDeliveryDoesNotReapplyTheScopeChecks(): void {
+		$config = $this->config();
+		$config->setMimeTypes('image/png');
+		$config->setFolderTag('7');
 		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->tagObjectMapper->expects($this->never())->method('getObjectIdsForTags');
 
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-
-		// Trigger mismatch: the original is served, nothing is rendered or logged.
-		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$this->imageWatermarker->expects($this->never())->method('apply');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->assertNull($this->service->watermarkForDownload($file));
-	}
-
-	public function testWatermarkForDownloadRendersWatermarkedCopyWhenOnDownload(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_download');
-		// Delivery audit rows are opt-in; these cases assert one is written, so the
-		// policy has to ask for it. The default-off behaviour is covered separately.
-		$config->setLogDelivery(true);
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$user->method('getEMailAddress')->willReturn('alice@example.com');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(7);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		// The clean original is never modified - only a temp copy is rendered ...
-		$file->expects($this->never())->method('putContent');
+		$file = $this->markedFile('application/pdf');
 		$this->pdfWatermarker->expects($this->once())->method('apply');
-		// ... and every download is audited.
-		$this->logMapper->expects($this->once())->method('insertLog');
 
 		$tmpPath = $this->service->watermarkForDownload($file);
 
 		$this->assertNotNull($tmpPath);
-		$this->assertStringContainsString('doc.pdf', $tmpPath);
-
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
+		$this->cleanup($tmpPath);
 	}
 
-	/**
-	 * Delivery audit is **off unless the policy asks for it**, and the render happens
-	 * either way - the switch governs the record, never the watermark.
-	 *
-	 * This is the growth control: `on_download` and `on_share` render per fetch, so they
-	 * logged per fetch, one row per watermarked member of every archive every time
-	 * anyone downloaded it, with nothing pruning the table.
-	 */
-	public function testDeliveryIsNotAuditedUnlessThePolicyAsksForIt(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_download');
-		// Not set: the default is what is under test.
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(7);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$this->pdfWatermarker->expects($this->once())->method('apply');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$tmpPath = $this->service->watermarkForDownload($file);
-
-		$this->assertNotNull($tmpPath, 'the download was not watermarked');
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
-	}
-
-	/**
-	 * The in-place rows are **not** covered by that switch, and must not be.
-	 *
-	 * They are not history an admin may decline to keep: `findWatermarkedFileIds()` reads
-	 * them to draw the Files-list badge and to stop a second burn on a file that already
-	 * carries one. Extending the switch to cover them would silently un-badge every file
-	 * and let watermarks stack.
-	 */
-	public function testInPlaceIsAuditedEvenWithDeliveryAuditOff(): void {
-		[$file, $config] = $this->inPlaceFixture();
-		$this->assertFalse($config->getLogDelivery(), 'the fixture is meant to have it off');
-
-		$this->imageWatermarker->method('apply')
-			->willReturnCallback(static function (string $src, string $dest): void {
-				file_put_contents($dest, 'watermarked-bytes');
-			});
-
+	public function testUnmarkRemovesTheMarkAndRecordsIt(): void {
+		$this->markMapper->expects($this->once())->method('unmark')->with(42)->willReturn(true);
+		$this->userSession->method('getUser')->willReturn($this->user('alice'));
 		$this->logMapper->expects($this->once())
 			->method('insertLog')
-			->with('alice', 11, '/alice/files/photo.png', 'on_upload', null)
-			->willReturn(new WatermarkLog());
+			->with('alice', 42, '/alice/files/report.pdf', WatermarkService::TRIGGER_UNMARKED, null);
 
-		$this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config));
+		$this->assertTrue($this->service->unmark($this->file()));
 	}
 
-	public function testWatermarkForDownloadDegradesToNullOnRenderFailure(): void {
-		// on_download applies and the file is a watermark candidate, but the renderer
-		// itself fails - the download must degrade to null (and log) rather than throw.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_download');
+	public function testUnmarkingAnUnmarkedFileRecordsNothing(): void {
+		$this->markMapper->method('unmark')->willReturn(false);
+		$this->logMapper->expects($this->never())->method('insertLog');
 
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('doc.pdf');
-		$file->method('getId')->willReturn(3);
-		$file->method('getPath')->willReturn('/alice/files/doc.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		// The renderer blows up (e.g. an unparseable PDF).
-		$this->pdfWatermarker->method('apply')
-			->willThrowException(new \RuntimeException('Cannot process PDF'));
-
-		$this->logger->expects($this->once())
-			->method('error')
-			->with($this->stringContains('failed to watermark on delivery'), $this->anything());
-
-		$this->assertNull($this->service->watermarkForDownload($file));
+		$this->assertFalse($this->service->unmark($this->file()));
 	}
 
-	public function testWatermarkForDownloadExcludedMimeIsNotApplicable(): void {
-		// on_download applies but a mime whitelist excludes this file: it is "not
-		// applicable" (served untouched, no error logged) - not a watermark failure.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_download');
-		$config->setMimeTypes('application/pdf');
+	// -----------------------------------------------------------------------
+	// What a fetch produces
+	// -----------------------------------------------------------------------
 
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->configMapper->method('findGlobal')->willReturn($config);
+	public function testAnUnmarkedFileIsNotADeliveryCandidate(): void {
+		$this->markMapper->method('isMarked')->willReturn(false);
 
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/jpeg');
+		$this->assertFalse($this->service->isDeliveryCandidate($this->file()));
+		$this->assertNull($this->service->watermarkForDownload($this->file()));
+	}
 
-		$this->logger->expects($this->never())->method('error');
-		$this->pdfWatermarker->expects($this->never())->method('apply');
+	public function testAnUnsupportedTypeIsNeverADeliveryCandidate(): void {
+		// Not even asked: the type check comes first, and a text file has no watermark to
+		// carry however it got marked.
+		$this->markMapper->expects($this->never())->method('isMarked');
+
+		$this->assertFalse($this->service->isDeliveryCandidate($this->file('text/plain')));
+	}
+
+	public function testAMarkedPdfIsRenderedThroughThePdfWatermarker(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->markedFile('application/pdf');
+
+		$this->pdfWatermarker->expects($this->once())->method('apply');
 		$this->imageWatermarker->expects($this->never())->method('apply');
-
-		$this->assertNull($this->service->watermarkForDownload($file));
-		// ... and it is reported as not-applicable, so the interceptor won't deny it.
-		$this->assertNull($this->service->deliveryTrigger($file));
-	}
-
-	public function testDeliveryTriggerReportsOnShareForRecipientButNotOwner(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_share');
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findGlobal')->willReturn($config);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getOwner')->willReturn($alice);
-		// Received-share mount → recipient access, so on_share applies.
-		$file->method('getStorage')->willReturn($this->storage(true));
-
-		$bob = $this->createMock(IUser::class);
-		$bob->method('getUID')->willReturn('bob');
-		$this->userSession->method('getUser')->willReturn($bob);
-		$this->assertSame('on_share', $this->service->deliveryTrigger($file));
-	}
-
-	public function testDeliveryTriggerIsNullForOwnerUnderOnShare(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_share');
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($alice);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getOwner')->willReturn($alice);
-		$file->method('getStorage')->willReturn($this->storage(false));
-
-		// Owner reading own file → not applicable, so the interceptor never denies.
-		$this->assertNull($this->service->deliveryTrigger($file));
-	}
-
-	public function testWatermarkForDownloadWatermarksPublicLinkVisitorWhenOnShare(): void {
-		// A public link is served off the *owner's* own storage (public.php/dav resolves
-		// the node through the owner's user folder), so the shared-storage test says
-		// "owner access". The public interceptor passes $publicContext = true, which is
-		// what keeps the anonymous visitor from receiving the clean original.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_share');
-		// Delivery audit rows are opt-in; these cases assert one is written, so the
-		// policy has to ask for it. The default-off behaviour is covered separately.
-		$config->setLogDelivery(true);
-
-		// Anonymous visitor: no session user at all.
-		$this->userSession->method('getUser')->willReturn(null);
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('report.pdf');
-		$file->method('getId')->willReturn(7);
-		$file->method('getPath')->willReturn('/alice/files/report.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-		$file->method('getOwner')->willReturn($alice);
-		// Not a shared mount - the giveaway that the storage test alone is insufficient.
-		$file->method('getStorage')->willReturn($this->storage(false));
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-		$file->expects($this->never())->method('putContent');
-		$this->pdfWatermarker->expects($this->once())->method('apply');
-		$this->logMapper->expects($this->once())->method('insertLog');
-
-		$this->assertSame('on_share', $this->service->deliveryTrigger($file, true));
-
-		$tmpPath = $this->service->watermarkForDownload($file, true);
-
-		$this->assertNotNull($tmpPath);
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
-	}
-
-	public function testIsShareAccessTreatsAnonymousRequestAsShareAccess(): void {
-		// Callers with no context flag to pass (public preview requests) rely on the
-		// anonymous signal: no session user can only mean a public-link visitor.
-		$this->userSession->method('getUser')->willReturn(null);
-
-		$file = $this->createMock(File::class);
-		$file->method('getStorage')->willReturn($this->storage(false));
-
-		$this->assertTrue($this->service->isShareAccess($file));
-	}
-
-	public function testIsShareAccessIsFalseForOwnerOnOwnStorage(): void {
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($alice);
-
-		$file = $this->createMock(File::class);
-		$file->method('getStorage')->willReturn($this->storage(false));
-
-		$this->assertFalse($this->service->isShareAccess($file));
-	}
-
-	public function testWatermarkForDownloadWatermarksSharedAccessWhenOnShare(): void {
-		// Owner 'alice' has an on_share policy; recipient 'bob' fetches the shared file.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_share');
-		// Delivery audit rows are opt-in; these cases assert one is written, so the
-		// policy has to ask for it. The default-off behaviour is covered separately.
-		$config->setLogDelivery(true);
-
-		$bob = $this->createMock(IUser::class);
-		$bob->method('getUID')->willReturn('bob');
-		$bob->method('getDisplayName')->willReturn('Bob');
-		$bob->method('getEMailAddress')->willReturn('bob@example.com');
-		$this->userSession->method('getUser')->willReturn($bob);
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		// The owner's policy governs the file, so we resolve alice's config, not bob's.
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getName')->willReturn('report.pdf');
-		$file->method('getId')->willReturn(5);
-		$file->method('getPath')->willReturn('/alice/files/report.pdf');
-		$file->method('getContent')->willReturn('%PDF-fake');
-		$file->method('getOwner')->willReturn($alice);
-		$file->method('getStorage')->willReturn($this->storage(true));
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-		$file->expects($this->never())->method('putContent');
-		$this->pdfWatermarker->expects($this->once())->method('apply');
-		$this->logMapper->expects($this->once())->method('insertLog');
 
 		$tmpPath = $this->service->watermarkForDownload($file);
 
 		$this->assertNotNull($tmpPath);
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
+		$this->cleanup($tmpPath);
 	}
 
-	public function testWatermarkForDownloadWatermarksImageForSharedRecipient(): void {
-		// Images go through the same on_share delivery gate, but render via the image
-		// watermarker (GD/Imagick) - which, unlike the PDF path, doesn't fail on
-		// real-world files, so a recipient reliably gets a watermarked image.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_share');
-		// Delivery audit rows are opt-in; these cases assert one is written, so the
-		// policy has to ask for it. The default-off behaviour is covered separately.
-		$config->setLogDelivery(true);
+	public function testAMarkedImageIsRenderedThroughTheImageWatermarker(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->markedFile('image/png');
 
-		$bob = $this->createMock(IUser::class);
-		$bob->method('getUID')->willReturn('bob');
-		$bob->method('getDisplayName')->willReturn('Bob');
-		$this->userSession->method('getUser')->willReturn($bob);
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('photo.png');
-		$file->method('getId')->willReturn(8);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-		$file->method('getContent')->willReturn('img-bytes');
-		$file->method('getOwner')->willReturn($alice);
-		$file->method('getStorage')->willReturn($this->storage(true));
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-		// Image path, never the PDF path.
 		$this->imageWatermarker->expects($this->once())->method('apply');
 		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$this->logMapper->expects($this->once())->method('insertLog');
 
 		$tmpPath = $this->service->watermarkForDownload($file);
 
 		$this->assertNotNull($tmpPath);
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
-	}
-
-	public function testWatermarkForDownloadSkipsOwnerAccessWhenOnShare(): void {
-		// on_share must NOT watermark when the owner reads their own file - only
-		// when a non-owner (share recipient / public visitor) fetches it.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_share');
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($alice);
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getOwner')->willReturn($alice);
-		// Owner's own copy lives on a normal (non-shared) storage.
-		$file->method('getStorage')->willReturn($this->storage(false));
-
-		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$this->imageWatermarker->expects($this->never())->method('apply');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->assertNull($this->service->watermarkForDownload($file));
-	}
-
-	public function testWatermarkForDownloadSkipsSharedAccessWhenOnDemand(): void {
-		// A shared file whose owner policy is on_demand is not watermarked on delivery.
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_demand');
-
-		$bob = $this->createMock(IUser::class);
-		$bob->method('getUID')->willReturn('bob');
-		$this->userSession->method('getUser')->willReturn($bob);
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getOwner')->willReturn($alice);
-
-		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->assertNull($this->service->watermarkForDownload($file));
-	}
-
-	public function testWatermarkInPlaceReplacesFileContent(): void {
-		$config = new WatermarkConfig();
-		$config->setType('image');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('photo.png');
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-		$file->method('getContent')->willReturn('original-bytes');
-
-		// Not yet watermarked, so the in-place burn proceeds.
-		$this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
-
-		// The renderer writes the watermarked output to the destination temp path.
-		$this->imageWatermarker->method('apply')
-			->willReturnCallback(function (string $src, string $dest): void {
-				file_put_contents($dest, 'watermarked-bytes');
-			});
-
-		// In-place application must push the watermarked bytes back into the file.
-		$file->expects($this->once())->method('putContent')->with('watermarked-bytes');
-
-		$this->assertTrue($this->service->watermarkInPlace($file, 'on_demand', $config));
-	}
-
-	public function testWatermarkInPlacePreservesOriginalBeforeOverwriting(): void {
-		// The burn is irreversible, so the pre-watermark bytes must be handed to the
-		// store - and it has to happen while getContent() still returns the clean file.
-		$config = new WatermarkConfig();
-		$config->setType('image');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('photo.png');
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-		$file->method('getContent')->willReturn('original-bytes');
-		$this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
-		$this->imageWatermarker->method('apply')
-			->willReturnCallback(function (string $src, string $dest): void {
-				file_put_contents($dest, 'watermarked-bytes');
-			});
-
-		$order = [];
-		$this->originalStore->expects($this->once())
-			->method('store')
-			->with($file, 'original-bytes')
-			->willReturnCallback(function () use (&$order): bool {
-				$order[] = 'store';
-				return true;
-			});
-		$file->expects($this->once())
-			->method('putContent')
-			->willReturnCallback(function () use (&$order): void {
-				$order[] = 'putContent';
-			});
-
-		$this->assertTrue($this->service->watermarkInPlace($file, 'on_demand', $config));
-		$this->assertSame(['store', 'putContent'], $order, 'original must be preserved before the overwrite');
+		$this->cleanup($tmpPath);
 	}
 
 	/**
-	 * @return array{0: File&MockObject, 1: WatermarkConfig}
-	 */
-	private function inPlaceFixture(): array {
-		$config = new WatermarkConfig();
-		$config->setType('image');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_upload');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('photo.png');
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-		$file->method('getContent')->willReturn('original-bytes');
-		$this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
-
-		return [$file, $config];
-	}
-
-	public function testWatermarkInPlaceDoesNotLogWhenTheWriteFails(): void {
-		// A phantom audit row is worse than a missing one: isAlreadyWatermarked() reads
-		// this log, so a row for content that was never written makes every retry skip
-		// the file for good.
-		[$file, $config] = $this->inPlaceFixture();
-
-		$rendered = null;
-		$this->imageWatermarker->method('apply')
-			->willReturnCallback(function (string $src, string $dest) use (&$rendered): void {
-				file_put_contents($dest, 'watermarked-bytes');
-				$rendered = $dest;
-			});
-
-		$file->method('putContent')->willThrowException(new \RuntimeException('is locked'));
-
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->expectException(\RuntimeException::class);
-		try {
-			$this->service->watermarkInPlace($file, 'on_upload', $config);
-		} finally {
-			// ...and the plaintext render must not be left behind in the temp dir.
-			$this->assertNotNull($rendered);
-			$this->assertFileDoesNotExist($rendered);
-			$this->assertDirectoryDoesNotExist(dirname($rendered));
-		}
-	}
-
-	public function testWatermarkInPlaceLogsAfterTheWriteLands(): void {
-		[$file, $config] = $this->inPlaceFixture();
-
-		$this->imageWatermarker->method('apply')
-			->willReturnCallback(function (string $src, string $dest): void {
-				file_put_contents($dest, 'watermarked-bytes');
-			});
-
-		$order = [];
-		$file->method('putContent')->willReturnCallback(function () use (&$order): void {
-			$order[] = 'putContent';
-		});
-		$this->logMapper->expects($this->once())
-			->method('insertLog')
-			->with('alice', 11, '/alice/files/photo.png', 'on_upload', null)
-			->willReturnCallback(function () use (&$order) {
-				$order[] = 'insertLog';
-				return new WatermarkLog();
-			});
-
-		$this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config));
-		$this->assertSame(['putContent', 'insertLog'], $order, 'the audit row must follow the write');
-	}
-
-	public function testWatermarkInPlaceAttributesToAnExplicitActorWithoutASession(): void {
-		// How the background job runs: no session, so the uploader is passed in. Without
-		// it the watermark would read "Unknown" and the audit row "system".
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_upload');
-
-		$this->userSession->method('getUser')->willReturn(null);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$actor = $this->createMock(IUser::class);
-		$actor->method('getUID')->willReturn('bob');
-		$actor->method('getDisplayName')->willReturn('Bob');
-		$actor->method('getEMailAddress')->willReturn('bob@example.com');
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('photo.png');
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/bob/files/photo.png');
-		$file->method('getContent')->willReturn('original-bytes');
-		$this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
-
-		$placeholders = null;
-		$this->imageWatermarker->method('apply')
-			->willReturnCallback(function (string $src, string $dest, $cfg, array $ph) use (&$placeholders): void {
-				file_put_contents($dest, 'watermarked-bytes');
-				$placeholders = $ph;
-			});
-
-		$this->logMapper->expects($this->once())
-			->method('insertLog')
-			->with('bob', 11, '/bob/files/photo.png', 'on_upload', null);
-
-		$this->assertTrue($this->service->watermarkInPlace($file, 'on_upload', $config, $actor));
-		$this->assertSame('bob', $placeholders['username'], 'The account name is the uid');
-		$this->assertSame('Bob', $placeholders['displayname']);
-		$this->assertSame('bob@example.com', $placeholders['email']);
-	}
-
-	public function testAPreservedOriginalIsNeverWatermarkedOnDelivery(): void {
-		// The copy exists so the watermark can be taken off again. Serving it stamped
-		// would hand back a "clean original" that is nothing of the sort.
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('application/pdf');
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/.files_watermark/originals/7');
-		$this->originalStore->method('isBackup')->with($file)->willReturn(true);
-
-		$this->assertNull($this->service->watermarkForDownload($file));
-		$this->assertNull($this->service->deliveryTrigger($file));
-	}
-
-	public function testAPreservedOriginalIsNeverWatermarkedInPlace(): void {
-		// Burning a watermark into the copy would store a copy of *that*, and the copies
-		// are supported mime types - nothing downstream would stop the recursion.
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/.files_watermark/originals/7');
-		$this->originalStore->method('isBackup')->with($file)->willReturn(true);
-
-		$file->expects($this->never())->method('putContent');
-		$this->originalStore->expects($this->never())->method('store');
-
-		$this->assertFalse($this->service->watermarkInPlace($file, 'on_demand'));
-	}
-
-	/**
-	 * The overwrite hole, closed: a user's write over watermarked content is recorded so
-	 * the guard, the badge and the preserved original all stop describing bytes that are
-	 * gone.
-	 */
-	public function testAUserWriteOverWatermarkedContentIsRecordedAndOrphansTheBackup(): void {
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/report.pdf');
-
-		$this->logMapper->method('findWatermarkedFileIds')->with([11])->willReturn([11]);
-
-		// The copy belongs to content that no longer exists. Left in place, "remove
-		// watermark" would restore the *previous* file over the one just uploaded.
-		$this->originalStore->expects($this->once())->method('discard')->with($file);
-
-		$this->logMapper->expects($this->once())
-			->method('insertLog')
-			->with('alice', 11, '/alice/files/report.pdf', 'replaced', null);
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$this->service->noteContentReplaced($file);
-	}
-
-	public function testAWriteToAnUnwatermarkedFileRecordsNothing(): void {
-		// A first upload, or content already superseded: there is nothing standing to
-		// replace, and a row here would cancel a watermark that was never applied.
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$this->logMapper->method('findWatermarkedFileIds')->willReturn([]);
-
-		$this->originalStore->expects($this->never())->method('discard');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->service->noteContentReplaced($file);
-	}
-
-	public function testRemoveWatermarkRestoresPreservedOriginal(): void {
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-
-		$this->originalStore->method('read')->with($file)->willReturn('original-bytes');
-		$file->expects($this->once())->method('putContent')->with('original-bytes');
-		// Discarded only after the restore lands, and recorded so the file stops
-		// counting as watermarked.
-		$this->originalStore->expects($this->once())->method('discard')->with($file);
-		$this->logMapper->expects($this->once())
-			->method('insertLog')
-			->with('alice', 11, '/alice/files/photo.png', 'removed', null);
-
-		$this->assertTrue($this->service->removeWatermark($file));
-	}
-
-	public function testRemoveWatermarkReportsWhenNoOriginalPreserved(): void {
-		// A file watermarked before backups existed: nothing to restore, and the file
-		// must be left exactly as it is rather than half-processed.
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-
-		$this->originalStore->method('read')->with($file)->willReturn(null);
-		$file->expects($this->never())->method('putContent');
-		$this->originalStore->expects($this->never())->method('discard');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->assertFalse($this->service->removeWatermark($file));
-	}
-
-	public function testRemoveWatermarkKeepsBackupWhenRestoreFails(): void {
-		// If the write throws, the backup is the only copy of the original left - it
-		// must survive so the user can try again.
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-
-		$this->originalStore->method('read')->with($file)->willReturn('original-bytes');
-		$file->method('putContent')->willThrowException(new \RuntimeException('storage full'));
-		$this->originalStore->expects($this->never())->method('discard');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->expectException(\RuntimeException::class);
-		$this->service->removeWatermark($file);
-	}
-
-	public function testWatermarkInPlaceSkipsAlreadyWatermarkedFile(): void {
-		$file = $this->createMock(File::class);
-		$file->method('getId')->willReturn(11);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-
-		// A prior watermark is on record for this file id.
-		$this->logMapper->expects($this->once())
-			->method('findWatermarkedFileIds')
-			->with([11])
-			->willReturn([11]);
-
-		// Nothing is rendered, the content is never rewritten, and no new log row is added.
-		$this->imageWatermarker->expects($this->never())->method('apply');
-		$this->pdfWatermarker->expects($this->never())->method('apply');
-		$file->expects($this->never())->method('putContent');
-		$this->logMapper->expects($this->never())->method('insertLog');
-
-		$this->assertFalse($this->service->watermarkInPlace($file, 'on_demand'));
-	}
-
-	/**
-	 * With no user to attribute the watermark to, *both* identity tokens have to fall back
-	 * to the anonymous label. Leaving `{displayname}` unhandled would render an empty
-	 * string, so a public-link download would carry a watermark with a blank where the
-	 * identity belongs - which reads as a rendering fault rather than as "nobody signed in".
+	 * **The one behaviour this whole rework exists for.**
 	 *
-	 * @dataProvider anonymousTriggerProvider
+	 * The watermark names whoever is fetching the file, so two people downloading the same
+	 * marked file get two different documents. A burned-in watermark could only ever name
+	 * the person who triggered it - for a shared file, the person who uploaded it rather
+	 * than the person who walked out with it.
 	 */
-	public function testBothIdentityTokensFallBackWhenThereIsNoUser(string $trigger, string $expected): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{displayname} / {username}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger($trigger);
+	public function testTheWatermarkNamesWhoeverIsFetchingTheFile(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->markedFile('application/pdf');
 
+		$names = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$names): void {
+				$names[] = $placeholders['displayname'];
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->userSession->method('getUser')->willReturnOnConsecutiveCalls(
+			$this->user('alice', 'Alice Smith'),
+			$this->user('bob', 'Bob Jones'),
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame(['Alice Smith', 'Bob Jones'], $names);
+	}
+
+	/**
+	 * An anonymous fetch is a public link, and a public link has exactly one person
+	 * accountable for it: whoever published the file.
+	 *
+	 * Naming the mechanism instead - the watermark used to read "Public link" - is no use
+	 * to anybody holding a leaked document.
+	 */
+	public function testAnAnonymousFetchIsWatermarkedWithTheFileOwner(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
 		$this->userSession->method('getUser')->willReturn(null);
 
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('report.png');
-		$file->method('getId')->willReturn(9);
-		$file->method('getPath')->willReturn('/alice/files/report.png');
-		$file->method('getContent')->willReturn('fake');
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$file = $this->file('application/pdf', 42, 'ORIGINAL', 1024, $this->user('alice', 'Alice Smith'));
 
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
 
-		$captured = null;
-		$this->imageWatermarker->expects($this->once())
-			->method('apply')
-			->with(
-				$this->anything(),
-				$this->anything(),
-				$this->anything(),
-				$this->callback(function (array $placeholders) use (&$captured): bool {
-					$captured = $placeholders;
-					return true;
-				}),
-			);
+		$this->cleanup($this->service->watermarkForDownload($file));
 
-		$tmpPath = $this->service->watermarkFile($file, $trigger, $config);
-
-		$this->assertSame($expected, $captured['username']);
-		$this->assertSame($expected, $captured['displayname']);
-
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
-	}
-
-	/** @return array<string, array{string, string}> */
-	public static function anonymousTriggerProvider(): array {
-		return [
-			'public link' => ['on_share', 'Public link'],
-			'no session' => ['on_demand', 'Unknown'],
-		];
-	}
-
-	public function testTextWatermarkPassesAllPlaceholdersToRenderer(): void {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{displayname} {username} {email} {date} {datetime} {filename}');
-		$config->setOpacity(80);
-		$config->setFontSize(24);
-		$config->setColor('#cccccc');
-		$config->setRotation(45);
-		$config->setTrigger('on_demand');
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$user->method('getEMailAddress')->willReturn('alice@example.com');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('report.png');
-		$file->method('getId')->willReturn(9);
-		$file->method('getPath')->willReturn('/alice/files/report.png');
-		$file->method('getContent')->willReturn('fake');
-
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([]);
-
-		$captured = null;
-		$this->imageWatermarker->expects($this->once())
-			->method('apply')
-			->with(
-				$this->anything(),
-				$this->anything(),
-				$this->anything(),
-				$this->callback(function (array $placeholders) use (&$captured): bool {
-					$captured = $placeholders;
-					return true;
-				}),
-			);
-
-		$tmpPath = $this->service->watermarkFile($file, 'on_demand', $config);
-
-		// The two identity tokens are deliberately different values here: `{username}` is
-		// the account name (uid) and `{displayname}` the human-readable one. A fixture
-		// where they matched would let either resolution pass.
+		$this->assertSame('Alice Smith', $captured['displayname']);
 		$this->assertSame('alice', $captured['username']);
-		$this->assertSame('Alice', $captured['displayname']);
-		$this->assertSame('alice@example.com', $captured['email']);
+	}
+
+	/** With no session *and* no resolvable owner there is no honest name to draw. */
+	public function testAFetchWithNoIdentityAtAllFallsBackToUnknown(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn(null);
+		$file = $this->markedFile('application/pdf');
+
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame('Unknown', $captured['displayname']);
+		$this->assertSame('Unknown', $captured['username']);
+	}
+
+	public function testEveryPlaceholderReachesTheRenderer(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn(
+			$this->user('asmith3', 'Alice Smith', 'alice@example.org'),
+		);
+		$file = $this->markedFile('application/pdf');
+
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		// The account name and the display name are different identities and the difference
+		// matters in a watermark: one is what an admin greps for, the other is what a human
+		// recognises.
+		$this->assertSame('asmith3', $captured['username']);
+		$this->assertSame('Alice Smith', $captured['displayname']);
+		$this->assertSame('alice@example.org', $captured['email']);
+		$this->assertSame('report.pdf', $captured['filename']);
 		$this->assertSame(date('Y-m-d'), $captured['date']);
-		$this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $captured['datetime']);
-		$this->assertSame('report.png', $captured['filename']);
-
-		if (file_exists($tmpPath)) {
-			unlink($tmpPath);
-			@rmdir(dirname($tmpPath));
-		}
 	}
 
 	/**
-	 * A node on either a shared or an own-home storage, owned by $ownerUid.
+	 * One bad byte in a display name used to cost the whole watermark its Arabic shaping,
+	 * silently, in a perfectly valid output file. It is dropped, and the *field* is named
+	 * in the log - by the time the renderer sees the value it is one substring of a
+	 * resolved template and can no longer say which field to fix.
 	 */
-	private function nodeOnStorage(bool $shared, string $ownerUid = 'admin'): \OCP\Files\FileInfo&MockObject {
-		$owner = $this->createMock(IUser::class);
-		$owner->method('getUID')->willReturn($ownerUid);
+	public function testInvalidUtf8InAPlaceholderIsRepairedAndTheFieldNamed(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn($this->user('alice', "Ahmed\xC3"));
+		$file = $this->markedFile('application/pdf');
 
-		$node = $this->createMock(\OCP\Files\FileInfo::class);
-		$node->method('getOwner')->willReturn($owner);
-		$node->method('getStorage')->willReturn($this->storage($shared));
-		return $node;
-	}
-
-	private function shareConfig(): WatermarkConfig {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTrigger('on_share');
-		return $config;
-	}
-
-	public function testDeliveryTriggerForReportsOnShareForAReceivedShare(): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
-
-		$bob = $this->createMock(IUser::class);
-		$bob->method('getUID')->willReturn('bob');
-		$this->userSession->method('getUser')->willReturn($bob);
-
-		$this->assertSame('on_share', $this->service->deliveryTriggerFor($this->nodeOnStorage(true)));
-	}
-
-	/**
-	 * The regression behind the ZIP leak: a *container* cannot answer for its members.
-	 *
-	 * A received single-file share is mounted inside the recipient's own home, so the
-	 * folder holding it is not an ISharedStorage and reports "owner access" - while the
-	 * member itself is a share that must be watermarked. Gating an archive on the folder
-	 * therefore shipped clean originals; ZipInterceptorPlugin now gates on
-	 * hasDeliveryTriggerConfigured() and judges each member with deliveryTriggerFor().
-	 */
-	public function testDeliveryTriggerForReportsNothingForTheRecipientsOwnHomeFolder(): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
-
-		$bob = $this->createMock(IUser::class);
-		$bob->method('getUID')->willReturn('bob');
-		$this->userSession->method('getUser')->willReturn($bob);
-
-		// The home folder itself: not a shared mount.
-		$home = $this->nodeOnStorage(false, 'bob');
-
-		$this->assertNull(
-			$this->service->deliveryTriggerFor($home),
-			'the container must not report on_share - only members can answer',
-		);
-		// ...while a member inside it does, which is what the archive path must ask.
-		$this->assertSame('on_share', $this->service->deliveryTriggerFor($this->nodeOnStorage(true)));
-	}
-
-	/**
-	 * The hole Team folder support closes: `on_share` used to watermark nothing in one.
-	 *
-	 * A Team folder mount is not an `ISharedStorage` and every member reading it is a real
-	 * session user, so both of the signals `isShareAccess()` had reported owner access -
-	 * on the one storage shape that is multi-user by construction. The policy said
-	 * "watermark when someone other than the owner reads this" and the whole team was
-	 * exempt from it.
-	 */
-	public function testATeamFolderReadIsShareAccessEvenForASessionUserOnAnUnsharedMount(): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
-
-		$member = $this->createMock(IUser::class);
-		$member->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($member);
-
-		// Not a shared storage, and the reader is signed in: without the Team folder
-		// signal this node answers null.
-		$node = $this->nodeOnStorage(false, 'alice');
-		$this->teamFolder->method('contains')->with($node)->willReturn(true);
-
-		$this->assertSame('on_share', $this->service->deliveryTriggerFor($node));
-	}
-
-	/**
-	 * Every member, the uploader included.
-	 *
-	 * A Team folder has no owner to exempt - nothing records who put a file there - so
-	 * "everyone but the author" is not a rule this app can implement honestly. Reading
-	 * one's own upload is watermarked, and that visible cost is the deliberate side to
-	 * err on. Pinned because the tempting "fix" is to exempt whoever the mount happens to
-	 * resolve an owner to, which silently reopens the hole above for that user.
-	 */
-	public function testATeamFolderIsShareAccessForTheMemberItReportsAsOwnerToo(): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($alice);
-
-		// getOwner() says alice, the session says alice, the storage is not shared.
-		$node = $this->nodeOnStorage(false, 'alice');
-		$this->teamFolder->method('contains')->willReturn(true);
-
-		$this->assertSame('on_share', $this->service->deliveryTriggerFor($node));
-	}
-
-	public function testAnOrdinaryOwnedFileIsStillNotShareAccess(): void {
-		// The other direction, so the Team folder signal cannot quietly become "always
-		// watermark": with contains() false the owner reading their own file is untouched.
-		$this->configMapper->method('findGlobal')->willReturn($this->shareConfig());
-
-		$alice = $this->createMock(IUser::class);
-		$alice->method('getUID')->willReturn('alice');
-		$this->userSession->method('getUser')->willReturn($alice);
-
-		$this->teamFolder->method('contains')->willReturn(false);
-
-		$this->assertNull($this->service->deliveryTriggerFor($this->nodeOnStorage(false, 'alice')));
-	}
-
-	public function testHasDeliveryTriggerConfiguredDelegatesToTheMapper(): void {
-		$this->configMapper->expects($this->once())->method('hasDeliveryTrigger')->willReturn(true);
-		$this->assertTrue($this->service->hasDeliveryTriggerConfigured());
-	}
-
-	public function testResolveConfigIsMemoisedPerRequest(): void {
-		// A folder download resolves the policy once per member; without the memo that is
-		// a query a file.
-		$global = new WatermarkConfig();
-		$global->setTrigger('on_share');
-
-		$this->configMapper->expects($this->once())->method('findGlobal')->willReturn($global);
-
-		$first = $this->service->resolveConfig();
-		$second = $this->service->resolveConfig();
-
-		$this->assertSame($first, $second);
-	}
-
-	/**
-	 * The default is memoised too, so an install with no policy saved does not re-query
-	 * per member - the miss is the case a folder download hits hardest.
-	 */
-	public function testTheDefaultConfigIsMemoisedToo(): void {
-		$this->configMapper->expects($this->once())
-			->method('findGlobal')
-			->willThrowException(new DoesNotExistException(''));
-
-		$this->assertSame($this->service->resolveConfig(), $this->service->resolveConfig());
-	}
-
-	/**
-	 * A PNG that *declares* 400 megapixels in 70 bytes - a decompression bomb in miniature.
-	 *
-	 * The whole point of the pixel ceiling is that this file can exist: `apply_max_bytes`
-	 * waves it straight through, because on disk it is nothing. Only the header says how
-	 * much memory decoding it would ask for.
-	 *
-	 * Built byte by byte rather than with GD, and it has to be: a real 400 MP image cannot
-	 * live in a test suite, and generating one would allocate exactly the 1.6 GB the guard
-	 * exists to refuse. `getimagesize()` reads the IHDR and stops, which is why this works
-	 * and why the guard is correct - it never reaches the (absent, invalid) image data.
-	 */
-	private function pixelBomb(int $width = 20000, int $height = 20000): string {
-		$ihdr = 'IHDR'
-			. pack('N', $width)
-			. pack('N', $height)
-			. "\x08\x02\x00\x00\x00"; // 8-bit truecolour, no interlace
-
-		return "\x89PNG\r\n\x1a\n"
-			. pack('N', 13) . $ihdr . pack('N', crc32($ihdr));
-	}
-
-	/** A policy that watermarks images on demand. */
-	private function imageConfig(): WatermarkConfig {
-		$config = new WatermarkConfig();
-		$config->setType('text');
-		$config->setTextTemplate('{username}');
-		$config->setTrigger('on_demand');
-		$this->configMapper->method('findGlobal')->willReturn($config);
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn('alice');
-		$user->method('getDisplayName')->willReturn('Alice');
-		$this->userSession->method('getUser')->willReturn($user);
-
-		return $config;
-	}
-
-	/** @return File&MockObject */
-	private function imageFile(string $content): File {
-		$file = $this->createMock(File::class);
-		$file->method('getMimeType')->willReturn('image/png');
-		$file->method('getName')->willReturn('photo.png');
-		$file->method('getId')->willReturn(31);
-		$file->method('getPath')->willReturn('/alice/files/photo.png');
-		$file->method('getContent')->willReturn($content);
-		return $file;
-	}
-
-	/**
-	 * The assertion that matters is `never()` on the renderer.
-	 *
-	 * A guard that refused *after* `imagecreatefrompng()` would have made the allocation it
-	 * exists to prevent - and a real bomb takes the worker down there, so no code of ours
-	 * would run to report anything at all.
-	 */
-	public function testAnImageOverThePixelCeilingIsRefusedBeforeItIsDecoded(): void {
-		$this->imageConfig();
-		$this->imageWatermarker->expects($this->never())->method('apply');
-
-		$this->expectException(ImageTooLargeException::class);
-
-		$this->service->watermarkFile($this->imageFile($this->pixelBomb()), 'on_demand');
-	}
-
-	public function testTheRefusalReportsMegapixelsRatherThanARawCount(): void {
-		// 400000000 tells an admin nothing; "400 megapixels" is the number in the setting.
-		$this->imageConfig();
-
-		try {
-			$this->service->watermarkFile($this->imageFile($this->pixelBomb()), 'on_demand');
-			$this->fail('Expected the bomb to be refused');
-		} catch (ImageTooLargeException $e) {
-			// Both halves, and matched with their units attached - "400" alone would also
-			// be satisfied by the string "40", which is the other number in this message.
-			$this->assertStringContainsString('400 megapixels', $e->getMessage());
-			$this->assertStringContainsString('limit is 40', $e->getMessage());
-		}
-	}
-
-	public function testAnImageUnderTheCeilingStillRenders(): void {
-		// The other direction, so the guard cannot quietly become "refuse every image".
-		$this->imageConfig();
-		$this->imageWatermarker->expects($this->once())->method('apply');
-
-		$this->service->watermarkFile($this->imageFile($this->pixelBomb(100, 100)), 'on_demand');
-	}
-
-	public function testTheConfiguredCeilingIsWhatApplies(): void {
-		// Not the shipped default: an admin who lowers it must see it take effect.
-		$this->imageLimits = $this->createMock(ImageLimits::class);
-		$this->imageLimits->method('maxPixels')->willReturn(1000);
-		$this->service = new WatermarkService(
-			$this->configMapper,
-			$this->logMapper,
-			$this->pdfWatermarker,
-			$this->imageWatermarker,
-			$this->rootFolder,
-			$this->userSession,
-			$this->tagObjectMapper,
-			$this->logger,
-			$this->originalStore,
-			$this->imageStore,
-			$this->teamFolder,
-			$this->imageLimits,
-			$this->l10n(),
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
 		);
 
-		$this->imageConfig();
-		$this->imageWatermarker->expects($this->never())->method('apply');
-		$this->expectException(ImageTooLargeException::class);
+		$warnings = [];
+		$this->logger->method('warning')->willReturnCallback(
+			static function (string $message, array $context = []) use (&$warnings): void {
+				$warnings[] = $context['fields'] ?? '';
+			},
+		);
 
-		// 10000 pixels - far under the shipped 40 MP, so only the configured value refuses it.
-		$this->service->watermarkFile($this->imageFile($this->pixelBomb(100, 100)), 'on_demand');
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame('Ahmed', $captured['displayname']);
+		$this->assertContains('displayname', $warnings);
 	}
 
 	/**
-	 * A header this guard cannot parse is allowed through, deliberately.
+	 * A failed render **denies the fetch**. It does not fall back to the stored file.
 	 *
-	 * `getimagesize()` returns false for corrupt files *and* for formats it does not know,
-	 * so refusing on it would turn "cannot tell" into "is a bomb" and reject files the
-	 * renderers handle today. The renderer's own failure is the honest answer for a file
-	 * that is actually broken.
+	 * `on_download` used to degrade to the original on failure, which is the one outcome a
+	 * mark cannot allow: it hands the clean bytes to precisely the reader the mark exists
+	 * to name, and does it without saying anything.
 	 */
-	public function testAnUnreadableHeaderIsNotTreatedAsABomb(): void {
-		$this->imageConfig();
-		$this->imageWatermarker->expects($this->once())->method('apply');
+	public function testAFailedRenderRefusesTheFetchRatherThanServingTheOriginal(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->markedFile('application/pdf');
+		$this->pdfWatermarker->method('apply')->willThrowException(new \RuntimeException('unparseable'));
 
-		$this->service->watermarkFile($this->imageFile('not an image at all'), 'on_demand');
+		$this->expectException(WatermarkRequiredException::class);
+		$this->service->watermarkForDownload($file);
 	}
 
 	/**
-	 * The refusal must not leave the plaintext copy of the user's file in the temp dir.
-	 * This path exists to *avoid* spending resources, so leaking a file while doing it
-	 * would be the one outcome worse than not having the guard.
+	 * A failed render must not leave a plaintext copy of the user's file in the temp dir.
+	 *
+	 * The caller only ever receives an exception, never a path it could clean up itself, so
+	 * this is the only place the working copies can be swept - and unparseable PDFs are
+	 * routine, not exotic.
 	 */
-	public function testARefusedImageLeavesNoTempCopyBehind(): void {
-		$this->imageConfig();
+	public function testAFailedRenderLeavesNoPlaintextCopyBehind(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->markedFile('application/pdf');
 
-		// The renderer never runs, so there is no path to capture from it. Compare the
-		// staging directories instead - `createTempPath()` makes one per render under
-		// `nc_watermark_`, and the refusal has to take its own back down again.
-		$staging = static fn (): array => glob(sys_get_temp_dir() . '/nc_watermark_*') ?: [];
-		$before = $staging();
+		$seen = null;
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function (string $src) use (&$seen): void {
+				$seen = $src;
+				throw new \RuntimeException('unparseable');
+			},
+		);
 
 		try {
-			$this->service->watermarkFile($this->imageFile($this->pixelBomb()), 'on_demand');
-			$this->fail('Expected the bomb to be refused');
-		} catch (ImageTooLargeException) {
+			$this->service->watermarkForDownload($file);
+		} catch (WatermarkRequiredException) {
 			// expected
 		}
 
-		$this->assertSame($before, $staging(), 'the refusal left a plaintext copy behind in the temp dir');
+		$this->assertNotNull($seen);
+		$this->assertFileDoesNotExist($seen);
+		$this->assertDirectoryDoesNotExist(dirname($seen));
+	}
+
+	/**
+	 * The pixel ceiling is checked again at render time, and that is not redundant: an
+	 * overwrite keeps the mark, so the bytes being rendered are not necessarily the bytes
+	 * that were measured when the mark was placed.
+	 */
+	public function testThePixelCeilingIsCheckedAgainstTheBytesThatActuallyArrive(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$png = (string)base64_decode(
+			'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP8//8/AzJgYkAD'
+			. 'RAsAAJUsBQXbHu4ZAAAAAElFTkSuQmCC',
+		);
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$service = $this->serviceWithPixelCeiling(1);
+		$this->imageWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+		$service->watermarkForDownload($this->file('image/png', 42, $png));
+	}
+
+	public function testTheLogoIsResolvedToARealPathForTheRenderer(): void {
+		$config = $this->config();
+		$config->setType('combined');
+		$config->setImagePath('stored-reference');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->imageStore->method('localPath')->with('stored-reference')->willReturn('/tmp/logo.png');
+		$file = $this->markedFile('application/pdf');
+
+		$seen = 'unset';
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, WatermarkConfig $config) use (&$seen): void {
+				$seen = $config->getImagePath();
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame('/tmp/logo.png', $seen);
+	}
+
+	/**
+	 * Anything the store does not recognise - a legacy hand-typed absolute path, most of
+	 * all - resolves to null and renders as text only, rather than reading whatever the web
+	 * server happens to be able to open.
+	 */
+	public function testAnUnresolvableLogoIsNeverPassedToTheRenderer(): void {
+		$config = $this->config();
+		$config->setType('combined');
+		$config->setImagePath('/etc/shadow');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->imageStore->method('localPath')->willReturn(null);
+		$file = $this->markedFile('application/pdf');
+
+		$seen = 'unset';
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, WatermarkConfig $config) use (&$seen): void {
+				$seen = $config->getImagePath();
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertNull($seen);
+	}
+
+	// -----------------------------------------------------------------------
+	// Auditing
+	// -----------------------------------------------------------------------
+
+	public function testDeliveryIsNotAuditedUnlessThePolicyAsksForIt(): void {
+		$config = $this->config();
+		$config->setLogDelivery(false);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$file = $this->markedFile('application/pdf');
+
+		// One row per fetch, forever, is what this switch exists to prevent: an archive of
+		// 200 members downloaded twice a day is 400 rows a day.
+		$this->logMapper->expects($this->never())->method('insertLog');
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+	}
+
+	public function testDeliveryIsAuditedWhenThePolicyAsksForIt(): void {
+		$config = $this->config();
+		$config->setLogDelivery(true);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->userSession->method('getUser')->willReturn($this->user('bob'));
+		$file = $this->markedFile('application/pdf');
+
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('bob', 42, '/alice/files/report.pdf', WatermarkService::TRIGGER_DELIVERED, null);
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+	}
+
+	/** Marking is one row per policy decision, not one per read, so it is never optional. */
+	public function testMarkingIsAuditedEvenWithDeliveryAuditOff(): void {
+		$config = $this->config();
+		$config->setLogDelivery(false);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->markMapper->method('mark')->willReturn(true);
+
+		$this->logMapper->expects($this->once())->method('insertLog');
+
+		$this->service->mark($this->file(), WatermarkService::TRIGGER_ON_DEMAND, $this->user('alice'));
+	}
+
+	// -----------------------------------------------------------------------
+	// Policy resolution
+	// -----------------------------------------------------------------------
+
+	public function testResolveConfigReturnsTheGlobalPolicy(): void {
+		$config = $this->config(WatermarkService::TRIGGER_ON_UPLOAD);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		$this->assertSame($config, $this->service->resolveConfig());
+	}
+
+	public function testResolveConfigFallsBackToTheBuiltInDefault(): void {
+		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException('none'));
+
+		$config = $this->service->resolveConfig();
+
+		$this->assertSame(WatermarkService::TRIGGER_ON_DEMAND, $config->getTrigger());
+		$this->assertSame('{displayname} - {date}', $config->getTextTemplate());
+	}
+
+	public function testResolveConfigIsMemoisedPerRequest(): void {
+		$this->configMapper->expects($this->once())->method('findGlobal')->willReturn($this->config());
+
+		$this->service->resolveConfig();
+		$this->service->resolveConfig();
+	}
+
+	public function testTheDefaultConfigIsMemoisedToo(): void {
+		$this->configMapper->expects($this->once())
+			->method('findGlobal')
+			->willThrowException(new DoesNotExistException('none'));
+
+		$this->service->resolveConfig();
+		$this->service->resolveConfig();
+	}
+
+	/**
+	 * A trigger this version does not have resolves to nothing at all.
+	 *
+	 * An instance upgraded from a version with four triggers keeps whatever it had saved,
+	 * and the two that are gone decided *when* a watermark was produced rather than which
+	 * files carried one. Mapping such a row onto a live trigger would either mark every
+	 * upload on the instance or mark none, and picking either silently is worse than
+	 * marking nothing and saying so.
+	 */
+	public function testAnUnrecognisedStoredTriggerResolvesToNothing(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config('on_share'));
+		$this->logger->expects($this->once())->method('warning');
+
+		$this->assertNull($this->service->effectiveTrigger());
+	}
+
+	/** @dataProvider liveTriggerProvider */
+	public function testALiveTriggerResolvesToItself(string $trigger): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config($trigger));
+
+		$this->assertSame($trigger, $this->service->effectiveTrigger());
+	}
+
+	/** @return array<string, array{string}> */
+	public static function liveTriggerProvider(): array {
+		return [
+			'on demand' => [WatermarkService::TRIGGER_ON_DEMAND],
+			'on upload' => [WatermarkService::TRIGGER_ON_UPLOAD],
+		];
+	}
+
+	// -----------------------------------------------------------------------
+	// Previews
+	// -----------------------------------------------------------------------
+
+	/**
+	 * The watermark is scaled to the preview it is drawn on.
+	 *
+	 * A 24pt mark configured for a full-size page covers a 64px thumbnail with two letters.
+	 * Scaling against a 1000px reference keeps it occupying the same fraction of the image
+	 * at every size.
+	 */
+	public function testThePreviewFontIsScaledToThePreviewSize(): void {
+		$config = $this->config();
+		$config->setFontSize(40);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		$sizes = [];
+		$this->imageWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, WatermarkConfig $config) use (&$sizes): void {
+				$sizes[] = $config->getFontSize();
+			},
+		);
+
+		$this->service->watermarkPreviewImage($this->file('image/png'), '/tmp/a', '/tmp/b', 1000);
+		$this->service->watermarkPreviewImage($this->file('image/png'), '/tmp/a', '/tmp/b', 500);
+
+		$this->assertSame([40, 20], $sizes);
+	}
+
+	/** Below the floor GD draws a blob rather than text, so the floor is where it stops. */
+	public function testThePreviewFontHasAFloor(): void {
+		$config = $this->config();
+		$config->setFontSize(24);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		$size = null;
+		$this->imageWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, WatermarkConfig $config) use (&$size): void {
+				$size = $config->getFontSize();
+			},
+		);
+
+		$this->service->watermarkPreviewImage($this->file('image/png'), '/tmp/a', '/tmp/b', 32);
+
+		$this->assertGreaterThanOrEqual(6, $size);
+	}
+
+	/**
+	 * The scaling must not survive the call. The config is the entity the mapper handed us
+	 * and it is memoised for the request, so mutating it in place would shrink the
+	 * watermark on every later render in the same request - including the download.
+	 */
+	public function testScalingAPreviewDoesNotShrinkTheRequestsOtherRenders(): void {
+		$config = $this->config();
+		$config->setFontSize(40);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->imageWatermarker->method('apply');
+
+		$this->service->watermarkPreviewImage($this->file('image/png'), '/tmp/a', '/tmp/b', 100);
+
+		$this->assertSame(40, $this->service->resolveConfig()->getFontSize());
+	}
+
+	private function cleanup(?string $tmpPath): void {
+		if ($tmpPath === null) {
+			return;
+		}
+		if (file_exists($tmpPath)) {
+			@unlink($tmpPath);
+		}
+		@rmdir(dirname($tmpPath));
 	}
 }

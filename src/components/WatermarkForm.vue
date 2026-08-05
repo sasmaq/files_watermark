@@ -175,7 +175,7 @@
 						{{ t('files_watermark', 'When to apply') }}
 					</h4>
 					<p class="wm-card__desc">
-						{{ t('files_watermark', 'Choose the moment the watermark is stamped.') }}
+						{{ t('files_watermark', 'Choose which files get watermarked. The watermark itself is drawn each time a file is downloaded or previewed, and names the person fetching it - including the owner. The stored file is never changed.') }}
 					</p>
 					<div class="wm-option-list"
 						role="radiogroup"
@@ -197,19 +197,18 @@
 					</div>
 
 					<!--
-						Only shown for the delivery triggers, because it only does anything
-						for them: they render per fetch, so recording them is what makes the
-						log grow without bound. The in-place triggers are always recorded -
-						those rows are how the Files list knows a file is watermarked - so
-						offering the switch there would promise something it cannot do.
+						Always offered now. It used to appear only under the two triggers that
+						rendered per fetch, because the other two had nothing per-download to
+						record; every marked file is fetched-and-rendered under both triggers,
+						so the switch means the same thing whichever one is picked.
 					-->
-					<div v-if="isDeliveryTrigger" class="wm-field wm-field--stacked wm-audit">
+					<div class="wm-field wm-field--stacked wm-audit">
 						<NcCheckboxRadioSwitch :model-value="!!form.logDelivery"
 							@update:model-value="form.logDelivery = $event">
 							{{ t('files_watermark', 'Record every download in the activity log') }}
 						</NcCheckboxRadioSwitch>
 						<small class="wm-help">
-							{{ t('files_watermark', 'Off by default: these triggers watermark on every fetch, so this writes one entry per file per download - including every file inside a downloaded folder. Applying or removing a watermark is always recorded.') }}
+							{{ t('files_watermark', 'Off by default: a watermarked file is rendered on every fetch, so this writes one entry per file per download - including every file inside a downloaded folder. Marking and unmarking a file is always recorded.') }}
 						</small>
 					</div>
 				</section>
@@ -500,17 +499,13 @@ const TYPE_OPTIONS = [
 	},
 ]
 
-// The triggers that render per fetch rather than burning the mark into the stored
-// bytes. Only these have anything to audit per download.
-const DELIVERY_TRIGGERS = ['on_download', 'on_share']
-
-const isDeliveryTrigger = computed(() => DELIVERY_TRIGGERS.includes(form.trigger))
-
+// The trigger chooses which files are marked, never when the watermark is drawn: every
+// marked file is watermarked on every fetch, under both. There used to be two further
+// options, `on_download` and `on_share`, from when the other two wrote the watermark into
+// the stored file - they answered a question that no longer exists.
 const TRIGGER_OPTIONS = [
-	{ value: 'on_demand', label: t('files_watermark', 'On demand'), desc: t('files_watermark', 'Only when someone picks “Apply watermark” on a file.') },
-	{ value: 'on_download', label: t('files_watermark', 'On download'), desc: t('files_watermark', 'Each time the file is downloaded.') },
-	{ value: 'on_share', label: t('files_watermark', 'On share'), desc: t('files_watermark', 'When a share recipient downloads the file. Your original stays untouched.') },
-	{ value: 'on_upload', label: t('files_watermark', 'On upload'), desc: t('files_watermark', 'Automatically when a matching file is uploaded.') },
+	{ value: 'on_demand', label: t('files_watermark', 'On demand'), desc: t('files_watermark', 'Only files someone picks “Apply watermark” on.') },
+	{ value: 'on_upload', label: t('files_watermark', 'On upload'), desc: t('files_watermark', 'Every supported file, as it is uploaded.') },
 ]
 
 // The two identity samples are deliberately unalike, because they are what tells an admin

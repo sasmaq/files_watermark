@@ -17,10 +17,14 @@ use PHPUnit\Framework\TestCase;
  * attribute that is deleted, or quietly moved to a method nobody calls, leaves no trace.
  * Every other test in the suite passes just as happily with the throttle gone.
  *
- * The numbers are asserted too, not merely their presence. `limit: 20, period: 60` is
- * chosen to sit far above what the file action can produce by hand - each apply needs its
- * own modal confirmation - and far below what a script can, and a later edit that makes it
- * 2000 has removed the bound while leaving the attribute in place to suggest otherwise.
+ * The numbers are asserted too, not merely their presence. `limit: 120, period: 60` sits
+ * far above what the file action can produce by hand - each one needs its own modal
+ * confirmation - and still bounds a script, and a later edit that makes it 20000 has
+ * removed the bound while leaving the attribute in place to suggest otherwise.
+ *
+ * The limit was 20 while these endpoints rendered a whole file inside the request. Both are
+ * a database write now, and the throttle stays because it is the only bound on marking from
+ * the UI - not because the work is expensive.
  */
 class ApiControllerRateLimitTest extends TestCase {
 
@@ -34,16 +38,16 @@ class ApiControllerRateLimitTest extends TestCase {
 		$this->assertCount(1, $attributes, "$method() must carry a UserRateLimit attribute.");
 
 		$limit = $attributes[0]->newInstance();
-		$this->assertSame(20, $limit->getLimit());
+		$this->assertSame(120, $limit->getLimit());
 		$this->assertSame(60, $limit->getPeriod());
 	}
 
 	/** @return array<string, array{string}> */
 	public static function throttledMethodProvider(): array {
 		return [
-			// Renders a whole file synchronously, inside the request.
+			// Writes one mark row, and is the only route to marking from the UI.
 			'apply' => ['applyWatermark'],
-			// Rewrites a whole file from the preserved original - the same cost class.
+			// Deletes it again - the same cost, and the same reason to bound it.
 			'remove' => ['removeWatermark'],
 		];
 	}

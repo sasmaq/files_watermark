@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Dav;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -48,8 +49,8 @@ class DownloadInterceptorPluginTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function plugin(bool $publicContext = false): DownloadInterceptorPlugin {
-		$plugin = new DownloadInterceptorPlugin($this->watermarkService, $publicContext);
+	private function plugin(): DownloadInterceptorPlugin {
+		$plugin = new DownloadInterceptorPlugin($this->watermarkService);
 		$plugin->initialize($this->server);
 		return $plugin;
 	}
@@ -86,7 +87,7 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->tree->method('getNodeForPath')->willReturn($davFile);
 		$this->watermarkService->expects($this->once())
 			->method('watermarkForDownload')
-			->with($davFile->getNode(), false)
+			->with($davFile->getNode())
 			->willReturn($tmpPath);
 
 		$response = new Response();
@@ -108,54 +109,55 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->assertSame('WATERMARKED-BYTES', stream_get_contents($body));
 	}
 
-	public function testOnShareDeniesRatherThanServingTheOriginalWhenRenderFails(): void {
+	/**
+	 * A failed render on a marked file denies the download - it does not fall back.
+	 *
+	 * This used to depend on the trigger: `on_share` denied and `on_download` served the
+	 * clean original as a best-effort. The fallback is gone, and this is the test that says
+	 * so. Serving the stored bytes when the watermark could not be drawn hands the clean
+	 * file to exactly the reader the mark exists to name, and it does it *silently*, at the
+	 * moment the app is least able to explain itself.
+	 */
+	public function testAFailedRenderDeniesRatherThanServingTheOriginal(): void {
 		$davFile = $this->davFile();
 
 		$this->tree->method('getNodeForPath')->willReturn($davFile);
-		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
-		$this->watermarkService->method('deliveryTrigger')->willReturn('on_share');
+		$this->watermarkService->method('watermarkForDownload')
+			->willThrowException(new WatermarkRequiredException('/report.pdf'));
 
 		$this->expectException(Forbidden::class);
 		$this->plugin()->httpGet($this->request(), new Response());
 	}
 
-	public function testOnDownloadFallsBackToTheOriginalWhenRenderFails(): void {
+	public function testAnUnmarkedFileIsHandedBackToCore(): void {
 		$davFile = $this->davFile();
 
 		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		// Null means "not marked", which is now the *only* thing it means.
 		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
-		$this->watermarkService->method('deliveryTrigger')->willReturn('on_download');
-
-		// Best-effort: true hands the request back to core, which serves the original.
-		$this->assertTrue($this->plugin()->httpGet($this->request(), new Response()));
-	}
-
-	public function testOwnerFetchIsUntouched(): void {
-		$davFile = $this->davFile();
-
-		$this->tree->method('getNodeForPath')->willReturn($davFile);
-		// No trigger applies for the owner, so nothing is rendered and nothing is denied.
-		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
-		$this->watermarkService->method('deliveryTrigger')->willReturn(null);
 
 		$response = new Response();
 		$this->assertTrue($this->plugin()->httpGet($this->request(), $response));
 		$this->assertNull($response->getHeader('Content-Disposition'));
 	}
 
-	public function testPublicContextForcesShareTreatment(): void {
+	/**
+	 * The owner gets the same treatment as everybody else.
+	 *
+	 * There is no exemption left to test *for*, which is the point: the watermark names
+	 * whoever is reading, and an owner reading their own file is a reader. The plugin has
+	 * no way to ask who is fetching, and that is the design rather than an omission.
+	 */
+	public function testTheOwnerIsWatermarkedLikeEveryOtherReader(): void {
 		$davFile = $this->davFile();
 		$tmpPath = $this->renderedCopy();
 
 		$this->tree->method('getNodeForPath')->willReturn($davFile);
-		// The public-link plugin instance must pass $publicContext through, otherwise the
-		// service cannot tell a link download from the owner's own fetch.
 		$this->watermarkService->expects($this->once())
 			->method('watermarkForDownload')
-			->with($this->anything(), true)
 			->willReturn($tmpPath);
 
-		$this->assertFalse($this->plugin(publicContext: true)->httpGet($this->request(), new Response()));
+		$this->assertFalse($this->plugin()->httpGet($this->request(), new Response()));
 	}
 
 	/**

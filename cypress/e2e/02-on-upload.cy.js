@@ -1,19 +1,21 @@
 /**
- * On upload - and specifically, **promptly**.
+ * On upload: every supported file is marked as it is written, and every fetch of it is
+ * watermarked from then on.
  *
- * The listener alone cannot burn the watermark (the write still holds a lock on the
- * node, so `putContent()` from there throws `LockedException`), so it enqueues a job;
- * a job is only as prompt as cron, and on a default AJAX-cron instance that reads as
- * "on-upload is broken". `UploadWatermarkPlugin` closes that gap in-request.
+ * The promptness this spec used to be built around is gone with the reason for it. The
+ * watermark was burned into the file, the listener could not write from inside the write
+ * event (the node is still locked, so `putContent()` threw), and a background job is only
+ * as prompt as cron - so a DAV plugin existed to close the gap in-request. Marking is one
+ * insert and takes no lock, so it happens in the event and there is no gap to close.
  *
- * So every assertion here is made **immediately after the upload response**, with no
- * cron run in between. A suite that ran `occ background:job:worker` first would pass
- * against the bug this covers.
+ * What has *not* changed is that the assertions are made immediately after the upload
+ * response, with no cron run in between. If marking ever regresses into something deferred,
+ * this is what notices.
  *
- * The MOVE case is not a variation on the PUT case, it is the other half of the
- * feature: chunked uploads - every large file from the web UI and the desktop client -
- * assemble with a MOVE and never PUT their final path, so a PUT-only hook skips them
- * all silently.
+ * The MOVE case is still here and is still not a variation on the PUT case: chunked uploads
+ * - every large file from the web UI and the desktop client - assemble with a MOVE and never
+ * PUT their final path. `NodeWrittenEvent` fires for both, which is precisely why the DAV
+ * plugin that had to hook each method separately is no longer needed.
  */
 
 const folder = 'e2e-on-upload'
@@ -30,41 +32,39 @@ describe('On-upload watermarking', () => {
 		cy.task('nc:delete', { user: Cypress.env('ncUser'), password: Cypress.env('ncPassword'), path: folder })
 	})
 
-	it('watermarks a plain PUT before the upload response returns', () => {
+	it('marks a plain PUT before the upload response returns', () => {
 		const file = `${folder}/put.pdf`
 
 		cy.task('fixture:pdf', { text: 'plain put' }).then((base64) => cy.wmUpload(file, base64))
 
+		cy.wmIsWatermarkedProp(file).should('eq', '1')
 		cy.wmDownload(file).then((base64) => {
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
-				expect(pdf.watermarked, 'the upload was left for cron').to.be.true
+				expect(pdf.watermarked, 'the upload was not marked').to.be.true
 			})
 		})
 	})
 
 	/**
-	 * The second upload to a path, which used to land **clean and still badged**.
+	 * **An overwrite keeps the mark, and the download follows the new bytes.**
 	 *
-	 * The double-burn guard asks whether this *file id* is watermarked, and a file id
-	 * survives having its content replaced - so the guard meant to stop a file being
-	 * stamped twice suppressed the first stamp of entirely new bytes. Two uploads was all
+	 * This is the case that broke under the burn, and it broke in the worst available
+	 * direction: the double-burn guard asked whether this *file id* was watermarked, a file
+	 * id survives having its content replaced, and so the guard that existed to stop a
+	 * second stamp suppressed the *first* stamp of entirely new bytes. Two uploads was all
 	 * it took to store an unwatermarked file under the policy that exists to prevent that.
 	 *
-	 * Three things have to hold, and the last one is the one that bites: the overwrite is
-	 * watermarked, it is watermarked **in-request** rather than left to cron, and undoing
-	 * it gives back the file that was actually uploaded second. The preserved original is
-	 * taken before the burn and never overwritten, so a stale copy of the *first* upload
-	 * meant "remove watermark" restored a file the user had already replaced.
+	 * There is nothing to get wrong now. The mark describes the file id; the watermark is
+	 * drawn from whatever bytes are there at fetch time. The assertion is that the *second*
+	 * document is what comes back watermarked - three pages, not one.
 	 */
-	it('watermarks an overwrite, and keeps the right original for it', () => {
+	it('keeps the mark across an overwrite, and watermarks the new content', () => {
 		const file = `${folder}/overwrite.pdf`
 		let second
 
 		cy.task('fixture:pdf', { pages: 1, text: 'first upload' })
 			.then((base64) => cy.wmUpload(file, base64))
-		cy.wmDownload(file).then((base64) => {
-			cy.task('probe:pdf', { base64 }).its('watermarked').should('be.true')
-		})
+		cy.wmIsWatermarkedProp(file).should('eq', '1')
 
 		// A different document at the same path.
 		cy.task('fixture:pdf', { pages: 3, text: 'second upload' }).then((base64) => {
@@ -72,22 +72,23 @@ describe('On-upload watermarking', () => {
 			cy.wmUpload(file, base64)
 		})
 
+		cy.wmIsWatermarkedProp(file).should('eq', '1')
 		cy.wmDownload(file).then((base64) => {
-			expect(base64, 'the overwrite was served back as uploaded').to.not.eq(second)
+			expect(base64, 'the overwrite was served back untouched').to.not.eq(second)
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
-				expect(pdf.watermarked, 'the second upload was stored clean').to.be.true
+				expect(pdf.watermarked, 'the overwrite lost its watermark').to.be.true
 				expect(pdf.pages, 'the wrong document was watermarked').to.eq(3)
 			})
 		})
 
+		// And the stored file is still the second upload, untouched.
 		cy.wmRemove(file)
 		cy.wmDownload(file).then((base64) => {
-			expect(base64, 'undoing the watermark restored the file the upload replaced')
-				.to.eq(second)
+			expect(base64, 'the stored file is not the one that was uploaded').to.eq(second)
 		})
 	})
 
-	it('watermarks a chunked upload, which lands as a MOVE and never a PUT', () => {
+	it('marks a chunked upload, which lands as a MOVE and never a PUT', () => {
 		const file = `${folder}/chunked.pdf`
 
 		cy.task('fixture:pdf', { pages: 3, text: 'chunked' }).then((base64) => {
@@ -103,16 +104,13 @@ describe('On-upload watermarking', () => {
 			})
 		})
 
+		cy.wmIsWatermarkedProp(file).should('eq', '1')
 		cy.wmDownload(file).then((base64) => {
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
-				expect(pdf.watermarked, 'a chunked upload was not watermarked').to.be.true
+				expect(pdf.watermarked, 'a chunked upload was not marked').to.be.true
 				expect(pdf.pages, 'the assembled file is not the one that was uploaded').to.eq(3)
 			})
 		})
-	})
-
-	it('marks the uploaded file as watermarked for the Files list', () => {
-		cy.wmIsWatermarkedProp(`${folder}/put.pdf`).should('eq', '1')
 	})
 
 	it('leaves an unsupported type alone rather than failing the upload', () => {

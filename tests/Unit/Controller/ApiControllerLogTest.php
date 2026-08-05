@@ -8,7 +8,6 @@ use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLog;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
-use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
@@ -72,7 +71,6 @@ class ApiControllerLogTest extends TestCase {
 			$groupManager,
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
-			$this->createMock(ApplyLimits::class),
 			$this->l10n(),
 		);
 	}

@@ -64,6 +64,19 @@ describe('Archive (ZIP) downloads', () => {
 		})
 	})
 
+	/**
+	 * Mark every watermarkable member of the fixture folder.
+	 *
+	 * The archive path gates on the mark, not on the policy, so this is what makes an
+	 * archive interesting - and it is idempotent, so the two suites below can each call it
+	 * without caring which ran first.
+	 */
+	const markEveryMember = () => {
+		['one.pdf', 'two.pdf', 'single.pdf'].forEach((name) => {
+			cy.wmApply(`${folder}/${name}`, { failOnStatusCode: false })
+		})
+	}
+
 	after(() => {
 		cy.wmSetPolicy({ trigger: 'on_demand' })
 		cy.wmUnshareAll(`/${folder}`)
@@ -71,9 +84,12 @@ describe('Archive (ZIP) downloads', () => {
 		cy.task('nc:delete', { user: Cypress.env('ncUser'), password: Cypress.env('ncPassword'), path: folder })
 	})
 
-	describe('under on_download', () => {
+	describe('for the owner', () => {
 		before(() => {
-			cy.wmSetPolicy({ trigger: 'on_download' })
+			// Every member is marked; the trigger that placed the marks is irrelevant to
+			// the archive path, which asks the mark and never the policy.
+			cy.wmSetPolicy({ trigger: 'on_demand' })
+			markEveryMember()
 		})
 
 		it("watermarks every supported member of the owner's own folder download", () => {
@@ -135,9 +151,9 @@ describe('Archive (ZIP) downloads', () => {
 		})
 	})
 
-	describe('under on_share', () => {
+	describe('for a share recipient', () => {
 		before(() => {
-			cy.wmSetPolicy({ trigger: 'on_share' })
+			markEveryMember()
 		})
 
 		it("watermarks the members of a recipient's folder download", () => {
@@ -203,19 +219,19 @@ describe('Archive (ZIP) downloads', () => {
 		 * A row per archive was the alternative and is strictly less useful - it could say
 		 * that someone downloaded an archive but not which documents were in it, which is
 		 * the question the audit trail exists to answer. Rows are keyed by file id, which
-		 * is also what the Files-list indicator and the double-burn guard read.
+		 * is also what the Files-list indicator reads.
 		 *
-		 * The cost is real and deliberate: delivery triggers render per fetch, so a second
-		 * download of the same folder writes the same rows again. That is asserted rather
-		 * than glossed over - it is the same behaviour a single-file `on_download` has, so
+		 * The cost is real and deliberate: a marked file is rendered on every fetch, so a
+		 * second download of the same folder writes the same rows again. That is asserted
+		 * rather than glossed over - it is the same behaviour a single-file download has, so
 		 * the archive path is not a special case, and the volume is bounded by the archive
 		 * caps (200 members by default, `archive_max_members`).
 		 */
 		it('records nothing for a delivery unless the policy asks for it', () => {
-			// The shipped default. Delivery triggers render per fetch, so recording them
-			// is what grows the log without bound - an archive of 200 members downloaded
-			// twice a day is 400 rows a day, forever.
-			cy.wmSetPolicy({ trigger: 'on_share', logDelivery: false })
+			// The shipped default. A marked file renders on every fetch, so recording each
+			// one is what grows the log without bound - an archive of 200 members
+			// downloaded twice a day is 400 rows a day, forever.
+			cy.wmSetPolicy({ trigger: 'on_demand', logDelivery: false })
 
 			cy.wmApi('GET', '/api/v1/log?limit=500').then((before) => {
 				const seen = new Set(before.body.map((entry) => entry.id))
@@ -246,7 +262,7 @@ describe('Archive (ZIP) downloads', () => {
 		})
 
 		it('writes one audit row per watermarked member, per fetch', () => {
-			cy.wmSetPolicy({ trigger: 'on_share', logDelivery: true })
+			cy.wmSetPolicy({ trigger: 'on_demand', logDelivery: true })
 
 			// Rows are identified by **id**, not counted. The log endpoint returns the
 			// newest N, which on an instance the suite has been run against a few times
@@ -273,7 +289,7 @@ describe('Archive (ZIP) downloads', () => {
 			// Three PDFs in the folder; notes.md is not a watermarkable type and must
 			// leave no row behind, or the log would claim a watermark that is not in the
 			// file.
-			const expected = ['on_share one.pdf', 'on_share single.pdf', 'on_share two.pdf']
+			const expected = ['delivered one.pdf', 'delivered single.pdf', 'delivered two.pdf']
 
 			rowsForThisFolder().then((before) => {
 				const seen = new Set(before.map((entry) => entry.id))

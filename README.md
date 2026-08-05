@@ -1,6 +1,16 @@
 # files_watermark
 
-A Nextcloud 31 app that applies configurable watermarks to PDF and image files. Watermarks embed user identity information (display name, account name, date, email) to deter unauthorized distribution and provide traceability.
+A Nextcloud 31 app that applies configurable watermarks to PDF and image files. Watermarks
+embed user identity information (display name, account name, date, email) to deter
+unauthorized distribution and provide traceability.
+
+**The stored file is never modified.** Marking a file records a policy against it; the
+watermark itself is drawn on a temporary copy each time the file is downloaded or
+previewed, and it names **whoever is fetching it** - the owner, a share recipient, or the
+owner of the link an anonymous visitor came in through. Two people downloading the same
+file get two different documents, which is the one thing a watermark burned into the
+content can never do: it can only name the person who triggered it, which for a shared
+document is whoever uploaded it rather than whoever walked out with it.
 
 ## Features
 
@@ -12,7 +22,9 @@ A Nextcloud 31 app that applies configurable watermarks to PDF and image files. 
 - **Image watermarks** - overlay a logo or image on files
 - **Combined** text + image watermarks
 - Diagonal tiled placement at 45° rotation, mid grey (`#808080`) and 40% opacity by default
-- Three trigger modes: **on download**, **on demand** (file action menu), **on share**
+- Two trigger modes, deciding **which files are marked**: **on demand** (the file action
+  menu) and **on upload** (every supported file, as it arrives). Under both, a marked file
+  is watermarked on every download *and* every preview
 - Global policy configurable by admins under **Settings → Additional → Watermark Settings**
 - Full audit log of every watermark event
 - Supports PDF, JPEG, PNG, and WEBP files
@@ -70,6 +82,11 @@ Two consequences worth knowing:
 
 The watermark is a real content stream, so **the text layer survives**: selection, copy,
 search and screen-reader access all keep working. The user's file is never modified.
+
+A marked file whose watermark cannot be generated is **not served at all** - the download
+answers 403 rather than handing back the stored bytes. That is the point of a mark: the
+alternative gives the clean file to precisely the reader the watermark exists to name, and
+does it silently.
 
 ### Fonts and Arabic text
 
@@ -209,29 +226,32 @@ than on the UI: what it covers, and how it tells a watermarked file from a clean
 
 ## The activity log
 
-Every watermark **applied to or removed from a file** is recorded, always. Those entries are
-not only history: they are how the Files list knows to show the "watermarked" badge, and how
-the app avoids stamping a file twice.
+Every file **marked or unmarked** is recorded, always. There is one entry per policy
+decision, so the volume is bounded by how often people change their minds.
 
-**Downloads are not recorded unless you ask for them.** `on_download` and `on_share` render a
-watermarked copy on *every fetch*, so recording them writes one entry per file per download -
-including every file inside a downloaded folder - and nothing expires on its own. Turn it on
-under **Settings → Administration → Watermark → When to apply** with *"Record every download
-in the activity log"*; the option appears only for those two triggers, since it does nothing
-for the others.
+**Downloads are not recorded unless you ask for them.** A marked file is rendered on *every
+fetch*, so recording each one writes an entry per file per download - including every file
+inside a downloaded folder - and nothing expires on its own. Turn it on under **Settings →
+Administration → Watermark → When to apply** with *"Record every download in the activity
+log"*.
+
+The log is history and nothing else. It used to double as the app's record of which files
+were watermarked, which is why the pruning command below could not reach most of it; that
+record lives in its own table now, so retention deletes exactly what it says.
 
 ### Pruning old entries
 
 ```bash
 occ files_watermark:prune-log                  # older than 90 days
 occ files_watermark:prune-log --days 30        # older than 30 days
-occ files_watermark:prune-log --all            # every download entry, any age
+occ files_watermark:prune-log --all            # every entry, any age
 occ files_watermark:prune-log --all --dry-run  # what would go, and nothing else
 ```
 
-It removes **download entries only** - there is no option to take the apply/remove entries,
-because those are what the watermarked badge is drawn from. Retention shortens the history of
-who downloaded what; it never makes the app forget that a file is already watermarked.
+It reaches **every entry**, which it deliberately did not before: the mark/unmark rows used
+to be the app's record of which files were watermarked, so deleting one un-badged its file.
+That record has its own table now, and nothing here is load-bearing - retention shortens the
+history and changes no file's status.
 
 ## Server settings (`occ`)
 
@@ -256,21 +276,28 @@ occ config:app:delete files_watermark archive_max_members   # back to the defaul
 
 An archive is rendered member by member **before** any bytes are sent - that is what lets a
 share that must be watermarked fail with a clean 403 instead of a truncated download - so
-these bound the temp disk and CPU one request can use. Past the cap, `on_share` denies and
-`on_download` falls back to a plain unwatermarked archive.
+these bound the temp disk and CPU one request can use. **Past the cap the archive is
+denied**, for every reader. Falling back to a plain unwatermarked archive was the old
+behaviour for one of the four triggers, and for a marked file it is a bulk leak - it ships
+precisely the clean originals the marks exist to prevent, at the moment the download is big
+enough that nobody checks. An archive with no marked member is unaffected whatever its size:
+there is nothing to render, so there is nothing to bound.
 
-Raise them if large folder downloads are being denied or served unwatermarked and the server
-has the temp space; lower them on a small host. There is no unlimited setting: a value below
+Raise them if large folder downloads are being denied and the server has the temp space;
+lower them on a small host. There is no unlimited setting: a value below
 `1` is refused and the default used, with a warning in the log.
 
 `apply_max_bytes` bounds something different, and the difference is why its default is so
-much smaller. An on-demand apply renders **synchronously inside the request**, so what it
-spends is a PHP worker's memory rather than temp disk - and a render holds several times
-the file's own size at peak, against a `memory_limit` that is 512M on a stock Nextcloud.
-Files over the cap are refused with a 413 naming both their size and the limit, before any
-content is read. **Raise it and PHP's `memory_limit` together, or not at all**: on its own
-it only moves the failure from a clean 413 that costs nothing to a fatal error part-way
-through the render, which takes the worker down and tells the user nothing useful.
+much smaller. It is checked when a file is **marked**, under both triggers - a file this app
+will not render is a file it must not promise a watermark for, and a ceiling discovered at
+download time would deny a file nobody was ever warned about. What a render spends is a PHP
+worker's memory rather than temp disk, and it holds several times the file's own size at
+peak, against a `memory_limit` that is 512M on a stock Nextcloud. A file over the cap is
+refused a mark with a 413 naming both its size and the limit, read from the file cache
+before any content is touched; on upload it is simply left unmarked, with a line in the log.
+**Raise it and PHP's `memory_limit` together, or not at all**: on its own it only moves the
+failure from a clean refusal that costs nothing to a fatal error part-way through a
+download.
 
 `image_max_pixels` bounds something `apply_max_bytes` cannot see. Both GD and Imagick work
 on an uncompressed bitmap at roughly **4 bytes per pixel**, and the ratio between a file's
@@ -280,16 +307,15 @@ above ordinary photography rather than below it: a 24 MP camera frame and a full
 both pass, while the 50 MP-and-up end does not. Dimensions are read from the file header,
 so an image over the limit is refused without ever being decoded.
 
-Unlike the byte cap, this one applies on **every** trigger, not just the file action -
-`on_download` and `on_share` decode the same image, so a guard only on the on-demand
-endpoint would leave the problem reachable by downloading the file instead. On those paths
-the refusal behaves like any other render failure: `on_download` serves the original
-untouched and `on_share` denies.
+It is checked twice, and neither check is redundant. At mark time it reads the image's
+header - the first few kilobytes, never the whole file - so a bomb is refused a mark rather
+than refused a download. At render time it is checked again against the bytes that actually
+arrived, because a marked file can be overwritten and the mark stands.
 
-On-demand applies and watermark removals are also rate limited to **20 per user per
-minute** by Nextcloud's own middleware, which answers `429`. That is far above what the
-file action can produce by hand - each apply needs its own confirmation - and far below
-what a script can. It is not configurable.
+Marking and unmarking are also rate limited to **120 per user per minute** by Nextcloud's
+own middleware, which answers `429`. Each one is a database write rather than a render, so
+the limit is well above anything the file action can produce by hand - but it is the only
+bound on marking from the UI, which is why it is still there. It is not configurable.
 
 ## API Endpoints
 
@@ -298,51 +324,77 @@ what a script can. It is not configurable.
 | `GET` | `/apps/files_watermark/api/v1/config` | Get watermark config(s) |
 | `POST` | `/apps/files_watermark/api/v1/config` | Create or update a config |
 | `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Delete a config |
-| `POST` | `/apps/files_watermark/api/v1/apply` | Apply watermark to a file on demand |
+| `POST` | `/apps/files_watermark/api/v1/apply` | Mark a file, so every fetch of it is watermarked |
+| `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
-| `GET` | `/apps/files_watermark/download/{fileId}` | Download a watermarked copy |
+| `GET` | `/apps/files_watermark/api/v1/download` | Download a file, watermarked if it is marked |
 
 ## Usage
 
-- **On demand:** right-click any supported file in the Files app → **Apply Watermark** - overwrites the original
-- **On download:** use the `/apps/files_watermark/download/{fileId}` endpoint to serve a watermarked copy without touching the original
-- **On share:** when a share is created, a watermarked copy (`{name}_shared.{ext}`) is saved in the same folder
+- **On demand:** right-click any supported file in the Files app → **Apply Watermark**. The
+  file is not modified; from then on every download and preview of it carries a watermark
+- **On upload:** set the global trigger to *On upload*, and every supported file is marked
+  as it arrives. The manual actions are hidden in this mode, since the policy already covers
+  everything
+- **Removing a watermark:** right-click → **Remove watermark**. Instant, and complete -
+  there is nothing to restore, because nothing was overwritten
 - **Admin settings:** configure the global policy under **Settings → Additional → Watermark Settings**
 
-## Preserved originals and server-side encryption
+## Previews
 
-An in-place watermark (`on_demand`, `on_upload`) burns into the stored bytes and cannot be
-undone by re-rendering, so before overwriting a file the app keeps a copy of it. That copy
-lives in the **owner's** storage, at `.files_watermark/originals/{fileId}`, and is written
-through the Files API - which is what puts it under **server-side encryption**: with SSE
-enabled it is encrypted by whichever module the admin selected, with the server's own keys.
-The app neither holds a key nor knows which module is in use.
+**A marked file's preview carries a watermark too**, naming whoever is looking at it. That
+matters because a thumbnail of a document's first page is a readable copy of it - blocking
+downloads while serving previews protects nothing.
 
-It has to be there to get that. The selected module decides what is encrypted, and the
-default module encrypts only what lives under a user's `files`, `files_versions` and
-`files_trashbin` - app storage (appdata) is outside its remit, which is where these copies
-used to sit, in the clear, beside the ciphertext of the very same bytes.
+Getting there needs one thing worth knowing about, because it constrains the design.
+Nextcloud caches previews by file id and dimensions and **never by viewer**, so a
+watermarked thumbnail written into that cache would be handed to the next person to open
+the folder with the first person's name on it. So the cache keeps doing what it is good at
+- holding the *clean* preview, which no client can reach directly - and the watermark is
+applied to the response, per request, after it. The response is marked `no-store`, so
+nothing downstream can hold on to an image that names a person.
 
-The folder is **hidden from clients**: it is dropped from every WebDAV listing, its paths
-answer 404 to every method, and sharing one of the copies is refused. So users do not see
-it in the web UI, in the desktop or mobile clients, or over WebDAV, and cannot delete it by
-accident. `doc/patch.md` documents how that works and what it deliberately does not cover.
+Two consequences:
 
-What still costs something, and what to tell users:
+- **the watermark on a small thumbnail is not legible**, and is not meant to be. It is
+  scaled to the image it is drawn on, so at 64px it is a smear rather than a name. A
+  readable watermark on a 64px tile would have to cover it entirely
+- **a preview that cannot be watermarked is not served**, exactly like a download that
+  cannot be. The file shows its generic type icon
 
-- copies **count against the owner's quota**. A full quota means the copy is not written:
-  the watermark still applies, and **Remove Watermark** then reports honestly that it
-  cannot be undone
-- the folder's *name* still appears in unified search results and the activity feed. Both
-  need a small Nextcloud core patch, which is written out in `doc/patch.md` and left to the
-  admin - they leak the name, never the contents
-- `occ` and server-side tooling still see the folder, as they must: that is how a restore
-  reads the copy back
-- the app keeps its own triggers off these copies - they are never watermarked in place,
-  and never watermarked on delivery
+Previews of unmarked files are untouched and uncached-by-us; nothing changes for them.
 
-Copies written by earlier versions remain in appdata and are still restorable; nothing
-migrates them, and new copies always go to the owner.
+## Removing a watermark
+
+There is nothing to restore, because nothing was ever overwritten. **Remove watermark**
+deletes the mark and the next download is the file as it was uploaded, byte for byte.
+
+Earlier versions burned the watermark into the stored file and kept a copy of the original
+in the owner's storage to undo it with. That whole apparatus is gone - no copies against
+the owner's quota, no folder to hide from clients, no restore that can fail. If you are
+upgrading from such a version, see the note below.
+
+## Upgrading from a version that modified files
+
+**This release does not migrate anything, and that is deliberate.** Files that a previous
+version watermarked in place still carry that watermark in their bytes; they are not marked
+and they are not restored. Marking them would draw a second watermark over the first on
+every fetch, and this app does not rewrite user content to tidy up after itself.
+
+Three things to know:
+
+- files already watermarked in place stay as they are. To put one on the new scheme,
+  restore it by hand (the app's own copies are under `.files_watermark/originals/` in the
+  owner's storage) and apply the watermark again
+- those preserved-original folders are no longer read or written by anything. They are left
+  on disk rather than deleted during an upgrade; remove them when you are satisfied nothing
+  needs them
+- **a policy set to the old `on_download` or `on_share` stops working.** Those triggers no
+  longer exist, and an unrecognised one marks nothing at all rather than being mapped onto
+  something approximate - the two candidates differ in whether every upload on the instance
+  gets marked, and guessing silently is worse than stopping. Pick one of the two remaining
+  triggers in the admin settings. Note that existing files are **not** retroactively
+  marked: `on_upload` covers files written from then on
 
 ## Docker (local test environment)
 
@@ -400,11 +452,10 @@ docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php 
 
 Open <http://localhost:8081> (admin / admin). Then verify:
 
-- **On demand:** upload a PDF/image → `...` menu → **Apply Watermark**.
-- **On download:** `GET /apps/files_watermark/api/v1/download?path=/<file>` returns a
-  watermarked copy while the original S3 object is untouched.
-- **On upload:** set the global trigger to *On upload* in admin settings, then upload
-  a file and confirm it comes back watermarked.
+- **On demand:** upload a PDF/image → `...` menu → **Apply Watermark**, then download it
+  and confirm the copy is watermarked while the S3 object itself is untouched.
+- **On upload:** set the global trigger to *On upload* in admin settings, then upload a
+  file and confirm it comes back watermarked without ever having been rewritten.
 - Cross-check in the RustFS console (<http://localhost:9001>, rustfsadmin / rustfsadmin)
   that objects are written to the `nextcloud` bucket.
 

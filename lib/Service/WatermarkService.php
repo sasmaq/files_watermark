@@ -7,12 +7,10 @@ namespace OCA\FilesWatermark\Service;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
-use OCA\FilesWatermark\EventListener\NodeWrittenListener;
+use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\Files\File;
 use OCP\Files\FileInfo;
-use OCP\Files\IRootFolder;
-use OCP\Files\Storage\ISharedStorage;
 use OCP\IL10N;
 use OCP\IUser;
 use OCP\IUserSession;
@@ -20,21 +18,55 @@ use OCP\SystemTag\ISystemTagObjectMapper;
 use OCP\SystemTag\TagNotFoundException;
 use Psr\Log\LoggerInterface;
 
+/**
+ * Marking files, and watermarking them when they are fetched.
+ *
+ * ---------------------------------------------------------------------------
+ * THE MODEL, IN ONE PARAGRAPH.
+ *
+ * **Nothing this class does changes a stored file.** A trigger decides *which files carry a
+ * mark* - `on_demand` when a user asks for one, `on_upload` for everything supported that is
+ * written - and the mark is a row, not a byte. The watermark itself is drawn on a temporary
+ * copy at the moment somebody fetches the file, against the identity of whoever that is: a
+ * share recipient sees their own name, and a public-link visitor, who has no identity to
+ * read, sees the file's owner. Two people downloading the same marked file get two
+ * different files, and neither is the one on disk.
+ *
+ * That is the whole reason the app no longer writes to storage. A watermark burned into the
+ * content can only name the person who triggered it, which for a shared file is the wrong
+ * person - it names whoever uploaded the document rather than whoever walked out with it.
+ * ---------------------------------------------------------------------------
+ *
+ * Two consequences worth stating because they look like bugs from the outside:
+ *
+ *  - **The owner is watermarked too.** There is no exemption for anybody. The watermark
+ *    carries the reader's identity, and an owner reading their own file is a reader.
+ *  - **A marked file that cannot be rendered is not served at all.** See
+ *    {@see WatermarkRequiredException}.
+ */
 class WatermarkService {
 
 	public const SUPPORTED_PDF = ['application/pdf'];
 	public const SUPPORTED_IMAGE = ['image/jpeg', 'image/png', 'image/webp'];
 	public const SUPPORTED_ALL = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 
-	/** Log trigger recorded when a watermark is undone; see {@see removeWatermark}. */
-	public const TRIGGER_REMOVED = 'removed';
+	/** A user asked for this file to be marked, from the Files action menu. */
+	public const TRIGGER_ON_DEMAND = 'on_demand';
+
+	/** The file was written and the policy marks everything supported. */
+	public const TRIGGER_ON_UPLOAD = 'on_upload';
+
+	/** The two policies an admin can choose between. There are no others. */
+	public const TRIGGERS = [self::TRIGGER_ON_DEMAND, self::TRIGGER_ON_UPLOAD];
 
 	/**
-	 * A user's own write replaced content this app had watermarked.
+	 * Audit-only triggers - recorded in `watermark_log`, never stored on a mark.
 	 *
-	 * Recorded rather than inferred: see {@see noteContentReplaced}.
+	 * `unmarked` is a user taking the mark off; `delivered` is one watermarked copy handed
+	 * to one reader. Neither is a policy, which is why neither appears in TRIGGERS.
 	 */
-	public const TRIGGER_REPLACED = 'replaced';
+	public const TRIGGER_UNMARKED = 'unmarked';
+	public const TRIGGER_DELIVERED = 'delivered';
 
 	/** Per-request memo for {@see resolveConfig}. One policy, so one slot. */
 	private ?WatermarkConfig $configCache = null;
@@ -42,54 +74,262 @@ class WatermarkService {
 	public function __construct(
 		private WatermarkConfigMapper $configMapper,
 		private WatermarkLogMapper $logMapper,
+		private WatermarkMarkMapper $markMapper,
 		private PdfWatermarker $pdfWatermarker,
 		private ImageWatermarker $imageWatermarker,
-		private IRootFolder $rootFolder,
 		private IUserSession $userSession,
 		private ISystemTagObjectMapper $tagObjectMapper,
 		private LoggerInterface $logger,
-		private OriginalStore $originalStore,
 		private WatermarkImageStore $imageStore,
-		private TeamFolder $teamFolder,
 		private ImageLimits $imageLimits,
+		private ApplyLimits $applyLimits,
 		private IL10N $l,
 	) {
 	}
 
-	/**
-	 * Apply a watermark and return the path of the watermarked temporary copy.
-	 * Caller is responsible for deleting the temp file after use.
-	 *
-	 * For the streaming triggers the render *is* the deliverable, so the audit row is
-	 * recorded here. The in-place triggers must not use this - their deliverable is the
-	 * persisted write, so they render via {@see renderToTemp} and log only once that
-	 * write lands. See {@see watermarkInPlace}.
-	 */
-	public function watermarkFile(File $file, string $trigger, ?WatermarkConfig $config = null): string {
-		[$tmpPath, $resolved] = $this->renderToTemp($file, $trigger, $config);
-		$this->recordLog($file, $trigger, $resolved);
+	// -----------------------------------------------------------------------
+	// Marking
+	// -----------------------------------------------------------------------
 
-		return $tmpPath;
+	/**
+	 * Mark $file so that every fetch of it is watermarked.
+	 *
+	 * Nothing is read and nothing is written except one row - which is what lets the upload
+	 * listener do this inline, where the old in-place burn had to be queued behind a lock.
+	 * The two size ceilings are enforced *here*, at the only moment where refusing is still
+	 * a choice: past this point the file is promised a watermark on every fetch, and a
+	 * ceiling discovered then would deny the download of a file nobody was ever warned
+	 * about.
+	 *
+	 * @param string $trigger one of {@see TRIGGERS}
+	 * @param ?IUser $actor who is marking; null falls back to the session user
+	 * @return bool true when this call placed the mark, false when one was already there
+	 *
+	 * @throws FileTooLargeException|ImageTooLargeException the file is past a ceiling
+	 * @throws \RuntimeException unsupported type, or excluded by the policy's own scope
+	 */
+	public function mark(File $file, string $trigger, ?IUser $actor = null, ?WatermarkConfig $config = null): bool {
+		$config ??= $this->resolveConfig();
+
+		$this->assertMarkable($file, $config);
+
+		$user = $actor ?? $this->userSession->getUser();
+		$placed = $this->markMapper->mark(
+			$file->getId(),
+			$user?->getUID() ?? 'system',
+			$trigger,
+			$config->getId(),
+		);
+
+		if (!$placed) {
+			// Already marked. Not an error anywhere: the on-demand endpoint reports it as a
+			// no-op, and on_upload re-marking a file on every write is the ordinary case.
+			return false;
+		}
+
+		$this->recordLog($file, $trigger, $config, $user);
+
+		return true;
 	}
 
 	/**
-	 * Render the watermarked copy to a temp path, without recording anything.
+	 * Take the mark off $file, so it is served as it is stored again.
 	 *
-	 * @return array{0: string, 1: WatermarkConfig} the temp path and the config the
-	 *                                              render actually resolved to (callers need its id for the audit row)
+	 * Instant, and complete: there is nothing to restore because nothing was ever
+	 * overwritten. The removal is logged rather than the mark's own history being deleted -
+	 * this is an audit trail, so the marking and the unmarking both belong in it.
+	 *
+	 * @return bool true when a mark was removed, false when there was none
 	 */
-	private function renderToTemp(File $file, string $trigger, ?WatermarkConfig $config, ?IUser $actor = null): array {
+	public function unmark(File $file): bool {
+		if (!$this->markMapper->unmark($file->getId())) {
+			return false;
+		}
+
+		$this->logMapper->insertLog(
+			$this->userSession->getUser()?->getUID() ?? 'system',
+			$file->getId(),
+			$file->getPath(),
+			self::TRIGGER_UNMARKED,
+			null,
+		);
+
+		return true;
+	}
+
+	public function isMarked(int $fileId): bool {
+		return $this->markMapper->isMarked($fileId);
+	}
+
+	/**
+	 * @param int[] $fileIds
+	 * @return int[] the subset that is marked
+	 */
+	public function markedFileIds(array $fileIds): array {
+		return $this->markMapper->markedFileIds($fileIds);
+	}
+
+	/**
+	 * Throws unless $file may be marked: supported type, inside the policy's scope, and
+	 * under both ceilings.
+	 *
+	 * The scope checks (MIME whitelist, folder tag) live here and **only** here. They decide
+	 * which files get marked; they are deliberately not consulted again at delivery, because
+	 * the mark is the decision. An admin who narrows the whitelist afterwards has changed
+	 * what gets marked next, not disowned the marks already placed - and a marked file that
+	 * silently stopped being watermarked when someone moved it out of a tagged folder is the
+	 * failure this app exists to prevent.
+	 *
+	 * @throws FileTooLargeException|ImageTooLargeException|\RuntimeException
+	 */
+	public function assertMarkable(File $file, ?WatermarkConfig $config = null): void {
+		$config ??= $this->resolveConfig();
+
+		$mime = $file->getMimeType();
+		$this->assertSupported($mime, $file);
+		$this->assertMimeAllowed($mime, $config);
+		$this->assertFolderTagMatches($file, $config);
+		$this->assertSizeAllowed($file);
+		$this->assertPixelsAllowedFromHeader($file);
+	}
+
+	// -----------------------------------------------------------------------
+	// Delivery
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Render the watermarked copy to serve for this fetch of $file, or null when the file
+	 * is not marked and should be served as stored.
+	 *
+	 * The identity is resolved per call, which is the point of the whole design - see
+	 * {@see buildPlaceholders}.
+	 *
+	 * @return string|null path of a temp copy the caller owns and must delete, or null when
+	 *                     the file carries no mark
+	 * @throws WatermarkRequiredException the file is marked and the render failed; the
+	 *                                    caller must deny the fetch rather than serve the original
+	 */
+	public function watermarkForDownload(File $file): ?string {
+		if (!$this->isDeliveryCandidate($file)) {
+			return null;
+		}
+
+		try {
+			$config = $this->resolveConfig();
+			[$tmpPath, $resolved] = $this->renderToTemp($file, $config);
+			$this->recordLog($file, self::TRIGGER_DELIVERED, $resolved);
+
+			return $tmpPath;
+		} catch (\Throwable $e) {
+			$this->logger->error('files_watermark: failed to watermark on delivery: ' . $e->getMessage(), [
+				'exception' => $e,
+				'path' => $file->getPath(),
+			]);
+
+			throw new WatermarkRequiredException(
+				$file->getPath(),
+				$this->l->t('This file is watermarked on download, and the watermark could not be generated.'),
+				$e,
+			);
+		}
+	}
+
+	/**
+	 * Whether this fetch of $node has to be watermarked: a supported type carrying a mark.
+	 *
+	 * There is nothing about *who is asking* in here, deliberately. Owner, share recipient
+	 * and public-link visitor are all readers, and the mark says every reader gets their own
+	 * copy. The reader only decides what the watermark says, never whether there is one.
+	 */
+	public function isDeliveryCandidate(FileInfo $node): bool {
+		if (!$this->isSupported($node->getMimetype())) {
+			return false;
+		}
+
+		$id = $node->getId();
+
+		return $id !== null && $this->isMarked($id);
+	}
+
+	/**
+	 * Stamp an already-rendered preview image with $file's watermark.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * WHY A PREVIEW IS STAMPED RATHER THAN RENDERED.
+	 *
+	 * The obvious implementation - watermark the file, then downscale the result - is the
+	 * one that matches the download exactly, and it is unaffordable: a folder of 200 photos
+	 * would render 200 full-size images to produce 200 thumbnails, on one worker, before the
+	 * file list paints. So core renders the clean preview (which it caches, and which no
+	 * client can reach except through the endpoints this app intercepts) and this stamps that
+	 * image, per request, for whoever is asking.
+	 *
+	 * **The font is scaled to the preview**, against a 1000px reference: a watermark
+	 * configured at 24pt for a full-size page is meaningless at 64px, and drawn unscaled it
+	 * covers the thumbnail with two letters. Scaling keeps the mark occupying the same
+	 * fraction of the image at every size. Below the floor the text stops being legible - a
+	 * 64px thumbnail cannot carry a readable name - and that is accepted rather than worked
+	 * around: an illegible smear over a protected file's thumbnail is the safe end of the
+	 * trade, and refusing the preview outright would leave a file that looks broken in the
+	 * Files list.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * @param int $shorterSide the preview's smaller dimension in pixels, which is what the
+	 *                         font is scaled against
+	 * @throws \Throwable whatever the renderer raises; the caller fails closed
+	 */
+	public function watermarkPreviewImage(File $file, string $srcPath, string $destPath, int $shorterSide): void {
+		$config = $this->scaledForPreview($this->resolveConfig(), $shorterSide);
+
+		$logoTmp = $this->imageStore->localPath($config->getImagePath());
+		$config = $this->withImagePath($config, $logoTmp);
+
+		try {
+			$this->imageWatermarker->apply(
+				$srcPath,
+				$destPath,
+				$config,
+				$this->buildPlaceholders($file),
+			);
+		} finally {
+			$this->discardLogo($logoTmp);
+		}
+	}
+
+	/** The reference width the preview font scale is expressed against. */
+	private const PREVIEW_REFERENCE_PX = 1000;
+
+	/** Smallest font GD will draw as anything other than a blob. */
+	private const PREVIEW_MIN_FONT_PX = 6;
+
+	/**
+	 * $config with its font size scaled for a preview whose smaller side is $shorterSide.
+	 *
+	 * Copied rather than mutated - this is the entity the mapper handed us, and it is
+	 * memoised for the request, so scaling it in place would shrink the watermark on every
+	 * later render in the same request.
+	 */
+	private function scaledForPreview(WatermarkConfig $config, int $shorterSide): WatermarkConfig {
+		$scaled = clone $config;
+		$scaled->setFontSize(max(
+			self::PREVIEW_MIN_FONT_PX,
+			(int)round($config->getFontSize() * $shorterSide / self::PREVIEW_REFERENCE_PX),
+		));
+
+		return $scaled;
+	}
+
+	/**
+	 * Render a watermarked copy of $file to a temp path.
+	 *
+	 * @return array{0: string, 1: WatermarkConfig} the temp path and the config the render
+	 *                                              resolved to (callers need its id for the audit row)
+	 */
+	private function renderToTemp(File $file, WatermarkConfig $config, ?IUser $actor = null): array {
 		$mime = $file->getMimeType();
 		$this->assertSupported($mime, $file);
 
-		if ($config === null) {
-			$config = $this->resolveConfig();
-		}
-
-		$this->assertMimeAllowed($mime, $config);
-		$this->assertFolderTagMatches($file, $config);
-
-		$placeholders = $this->buildPlaceholders($file, $trigger, $actor);
+		$placeholders = $this->buildPlaceholders($file, $actor);
 		$tmpPath = $this->createTempPath($file->getName());
 
 		$srcTmp = $tmpPath . '_src';
@@ -110,16 +350,20 @@ class WatermarkService {
 				// Inside the try, so the throw goes out through the same cleanup as a
 				// failed render - $srcTmp is a plaintext copy of the user's file and must
 				// not be left behind by a path that exists to refuse work.
+				//
+				// Checked again here even though marking checked it: settled that an
+				// overwrite keeps the mark, so the bytes being rendered are not necessarily
+				// the bytes that were measured. This is the check that meets the file that
+				// actually arrived.
 				$this->assertPixelsAllowed($srcTmp);
 				$this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
 			}
 		} catch (\Throwable $e) {
 			$this->discardLogo($logoTmp);
 			// $srcTmp holds a plaintext copy of the file. A render failure is routine
-			// (unparseable PDFs, and every on_share deny path goes through one), so
-			// without this it accumulates readable copies of user content in the temp
-			// dir indefinitely - the caller only ever gets an exception, never a path
-			// it could clean up itself.
+			// (unparseable PDFs above all), so without this it accumulates readable copies
+			// of user content in the temp dir indefinitely - the caller only ever gets an
+			// exception, never a path it could clean up itself.
 			$this->discardTemp($tmpPath, $srcTmp);
 			throw $e;
 		}
@@ -131,24 +375,21 @@ class WatermarkService {
 	}
 
 	/**
-	 * Record the audit row for a watermark that has actually been delivered.
+	 * Record an audit row.
+	 *
+	 * Delivery rows are recorded only when the policy asks for them: they are written per
+	 * *fetch*, so an archive of 200 members downloaded twice a day is 400 rows a day,
+	 * forever. Mark and unmark rows fall through unconditionally - there is one per policy
+	 * decision, not one per read.
 	 */
 	private function recordLog(File $file, string $trigger, WatermarkConfig $config, ?IUser $actor = null): void {
-		// Delivery rows are pure audit and are recorded only when the policy asks for
-		// them: they are written per *fetch*, so an archive of 200 members downloaded
-		// twice a day is 400 rows a day, forever. The in-place rows fall through - they
-		// are not history, they are the app's record that a file's stored bytes carry a
-		// watermark, and the badge and the double-burn guard both read them.
-		if (
-			!$config->getLogDelivery()
-			&& in_array($trigger, WatermarkLogMapper::NON_DESTRUCTIVE_TRIGGERS, true)
-		) {
+		if ($trigger === self::TRIGGER_DELIVERED && !$config->getLogDelivery()) {
 			return;
 		}
 
 		$user = $actor ?? $this->userSession->getUser();
 		$this->logMapper->insertLog(
-			$user?->getUID() ?? $this->anonymousLabel($trigger, 'public-link', 'system'),
+			$user?->getUID() ?? $this->readerIdentity($file)?->getUID() ?? 'system',
 			$file->getId(),
 			$file->getPath(),
 			$trigger,
@@ -156,380 +397,9 @@ class WatermarkService {
 		);
 	}
 
-	/**
-	 * Render a watermarked copy for a file being fetched over WebDAV, or return null
-	 * to serve the clean original. This is the single gate for both non-destructive
-	 * delivery triggers:
-	 *
-	 *  - `on_download` - watermark on every download, whoever fetches the file.
-	 *  - `on_share`    - watermark only when the file is fetched by someone other than
-	 *                    its owner (a share recipient, or an anonymous public-link
-	 *                    visitor). The owner reading their own file is left untouched.
-	 *
-	 * The applicable policy is the file *owner's* - they own the watermark rule for
-	 * their file - not the downloader's, who may be a recipient with an unrelated
-	 * personal config. Null is returned for an unsupported type, a trigger that does
-	 * not apply to this access, or any rendering failure (which must degrade to the
-	 * untouched original rather than break the download). On success the path of a
-	 * watermarked temp copy is returned; the caller owns it and must delete it.
-	 *
-	 * @param bool $publicContext true when the fetch arrives over the public-link
-	 *                            endpoint, where share access cannot be detected from
-	 *                            the storage ({@see isShareAccess})
-	 * @return string|null temp file path to stream, or null to serve the original
-	 */
-	public function watermarkForDownload(File $file, bool $publicContext = false): ?string {
-		$delivery = $this->resolveDelivery($file, $publicContext);
-		if ($delivery === null) {
-			return null;
-		}
-		[$trigger, $config] = $delivery;
-
-		try {
-			return $this->watermarkFile($file, $trigger, $config);
-		} catch (\Throwable $e) {
-			$this->logger->error('files_watermark: failed to watermark on delivery: ' . $e->getMessage(), [
-				'exception' => $e,
-				'trigger' => $trigger,
-				'path' => $file->getPath(),
-			]);
-			return null;
-		}
-	}
-
-	/**
-	 * The delivery trigger (`on_download` / `on_share`) that applies to the current
-	 * fetch of $file, or null when the file should be served unmodified.
-	 *
-	 * The download interceptor uses this to tell an `on_share` recipient access apart:
-	 * when {@see watermarkForDownload} cannot produce a watermarked copy (e.g. a PDF
-	 * the renderer can't parse), the interceptor denies the request for `on_share`
-	 * rather than leaking the clean original to the recipient.
-	 */
-	public function deliveryTrigger(File $file, bool $publicContext = false): ?string {
-		$delivery = $this->resolveDelivery($file, $publicContext);
-		return $delivery === null ? null : $delivery[0];
-	}
-
-	/**
-	 * Whether $file is being accessed through a share mount - i.e. the current user is
-	 * a share recipient (internal share) or an anonymous public-link visitor, not the
-	 * file's owner.
-	 *
-	 * Detected from the storage backend ({@see ISharedStorage}) rather than by
-	 * comparing user ids: `getOwner()` vs the session user is unreliable in preview and
-	 * viewer request contexts, which let `on_share` content leak to recipients. A
-	 * received share is always mounted on a shared storage; the owner's own copy is not.
-	 */
-	public function isReceivedShare(FileInfo $file): bool {
-		try {
-			return $file->getStorage()->instanceOfStorage(ISharedStorage::class);
-		} catch (\Throwable) {
-			return false;
-		}
-	}
-
-	/**
-	 * Whether $file is being accessed by someone other than its owner - the full
-	 * `on_share` audience: internal share recipients *and* public-link visitors.
-	 *
-	 * {@see isReceivedShare} alone does not cover public links. A public link is served
-	 * from the *owner's* own storage (`public.php/dav` resolves the node through
-	 * `getUserFolder($shareOwner)` and only wraps it in PermissionsMask /
-	 * PublicOwnerWrapper), so the mount is never an ISharedStorage and the storage test
-	 * reports "owner access" for an anonymous visitor - which would hand them the clean
-	 * original. Two further signals close that hole:
-	 *
-	 *  - $publicContext - set by the caller that *knows* it is serving a public link
-	 *    (the interceptor instance registered on the public DAV server).
-	 *  - no session user - an anonymous request can only be reaching a file through a
-	 *    public link, so it is never owner access. This also covers callers that have no
-	 *    context flag to pass, such as public preview requests. Background jobs with no
-	 *    session (e.g. preview pre-generation) fall in here too and are treated as share
-	 *    access; erring towards watermarking/blocking keeps content from leaking.
-	 *
-	 * A **Team folder** is the fourth, and it is the one that is a judgement rather than a
-	 * mechanism. Such a mount is not an `ISharedStorage` and the reader is a real session
-	 * user, so both tests above report owner access and `on_share` watermarked nothing in a
-	 * Team folder for anybody - the one place on the server where content is multi-user by
-	 * construction. It is counted as share access for **every** member, the uploader
-	 * included, because a Team folder has no owner to exempt: nothing in the file cache
-	 * records who put a file there, so "everyone but the author" is not a rule this app can
-	 * implement honestly. Watermarking one person's own reads is the visible cost of that,
-	 * and it is the side to err on - the alternative is the silent one.
-	 *
-	 * An admin who wants Team folder reads left clean should use `on_download` (which
-	 * watermarks regardless of who is asking) or exempt the folder with the tag scope,
-	 * rather than relying on `on_share` to skip them.
-	 */
-	public function isShareAccess(FileInfo $file, bool $publicContext = false): bool {
-		return $publicContext
-			|| $this->isReceivedShare($file)
-			|| $this->teamFolder->contains($file)
-			|| $this->userSession->getUser() === null;
-	}
-
-	/**
-	 * Decide which delivery trigger (if any) applies to the current fetch of $file.
-	 *
-	 * Encapsulates the whole gate: supported type, the on_download / on_share(+non-
-	 * owner) rule resolved against the *owner's* policy, and the config exclusions
-	 * (mime whitelist, folder tag). Folding the exclusions in here means a file the
-	 * policy would deliberately skip is reported as "not applicable" (serve the
-	 * original) rather than as a watermark that later fails (which the interceptor
-	 * would treat as a leak to deny).
-	 *
-	 * @return array{0: string, 1: WatermarkConfig}|null [trigger, config] or null
-	 */
-	private function resolveDelivery(File $file, bool $publicContext = false): ?array {
-		$mime = $file->getMimeType();
-		if (!$this->isSupported($mime)) {
-			return null;
-		}
-
-		// A preserved original is the app's own copy, kept precisely so the watermark can
-		// be taken off again. Serving it stamped would hand back a "clean original" that
-		// is nothing of the sort. Guarded here rather than in each plugin so the single
-		// file download and the archive path are both covered.
-		if ($this->originalStore->isBackup($file)) {
-			return null;
-		}
-
-		$config = $this->deliveryConfig($file, $publicContext);
-		if ($config === null) {
-			return null;
-		}
-
-		// A file the config would skip (excluded mime, missing folder tag) is not a
-		// watermark candidate - report "not applicable" so it is served untouched.
-		try {
-			$this->assertMimeAllowed($mime, $config);
-			$this->assertFolderTagMatches($file, $config);
-		} catch (\RuntimeException) {
-			return null;
-		}
-
-		return [$config->getTrigger(), $config];
-	}
-
-	/**
-	 * The config when a delivery trigger applies to this fetch of $node, or null when the
-	 * node should be served unmodified.
-	 *
-	 * This is the type-agnostic half of {@see resolveDelivery}: the policy plus the
-	 * on_download / on_share(+non-owner) rule, with no per-file exclusions.
-	 *
-	 * Only ever ask this about a *file*. A folder cannot answer for its members under
-	 * on_share: a received single-file share is mounted inside the recipient's own home,
-	 * so the containing folder reports owner access while the member is a share. Gating an
-	 * archive on its container is what leaked clean originals; {@see deliveryTriggerFor}
-	 * per member is the correct question.
-	 */
-	private function deliveryConfig(FileInfo $node, bool $publicContext = false): ?WatermarkConfig {
-		try {
-			$config = $this->resolveConfig();
-		} catch (\Throwable) {
-			return null;
-		}
-
-		$trigger = $config->getTrigger();
-
-		if ($trigger !== 'on_download' && !($trigger === 'on_share' && $this->isShareAccess($node, $publicContext))) {
-			return null;
-		}
-
-		return $config;
-	}
-
-	/**
-	 * The delivery trigger that applies to $node ignoring per-file exclusions, or null.
-	 *
-	 * Lets the archive interceptor tell "this member had to be watermarked and the render
-	 * failed" (deny) from "this member was never a candidate" (stream as-is).
-	 */
-	public function deliveryTriggerFor(FileInfo $node, bool $publicContext = false): ?string {
-		return $this->deliveryConfig($node, $publicContext)?->getTrigger();
-	}
-
-	/**
-	 * Whether the file has ever been watermarked (has any row in `watermark_log`).
-	 *
-	 * Mirrors the Files-list indicator's definition. It is the guard used to skip
-	 * re-stamping a file whose content was already burned in place.
-	 */
-	public function isAlreadyWatermarked(int $fileId): bool {
-		return $this->logMapper->findWatermarkedFileIds([$fileId]) !== [];
-	}
-
-	/**
-	 * Apply watermark in-place - replaces the file content inside Nextcloud.
-	 *
-	 * Skips (and returns false) when the file has already been watermarked, so an
-	 * in-place burn is never applied twice - this is the authoritative guard for the
-	 * in-place triggers (`on_demand`, `on_upload`). Copy/stream triggers
-	 * (`on_share`, `on_download`) go through {@see watermarkFile} against the clean
-	 * original and are intentionally not guarded here.
-	 *
-	 * @return bool true when the watermark was applied, false when it was skipped
-	 *              because the file is already watermarked
-	 */
-	public function watermarkInPlace(File $file, string $trigger, ?WatermarkConfig $config = null, ?IUser $actor = null): bool {
-		// The app's own preserved originals live in the owner's storage, where they are
-		// ordinary supported files as far as every trigger is concerned. Watermarking one
-		// would burn a watermark into the copy kept to undo watermarks, and store a copy
-		// of *that* - so this is the choke point every in-place path goes through, not
-		// only the listener that would queue it.
-		if ($this->originalStore->isBackup($file)) {
-			return false;
-		}
-
-		if ($this->isAlreadyWatermarked($file->getId())) {
-			$this->logger->info('files_watermark: skipping already-watermarked file {path}', [
-				'path' => $file->getPath(),
-				'fileId' => $file->getId(),
-			]);
-			return false;
-		}
-
-		[$tmpPath, $resolved] = $this->renderToTemp($file, $trigger, $config, $actor);
-
-		try {
-			// Preserve the pre-watermark bytes before they are overwritten - this burn is
-			// destructive and irreversible, so this copy is the only route back. Read the
-			// original *now*, while the stored content is still clean. A failed backup is
-			// logged and does not abort the watermark; the user simply won't be able to undo
-			// it, which removeWatermark() reports rather than pretending to restore.
-			$this->originalStore->store($file, $file->getContent());
-
-			// Read before writing, and checked: false here would otherwise reach putContent()
-			// as the empty string and replace the file with nothing - the one outcome this
-			// burn cannot be allowed to have, since the original is already overwritten by
-			// the time anyone notices.
-			$watermarked = file_get_contents($tmpPath);
-			if ($watermarked === false) {
-				throw new \RuntimeException($this->l->t('The watermarked file could not be read back.'));
-			}
-
-			$file->putContent($watermarked);
-		} finally {
-			// $tmpPath holds a plaintext watermarked copy of the file. putContent() can
-			// throw (a locked node, a full quota), and without this the copy is left
-			// readable in the temp dir - the same leak discardTemp() exists to prevent on
-			// the render path.
-			$this->discardTemp($tmpPath);
-		}
-
-		// Only once the write has landed. Logging before it would assert a watermark that
-		// isn't in the file, and because isAlreadyWatermarked() reads this same log that
-		// phantom row would then permanently skip the file on every retry.
-		$this->recordLog($file, $trigger, $resolved, $actor);
-
-		return true;
-	}
-
-	/**
-	 * Undo an in-place watermark by restoring the preserved original.
-	 *
-	 * The watermark is burned into the content, so this is a restore, not a strip: it
-	 * rewrites the file with the copy {@see watermarkInPlace} took beforehand. Once
-	 * restored the backup is discarded and a `removed` row is recorded, which makes
-	 * {@see isAlreadyWatermarked} report false again so the file can be re-watermarked.
-	 *
-	 * The removal is logged rather than the original rows being deleted - this is an audit
-	 * log, so the apply and the undo both belong in the history.
-	 *
-	 * @return bool true when the original was restored, false when none is preserved
-	 */
-	public function removeWatermark(File $file): bool {
-		$fileId = $file->getId();
-		$content = $this->originalStore->read($file);
-
-		if ($content === null) {
-			$this->logger->info('files_watermark: no preserved original for {path}, cannot remove watermark', [
-				'path' => $file->getPath(),
-				'fileId' => $fileId,
-			]);
-			return false;
-		}
-
-		// Suppressed like every other write this app makes: without it the restore looks
-		// to NodeWrittenListener like a user replacing watermarked content, and a
-		// `replaced` row lands in the audit trail a moment before the `removed` one that
-		// actually describes what happened.
-		NodeWrittenListener::suppressFor($fileId, function () use ($file, $content): void {
-			$file->putContent($content);
-		});
-
-		// Only drop the backup once the restore has actually landed, so a failed
-		// putContent (which throws) leaves the original recoverable on a later attempt.
-		$this->originalStore->discard($file);
-
-		$this->logMapper->insertLog(
-			$this->userSession->getUser()?->getUID() ?? 'system',
-			$fileId,
-			$file->getPath(),
-			self::TRIGGER_REMOVED,
-			null,
-		);
-
-		return true;
-	}
-
-	/**
-	 * Record that a user's own write replaced watermarked content, and drop the copy that
-	 * write orphaned.
-	 *
-	 * **This is what makes an overwrite behave.** The double-burn guard asks the log
-	 * whether this *file id* has a standing watermark, and a file id survives having its
-	 * content replaced - so without this, re-uploading over a watermarked file left the
-	 * new bytes clean while the badge, the guard and the audit row all still described the
-	 * bytes that had just been thrown away. Two uploads of the same path were enough to
-	 * store an unwatermarked file under a policy whose whole purpose is preventing that.
-	 *
-	 * Caught at the write rather than inferred afterwards, because every way of inferring
-	 * it later is wrong: mtime is client-supplied on sync uploads (`X-OC-MTime`), so a
-	 * fresh upload routinely looks *older* than the watermark it replaced, and hashing the
-	 * content on every badge lookup would read every file in a directory listing. The write
-	 * itself is unambiguous, and {@see NodeWrittenListener::suppressFor} already tells this
-	 * app's own writes apart from a user's.
-	 *
-	 * The preserved original goes with it. It belongs to content that no longer exists, and
-	 * keeping it would let "remove watermark" restore *the previous file* over the one the
-	 * user just uploaded - losing their data to a feature that exists to protect it.
-	 * {@see OriginalStore::store()} never overwrites, so discarding here is also what lets
-	 * the next burn preserve the right bytes.
-	 *
-	 * A `replaced` row rather than a `removed` one: nothing was restored and nobody asked
-	 * for a removal. Both cancel the apply for the guard's purposes; only one of them is
-	 * true.
-	 */
-	public function noteContentReplaced(File $file): void {
-		$fileId = $file->getId();
-		if (!$this->isAlreadyWatermarked($fileId)) {
-			// Nothing standing to replace: a first upload, or content already superseded.
-			return;
-		}
-
-		$this->originalStore->discard($file);
-
-		$this->logMapper->insertLog(
-			$this->userSession->getUser()?->getUID() ?? 'system',
-			$fileId,
-			$file->getPath(),
-			self::TRIGGER_REPLACED,
-			null,
-		);
-	}
-
-	/**
-	 * Whether any configured policy uses a delivery trigger.
-	 *
-	 * Coarse, owner-agnostic gate for the archive interceptor - see
-	 * {@see WatermarkConfigMapper::hasDeliveryTrigger}.
-	 */
-	public function hasDeliveryTriggerConfigured(): bool {
-		return $this->configMapper->hasDeliveryTrigger();
-	}
+	// -----------------------------------------------------------------------
+	// Policy
+	// -----------------------------------------------------------------------
 
 	/**
 	 * The policy in force: the admin's global config, or the built-in default.
@@ -553,6 +423,29 @@ class WatermarkService {
 		}
 	}
 
+	/**
+	 * The trigger in force, or null when the stored one is not a trigger this app has.
+	 *
+	 * Null is the honest answer for a policy row left behind by an older version, which had
+	 * two further triggers that no longer exist. Nothing marks under it - an unrecognised
+	 * value must not be *approximately* one of the live ones, because the two candidates
+	 * differ in whether every upload on the instance gets marked.
+	 */
+	public function effectiveTrigger(): ?string {
+		$trigger = $this->resolveConfig()->getTrigger();
+
+		if (!in_array($trigger, self::TRIGGERS, true)) {
+			$this->logger->warning(
+				'files_watermark: the saved policy has trigger "{trigger}", which this version does not '
+					. 'have. Nothing is being marked. Re-pick a trigger in the watermark settings.',
+				['trigger' => $trigger],
+			);
+			return null;
+		}
+
+		return $trigger;
+	}
+
 	private function defaultConfig(): WatermarkConfig {
 		$config = new WatermarkConfig();
 		$config->setType('text');
@@ -564,7 +457,7 @@ class WatermarkService {
 		$config->setFontSize(24);
 		$config->setColor('#808080');
 		$config->setRotation(45);
-		$config->setTrigger('on_demand');
+		$config->setTrigger(self::TRIGGER_ON_DEMAND);
 		return $config;
 	}
 
@@ -575,51 +468,6 @@ class WatermarkService {
 		$allowed = $config->getAllowedMimeTypes();
 		if (!empty($allowed) && !in_array($mime, $allowed, true)) {
 			throw new \RuntimeException($this->l->t('MIME type "%s" is not in the configured whitelist.', [$mime]));
-		}
-	}
-
-	/**
-	 * Throws if decoding $path would exceed the pixel ceiling.
-	 *
-	 * **Read from the header, never from a decode.** `getimagesize()` parses the few bytes
-	 * that carry the dimensions and allocates nothing for the raster, which is the only
-	 * order that helps: a check performed after `imagecreatefrom*()` has already made the
-	 * allocation it exists to prevent, and a decompression bomb kills the worker before any
-	 * code of ours runs again.
-	 *
-	 * Multiplied as ints and compared against the cap. A bomb's dimensions are large but
-	 * nowhere near overflowing a 64-bit int - the format headers cap each side at 2^31 -
-	 * so the product is exact.
-	 *
-	 * **An unreadable header is allowed through**, deliberately. `getimagesize()` returns
-	 * false for anything it cannot parse, which includes formats it does not know as well
-	 * as corrupt files. Refusing on that would turn "this guard cannot tell" into "this
-	 * file is a bomb", and would reject files the renderers handle perfectly well today.
-	 * The renderer's own failure is the honest answer for a file that is actually broken.
-	 *
-	 * @throws ImageTooLargeException
-	 */
-	private function assertPixelsAllowed(string $path): void {
-		$info = @getimagesize($path);
-		if ($info === false) {
-			return;
-		}
-
-		[$width, $height] = $info;
-		$pixels = $width * $height;
-		$max = $this->imageLimits->maxPixels();
-
-		if ($pixels > $max) {
-			$this->logger->warning('files_watermark: refusing an image of {pixels} pixels, the limit is {max}', [
-				'pixels' => $pixels,
-				'max' => $max,
-				'path' => $path,
-			]);
-
-			throw new ImageTooLargeException($this->l->t(
-				'This image is too large to watermark (%1$s megapixels; the limit is %2$s).',
-				[round($pixels / 1000000, 1), round($max / 1000000, 1)],
-			));
 		}
 	}
 
@@ -666,34 +514,221 @@ class WatermarkService {
 		}
 	}
 
+	// -----------------------------------------------------------------------
+	// Ceilings
+	// -----------------------------------------------------------------------
+
 	/**
-	 * The name to stamp / log when there is no session user. Under `on_share` that can
-	 * only be an anonymous public-link visitor, so naming them as such makes a leaked
-	 * copy show how it was obtained; other triggers keep the old generic fallbacks.
+	 * Throws if the file is larger than a render is allowed to be.
+	 *
+	 * Read from the file cache, so no content is touched: the point of a ceiling is to
+	 * refuse the work, and anything that loads the file first has already spent what this
+	 * exists to save.
+	 *
+	 * @throws FileTooLargeException
 	 */
-	private function anonymousLabel(string $trigger, string $publicLabel, string $default): string {
-		return $trigger === 'on_share' ? $publicLabel : $default;
+	private function assertSizeAllowed(File $file): void {
+		$maxBytes = $this->applyLimits->maxBytes();
+		// `getSize()` is documented as float|int - the cache widens it so a size can
+		// outrun a 32-bit int. Narrowed once here rather than at each use.
+		$size = (int)$file->getSize();
+
+		if ($size <= $maxBytes) {
+			return;
+		}
+
+		throw new FileTooLargeException($this->l->t(
+			'This file is too large to watermark (%1$s; the limit is %2$s).',
+			[$this->humanBytes($size), $this->humanBytes($maxBytes)],
+		));
 	}
 
 	/**
-	 * @param ?IUser $actor the user the watermark is attributed to; null falls back to the
-	 *                      session user. Background jobs have no session, so they must pass it explicitly
-	 *                      or every watermark would render as "Unknown".
+	 * Throws if the image's *header* declares more pixels than a decode may allocate.
+	 *
+	 * The same ceiling {@see assertPixelsAllowed} enforces at render time, moved to the
+	 * front so a bomb is refused a mark rather than refused a download. It reads the first
+	 * few KB rather than the file: dimensions live in the header of every format here, and
+	 * pulling the whole image into memory to find out whether it is safe to pull the whole
+	 * image into memory is not a check.
+	 *
+	 * A type with no pixels, or a header that cannot be parsed, passes - see
+	 * {@see assertPixelsAllowed} for why an unreadable header is not treated as a bomb.
+	 *
+	 * @throws ImageTooLargeException
 	 */
-	private function buildPlaceholders(File $file, string $trigger, ?IUser $actor = null): array {
-		$user = $actor ?? $this->userSession->getUser();
-		$anonymous = $this->anonymousLabel($trigger, 'Public link', 'Unknown');
+	private function assertPixelsAllowedFromHeader(File $file): void {
+		if (!in_array($file->getMimeType(), self::SUPPORTED_IMAGE, true)) {
+			return;
+		}
+
+		try {
+			$handle = $file->fopen('rb');
+			if ($handle === false) {
+				return;
+			}
+			$header = fread($handle, self::HEADER_BYTES);
+			fclose($handle);
+		} catch (\Throwable) {
+			// Storage that will not open is the download path's problem to report, not
+			// this one's - refusing the mark here would blame the ceiling for it.
+			return;
+		}
+
+		if ($header === false || $header === '') {
+			return;
+		}
+
+		$info = @getimagesizefromstring($header);
+		if ($info === false) {
+			return;
+		}
+
+		$this->refuseIfOverPixelCeiling($info[0], $info[1], $file->getPath());
+	}
+
+	/**
+	 * How much of an image to read to find its dimensions.
+	 *
+	 * Generous on purpose. PNG and WEBP declare the size in their first 32 bytes, but a
+	 * JPEG's SOF marker sits after whatever EXIF and ICC blocks the camera wrote, which for
+	 * an ordinary phone photo is tens of kilobytes. Reading short would make the check
+	 * silently pass on exactly the files it is meant to measure.
+	 */
+	private const HEADER_BYTES = 262144;
+
+	/**
+	 * Throws if decoding $path would exceed the pixel ceiling.
+	 *
+	 * **Read from the header, never from a decode.** `getimagesize()` parses the few bytes
+	 * that carry the dimensions and allocates nothing for the raster, which is the only
+	 * order that helps: a check performed after `imagecreatefrom*()` has already made the
+	 * allocation it exists to prevent, and a decompression bomb kills the worker before any
+	 * code of ours runs again.
+	 *
+	 * **An unreadable header is allowed through**, deliberately. `getimagesize()` returns
+	 * false for anything it cannot parse, which includes formats it does not know as well
+	 * as corrupt files. Refusing on that would turn "this guard cannot tell" into "this
+	 * file is a bomb", and would reject files the renderers handle perfectly well today.
+	 * The renderer's own failure is the honest answer for a file that is actually broken.
+	 *
+	 * @throws ImageTooLargeException
+	 */
+	private function assertPixelsAllowed(string $path): void {
+		$info = @getimagesize($path);
+		if ($info === false) {
+			return;
+		}
+
+		$this->refuseIfOverPixelCeiling($info[0], $info[1], $path);
+	}
+
+	/**
+	 * The shared verdict of the two pixel checks, so the mark-time and render-time paths
+	 * cannot drift into disagreeing about what is too large.
+	 *
+	 * Multiplied as ints and compared against the cap. A bomb's dimensions are large but
+	 * nowhere near overflowing a 64-bit int - the format headers cap each side at 2^31 - so
+	 * the product is exact.
+	 *
+	 * @throws ImageTooLargeException
+	 */
+	private function refuseIfOverPixelCeiling(int $width, int $height, string $path): void {
+		$pixels = $width * $height;
+		$max = $this->imageLimits->maxPixels();
+
+		if ($pixels <= $max) {
+			return;
+		}
+
+		$this->logger->warning('files_watermark: refusing an image of {pixels} pixels, the limit is {max}', [
+			'pixels' => $pixels,
+			'max' => $max,
+			'path' => $path,
+		]);
+
+		throw new ImageTooLargeException($this->l->t(
+			'This image is too large to watermark (%1$s megapixels; the limit is %2$s).',
+			[round($pixels / 1000000, 1), round($max / 1000000, 1)],
+		));
+	}
+
+	/**
+	 * A byte count as something a person can act on, e.g. `210.4 MB`.
+	 *
+	 * The refusal exists to be actionable - it names both the file's size and the ceiling so
+	 * an admin knows what to set `apply_max_bytes` to. Raw byte counts in the tens of
+	 * millions do not read as anything, and this message reaches an end user, not a log.
+	 *
+	 * Decimal units, matching what the Files app shows for the same file: a user comparing
+	 * this message against the size in the list must not find two different numbers.
+	 */
+	private function humanBytes(int $bytes): string {
+		// Whole bytes stay whole; anything scaled gets one decimal, which is enough to
+		// tell 64.0 MB from 64.9 MB without implying precision the cache does not have.
+		if ($bytes < 1000) {
+			return $bytes . ' B';
+		}
+
+		$value = (float)$bytes;
+		$unit = 'KB';
+
+		foreach (['KB', 'MB', 'GB', 'TB'] as $candidate) {
+			$unit = $candidate;
+			$value /= 1000;
+			if ($value < 1000) {
+				break;
+			}
+		}
+
+		return round($value, 1) . ' ' . $unit;
+	}
+
+	// -----------------------------------------------------------------------
+	// Watermark content
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Who this particular watermark names.
+	 *
+	 * The session user, or - when there is none - the file's **owner**. An anonymous fetch
+	 * is a public link, and a public link has exactly one person accountable for it: whoever
+	 * published the file. Stamping such a copy "Public link" would name the mechanism rather
+	 * than a person, which is no use to anyone holding a leaked document.
+	 *
+	 * The same fallback covers server-side fetches with no session (preview pre-generation,
+	 * background jobs), where naming the owner is both true and harmless.
+	 */
+	private function readerIdentity(File $file): ?IUser {
+		$user = $this->userSession->getUser();
+		if ($user !== null) {
+			return $user;
+		}
+
+		try {
+			return $file->getOwner();
+		} catch (\Throwable) {
+			return null;
+		}
+	}
+
+	/**
+	 * @param ?IUser $actor the user the watermark names; null resolves the reader, which is
+	 *                      what every delivery does. Marking passes one explicitly because a background write
+	 *                      has no session and the audit row would otherwise say "system"
+	 * @return array<string, string>
+	 */
+	private function buildPlaceholders(File $file, ?IUser $actor = null): array {
+		$user = $actor ?? $this->readerIdentity($file);
+
 		return $this->scrubPlaceholders([
 			// Two different identities, and the difference matters in a watermark. The
 			// account name is the uid: unique, stable, and what an admin greps the audit
 			// log or the user list for. The display name is what a human recognises, and
 			// is neither unique nor fixed - a user can change it, and two people can share
-			// one. `{username}` used to render the *display* name, which made the account
-			// name unreachable and the token a lie; both are now available under the name
-			// that describes them. Existing templates were rewritten to `{displayname}` by
-			// Version1004Date20260731000000 so no watermark changed on upgrade.
-			'username' => $user?->getUID() ?? $anonymous,
-			'displayname' => $user?->getDisplayName() ?? $anonymous,
+			// one. Both are available under the name that describes them.
+			'username' => $user?->getUID() ?? 'Unknown',
+			'displayname' => $user?->getDisplayName() ?? 'Unknown',
 			'email' => $user?->getEMailAddress() ?? '',
 			'date' => date('Y-m-d'),
 			'datetime' => date('Y-m-d H:i:s'),
@@ -744,6 +779,10 @@ class WatermarkService {
 		return $placeholders;
 	}
 
+	// -----------------------------------------------------------------------
+	// Plumbing
+	// -----------------------------------------------------------------------
+
 	/**
 	 * Whether a MIME type can be watermarked at all (single source of truth for routing).
 	 */
@@ -752,7 +791,7 @@ class WatermarkService {
 	}
 
 	/**
-	 * Skips (aborts) processing of an unsupported file, recording an audit-log entry first.
+	 * Refuses an unsupported file, saying so in the log first.
 	 */
 	private function assertSupported(string $mime, ?File $file = null): void {
 		if (!$this->isSupported($mime)) {

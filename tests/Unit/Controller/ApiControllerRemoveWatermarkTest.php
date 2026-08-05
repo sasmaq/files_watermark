@@ -7,7 +7,6 @@ namespace OCA\FilesWatermark\Tests\Unit\Controller;
 use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
-use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
@@ -49,7 +48,6 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 			$this->createMock(IGroupManager::class),
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
-			$this->createMock(ApplyLimits::class),
 			$this->l10n(),
 		);
 	}
@@ -103,7 +101,7 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		$this->loginAlice();
 		$this->mockFile(readable: true, updateable: false);
 
-		$this->watermarkService->expects($this->never())->method('removeWatermark');
+		$this->watermarkService->expects($this->never())->method('unmark');
 
 		$this->assertSame(
 			Http::STATUS_FORBIDDEN,
@@ -115,7 +113,7 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		$this->loginAlice();
 		$this->mockFile(readable: false, updateable: true);
 
-		$this->watermarkService->expects($this->never())->method('removeWatermark');
+		$this->watermarkService->expects($this->never())->method('unmark');
 
 		$this->assertSame(
 			Http::STATUS_FORBIDDEN,
@@ -123,12 +121,12 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		);
 	}
 
-	public function testRestoresOriginalWhenPreserved(): void {
+	public function testUnmarksTheFile(): void {
 		$this->loginAlice();
 		$node = $this->mockFile(readable: true, updateable: true);
 
 		$this->watermarkService->expects($this->once())
-			->method('removeWatermark')
+			->method('unmark')
 			->with($node)
 			->willReturn(true);
 
@@ -138,33 +136,26 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		$this->assertSame(['status' => 'removed', 'path' => 'doc.pdf'], $response->getData());
 	}
 
-	public function testReturnsUnprocessableWhenNoOriginalPreserved(): void {
-		// A file watermarked before backups existed has nothing to restore - an error
-		// the UI shows verbatim, not a silent success.
+	/**
+	 * A file that was not marked is a no-op, not a failure.
+	 *
+	 * This used to be a 422: the removal restored a preserved original, and a file with
+	 * none had nothing to restore. Nothing is restored now - the stored file was never
+	 * changed - so "not marked" is simply the state the caller asked for, and reporting it
+	 * as an error would put a red note card in front of a user who got what they wanted.
+	 */
+	public function testAnUnmarkedFileIsANoOpRatherThanAnError(): void {
 		$this->loginAlice();
 		$node = $this->mockFile(readable: true, updateable: true);
 
 		$this->watermarkService->expects($this->once())
-			->method('removeWatermark')
+			->method('unmark')
 			->with($node)
 			->willReturn(false);
 
 		$response = $this->controller->removeWatermark('doc.pdf');
 
-		$this->assertSame(Http::STATUS_UNPROCESSABLE_ENTITY, $response->getStatus());
-		$this->assertArrayHasKey('error', $response->getData());
-	}
-
-	public function testReturnsUnprocessableWhenRestoreThrows(): void {
-		$this->loginAlice();
-		$this->mockFile(readable: true, updateable: true);
-
-		$this->watermarkService->method('removeWatermark')
-			->willThrowException(new \RuntimeException('storage full'));
-
-		$response = $this->controller->removeWatermark('doc.pdf');
-
-		$this->assertSame(Http::STATUS_UNPROCESSABLE_ENTITY, $response->getStatus());
-		$this->assertSame(['error' => 'storage full'], $response->getData());
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame(['status' => 'not_watermarked', 'path' => 'doc.pdf'], $response->getData());
 	}
 }

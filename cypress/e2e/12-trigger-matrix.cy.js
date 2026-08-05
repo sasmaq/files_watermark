@@ -1,10 +1,10 @@
 /**
- * The trigger × access matrix: every trigger, fetched every way.
+ * The trigger × access matrix: both triggers, fetched every way.
  *
- * Four triggers against six access paths - owner direct, owner ZIP, recipient direct,
+ * Two triggers against six access paths - owner direct, owner ZIP, recipient direct,
  * recipient ZIP, public-link direct, public-link ZIP - because the app's behaviour is a
- * function of both together, and every delivery bug found so far has been one cell of
- * this table disagreeing with its neighbours:
+ * function of both together, and every delivery bug found so far has been one cell of this
+ * table disagreeing with its neighbours:
  *
  * - the archive gate keyed off the container, so a received single-file share served the
  *   clean original while the same file fetched directly came back watermarked;
@@ -13,33 +13,33 @@
  * - public links are served off the *owner's* storage, so an owner/recipient test based
  *   on the storage backend waved them through.
  *
- * None of those is visible from a single cell. What makes the table worth running as a
- * table is the disagreements: `on_share` must watermark for everyone **except** the owner,
- * `on_download` for everyone **including** the owner, and the two in-place triggers must
- * watermark through every path for a different reason entirely - the bytes on disk already
- * carry it.
+ * None of those is visible from a single cell.
  *
- * That last row is asserted as a **negative**, which is the whole point of including it.
- * "Watermarked" is not interesting for `on_demand` and `on_upload`: the burn put it there
- * and every path would report it. What must be true is that **no interceptor engaged** -
- * so each cell is compared byte-for-byte against the stored file. A delivery renderer that
- * woke up on an already-burned file would produce a valid, watermarked, *different* PDF,
- * pass every "is it watermarked" check, and stamp the document twice.
+ * **The table has become uniform, and that is the finding rather than a simplification.**
+ * It used to have rows that disagreed on purpose: `on_share` watermarked for everyone
+ * except the owner, `on_download` for everyone including them, and the two in-place
+ * triggers watermarked through every path for an entirely different reason - the bytes on
+ * disk already carried it. All six cells now say the same thing under both triggers,
+ * because the trigger decides *which files are marked* and nothing else. A cell that
+ * disagrees with its neighbours is a bug with nowhere left to hide.
  *
- * Deeper per-mode assertions live with their own specs - preview blocking and the share
- * page's download link in `04-on-share`, archive membership and audit granularity in
- * `05-archives`, per-fetch rendering and the HEAD regression in `03-on-download`. This
- * file answers one question only: is any cell of the matrix wrong.
+ * Every cell is asserted twice over: the delivered file is watermarked, **and** the stored
+ * file is unchanged at the end. The second half is what the old in-place rows had to assert
+ * by byte-identity, and it is still the assertion that catches the most dangerous failure -
+ * a render that writes its result back would pass every "is it watermarked" check and
+ * quietly destroy the original.
+ *
+ * Deeper per-mode assertions live with their own specs - previews and the share page's
+ * download link in `03-per-reader`, archive membership and audit granularity in
+ * `05-archives`. This file answers one question only: is any cell of the matrix wrong.
  */
 
 const folder = 'e2e-matrix'
 const recipientUid = 'e2e-matrix-recipient'
 const zipHeaders = { Accept: 'application/zip' }
 
-/** One file per trigger, so a burn in one row cannot change what another row measures. */
+/** One file per trigger, so neither row can change what the other measures. */
 const files = {
-	on_download: 'on-download.pdf',
-	on_share: 'on-share.pdf',
 	on_demand: 'on-demand.pdf',
 	on_upload: 'on-upload.pdf',
 }
@@ -132,12 +132,11 @@ describe('Trigger × access matrix', () => {
 	before(() => {
 		cy.ncLogin()
 
-		// A known-neutral policy *before* anything is uploaded. The policy is
-		// server-wide and survives between specs and runs, so a leftover `on_upload`
-		// would burn every fixture as it arrives and each row below would then measure
-		// a file that was already watermarked before its trigger was set - the
-		// `on_share` owner cells fail, and the `on_download` cells pass for the wrong
-		// reason, which is worse.
+		// A known-neutral policy *before* anything is uploaded. The policy is server-wide
+		// and survives between specs and runs, so a leftover `on_upload` would mark every
+		// fixture as it arrives, and the on_demand row would then be measuring a file that
+		// was already marked before its own trigger was set - passing for the wrong reason,
+		// which is worse than failing.
 		cy.wmSetPolicy({ trigger: 'on_demand' })
 		cy.wmFolder(folder)
 		cy.wmUser(recipientUid).then((credentials) => {
@@ -171,104 +170,62 @@ describe('Trigger × access matrix', () => {
 		cy.task('nc:delete', { ...admin(), path: folder })
 	})
 
-	describe('on_download - rendered per fetch, for everyone including the owner', () => {
-		before(() => {
-			cy.wmSetPolicy({ trigger: 'on_download' })
-		})
-
-		access.forEach(({ label, fetch }) => {
-			it(`watermarks: ${label}`, () => {
-				fetch(files.on_download).then((base64) => {
-					cy.task('probe:pdf', { base64 }).then((pdf) => {
-						expect(pdf.watermarked, `${label} served the clean original`).to.be.true
-						expect(pdf.pages, `${label} lost a page`).to.eq(2)
-					})
-				})
-			})
-		})
-
-		it('leaves the stored bytes alone through all of it', () => {
-			// Six deliveries later, the file on disk must still be the one uploaded.
-			// Rendering per fetch is only true if nothing was written back.
-			cy.wmSetPolicy({ trigger: 'on_demand' })
-			cy.wmDownload(`${folder}/${files.on_download}`).then((base64) => {
-				cy.task('probe:pdf', { base64 }).its('watermarked').should('be.false')
-			})
-		})
-	})
-
-	describe('on_share - for everyone except the owner', () => {
-		before(() => {
-			cy.wmSetPolicy({ trigger: 'on_share' })
-		})
-
-		access.forEach(({ label, owner, fetch }) => {
-			const expectation = owner ? 'leaves alone' : 'watermarks'
-
-			it(`${expectation}: ${label}`, () => {
-				fetch(files.on_share).then((base64) => {
-					cy.task('probe:pdf', { base64 }).then((pdf) => {
-						expect(pdf.watermarked, owner
-							? `${label} stamped the owner's own copy`
-							: `${label} served the clean original`).to.eq(!owner)
-					})
-				})
-			})
-		})
-	})
-
 	/**
-	 * The in-place rows. Both burn the watermark into the stored bytes, so what every
-	 * cell has to show is that it delivered *those* bytes and nothing re-rendered them.
+	 * One row per trigger. The trigger only decides how the file comes to be marked; every
+	 * cell below expects the same thing of it afterwards.
 	 */
-	const inPlace = (trigger, burn) => {
-		describe(`${trigger} - burned into the stored bytes, no interceptor engages`, () => {
-			let stored
-
+	const row = (trigger, mark) => {
+		describe(`${trigger} - watermarked on every fetch, for every reader`, () => {
 			before(() => {
 				cy.wmSetPolicy({ trigger })
-				burn()
-
-				// The owner's own fetch under an in-place policy is the stored file:
-				// no delivery trigger is configured, so nothing intercepts it.
-				cy.wmDownload(`${folder}/${files[trigger]}`).then((base64) => {
-					stored = base64
-					cy.task('probe:pdf', { base64 }).then((pdf) => {
-						expect(pdf.watermarked, `${trigger} did not burn the watermark in`).to.be.true
-						expect(pdf.pages, `${trigger} lost a page`).to.eq(2)
-					})
-				})
+				mark()
 			})
 
 			access.forEach(({ label, fetch }) => {
-				it(`serves the stored bytes unrendered: ${label}`, () => {
+				it(`watermarks: ${label}`, () => {
 					fetch(files[trigger]).then((base64) => {
-						// Byte-identity, not "is it watermarked". A delivery renderer that
-						// woke up here would return a valid, watermarked, *different* file
-						// - a second stamp on an already-stamped document, which every
-						// looser assertion accepts.
-						expect(base64, `${label} re-rendered a file that was already burned`)
-							.to.eq(stored)
+						cy.task('probe:pdf', { base64 }).then((pdf) => {
+							expect(pdf.watermarked, `${label} served the clean original`).to.be.true
+							expect(pdf.pages, `${label} lost a page`).to.eq(2)
+						})
+					})
+				})
+			})
+
+			/**
+			 * **Six deliveries later, the file on disk is still the one that was uploaded.**
+			 *
+			 * Rendering per fetch is only true if nothing was written back, and a renderer
+			 * that wrote its result back would pass every assertion above while destroying
+			 * the original. Unmarking is what exposes the stored bytes to look at: it
+			 * restores nothing, so what comes back is whatever has been there all along.
+			 */
+			it('leaves the stored bytes alone through all of it', () => {
+				cy.wmRemove(`${folder}/${files[trigger]}`).its('status').should('eq', 200)
+				cy.wmDownload(`${folder}/${files[trigger]}`).then((base64) => {
+					cy.task('probe:pdf', { base64 }).then((pdf) => {
+						expect(pdf.watermarked, 'a delivery wrote its render back to storage').to.be.false
+						expect(pdf.pages).to.eq(2)
 					})
 				})
 			})
 		})
 	}
 
-	inPlace('on_demand', () => {
+	row('on_demand', () => {
 		cy.wmApply(`${folder}/${files.on_demand}`)
 	})
 
 	/**
-	 * Created here rather than in the outer `before`, so this row measures a first upload
-	 * and nothing else.
+	 * The on_upload file is created here rather than in the outer `before`, so this row
+	 * measures a first upload and nothing else.
 	 *
 	 * An overwrite is a different question with its own answer - it used to land clean and
 	 * still badged, and closing that took three fixes - so it is asserted on its own in
 	 * `02-on-upload` rather than folded in here, where a failure would read as a broken
 	 * matrix cell.
 	 */
-	inPlace('on_upload', () => {
+	row('on_upload', () => {
 		cy.task('fixture:pdf', { pages: 2, text: 'on_upload' }).then((base64) => {
 			cy.wmUpload(`${folder}/${files.on_upload}`, base64)
 		})

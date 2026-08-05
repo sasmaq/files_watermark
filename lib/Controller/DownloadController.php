@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Controller;
 
+use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
@@ -13,6 +14,7 @@ use OCP\AppFramework\Http\StreamResponse;
 use OCP\Files\File;
 use OCP\Files\IRootFolder;
 use OCP\Files\NotFoundException;
+use OCP\IL10N;
 use OCP\IRequest;
 use OCP\IUserSession;
 
@@ -24,13 +26,18 @@ class DownloadController extends Controller {
 		private WatermarkService $watermarkService,
 		private IRootFolder $rootFolder,
 		private IUserSession $userSession,
+		private IL10N $l,
 	) {
 		parent::__construct($appName, $request);
 	}
 
 	/**
 	 * Streams a watermarked copy of the requested file.
-	 * The original file is never modified.
+	 *
+	 * The file on storage is never modified, and a file that is not marked is streamed as
+	 * it is stored - this endpoint reports what the policy says, it does not overrule it.
+	 * A marked file whose render fails is refused rather than served clean, the same
+	 * denial the DAV path makes.
 	 */
 	#[NoAdminRequired]
 	public function download(string $path): Http\Response {
@@ -52,9 +59,25 @@ class DownloadController extends Controller {
 		}
 
 		try {
-			$tmpPath = $this->watermarkService->watermarkFile($node, 'on_download');
-		} catch (\RuntimeException $e) {
-			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_UNPROCESSABLE_ENTITY);
+			$tmpPath = $this->watermarkService->watermarkForDownload($node);
+		} catch (WatermarkRequiredException $e) {
+			return new DataResponse(['error' => $e->getMessage()], Http::STATUS_FORBIDDEN);
+		}
+
+		if ($tmpPath === null) {
+			// Not marked. Handing back the stored file is the correct answer, and it is the
+			// same bytes any other download of it would produce.
+			$handle = $node->fopen('rb');
+			if ($handle === false) {
+				return new DataResponse(['error' => $this->l->t('File not found')], Http::STATUS_NOT_FOUND);
+			}
+
+			$response = new StreamResponse($handle);
+			$response->addHeader('Content-Disposition', 'attachment; filename="' . addslashes($node->getName()) . '"');
+			$response->addHeader('Content-Type', $node->getMimeType());
+			$response->addHeader('Content-Length', (string)$node->getSize());
+
+			return $response;
 		}
 
 		$response = new StreamResponse($tmpPath);
