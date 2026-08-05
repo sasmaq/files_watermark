@@ -337,7 +337,8 @@ bound on marking from the UI, which is why it is still there. It is not configur
   as it arrives. The manual actions are hidden in this mode, since the policy already covers
   everything
 - **Removing a watermark:** right-click → **Remove watermark**. Instant, and complete -
-  there is nothing to restore, because nothing was overwritten
+  there is nothing to restore, because nothing was overwritten. **Only the file's owner can
+  do this**, even on a share with edit permission - see below
 - **Admin settings:** configure the global policy under **Settings → Additional → Watermark Settings**
 
 ## Previews
@@ -368,6 +369,23 @@ Previews of unmarked files are untouched and uncached-by-us; nothing changes for
 
 There is nothing to restore, because nothing was ever overwritten. **Remove watermark**
 deletes the mark and the next download is the file as it was uploaded, byte for byte.
+
+**Only the owner may remove a watermark**, and that is not the same rule as applying one.
+Applying asks for write permission, because it is a change to the file's policy and the
+people who can change the file are the people who can change that. Applying the same rule
+to removal would hand the off switch to a share recipient with edit permission - and
+whoever the shared copy would have named is exactly whoever has an interest in it naming
+nobody. So removal asks who *owns* the file rather than who may write it. For a file that
+is not shared the two are the same person and nothing changes; the rule only ever bites on
+a share.
+
+The reverse is deliberately not restricted: a recipient may still *apply* a watermark to a
+file they can write. That direction only ever adds protection, and it cannot lock the owner
+out, since the owner can remove a watermark from anything they own.
+
+In the Files app the action is simply not offered on a file somebody else owns. The server
+refuses it either way - the hidden button is so the refusal is not something a user has to
+discover by clicking.
 
 Earlier versions burned the watermark into the stored file and kept a copy of the original
 in the owner's storage to undo it with. That whole apparatus is gone - no copies against

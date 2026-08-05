@@ -1,5 +1,6 @@
 import { createApp, h } from 'vue'
 import { registerFileAction, FileAction, registerDavProperty } from '@nextcloud/files'
+import { getCurrentUser } from '@nextcloud/auth'
 import { subscribe, emit } from '@nextcloud/event-bus'
 import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
@@ -118,9 +119,34 @@ export function isApplyActionEnabled(files) {
 }
 
 /**
- * Whether the "Remove watermark" action should be offered: the exact mirror of
- * {@see isApplyActionEnabled}, differing only in requiring the file to *be*
- * watermarked. The two are mutually exclusive, so a row never shows both.
+ * Whether the current user owns this node.
+ *
+ * The Files client puts the owner's uid on every node it lists (`owner`, from the DAV
+ * `owner-id` property), and a node in the user's own home reports them as the owner - so
+ * this is false only for a received share.
+ *
+ * **A node that does not say who owns it is treated as not ours.** That is the safe
+ * direction: the only thing gated on this is the Remove action, so an unknown owner hides
+ * a button rather than offering one that the server will refuse.
+ * @param {object} node - a Files `Node`
+ * @return {boolean} true when the acting user is the node's owner
+ */
+export function isOwnedByCurrentUser(node) {
+	const owner = node?.owner ?? node?.attributes?.['owner-id']
+	const me = getCurrentUser()?.uid
+	return Boolean(owner) && Boolean(me) && String(owner) === String(me)
+}
+
+/**
+ * Whether the "Remove watermark" action should be offered: a single supported file, in
+ * on_demand mode, that **is** watermarked and that the acting user **owns**.
+ *
+ * The ownership half is the one asymmetry between this and {@see isApplyActionEnabled},
+ * and it is deliberate. A share recipient with edit permission passes every other check
+ * here, and letting them take the watermark off the document they were given defeats the
+ * whole point of it - whoever the shared copy would have named is exactly whoever wants it
+ * to name nobody. The server refuses them either way; this stops the button being offered
+ * so the refusal is not something a user has to discover.
  * @param {object[]} files - selected Files `Node` objects
  * @return {boolean} true when the action should be shown
  */
@@ -129,6 +155,9 @@ export function isRemoveActionEnabled(files) {
 		return false
 	}
 	const node = files[0]
+	if (!isOwnedByCurrentUser(node)) {
+		return false
+	}
 	const id = Number(node?.fileid ?? node?.id)
 	return isNodeWatermarked(node)
 		|| (Number.isInteger(id) && watermarkedIds.has(id))

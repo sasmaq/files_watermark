@@ -30,12 +30,16 @@ const INDICATOR_SELECTOR = '.files-watermark-indicator'
  * @param {string} props.mime - the node's MIME type
  * @param {number} props.fileid - the node's file id
  * @param {boolean} props.watermarked - whether the property marks it watermarked
+ * @param {string} props.owner - the uid the node reports as its owner
  * @return {object} a node-like object
  */
-function node({ mime = 'application/pdf', fileid = 1, watermarked = false } = {}) {
+function node({ mime = 'application/pdf', fileid = 1, watermarked = false, owner = 'alice' } = {}) {
 	return {
 		fileid,
 		mime,
+		// Every node a Files listing produces carries its owner; a received share carries
+		// somebody else's. The mock user is `alice`, so this defaults to "mine".
+		owner,
 		// The webdav client parses the tag value to a number, so mirror that here.
 		attributes: { 'is-watermarked': watermarked ? 1 : 0 },
 	}
@@ -150,13 +154,52 @@ describe('main-files', () => {
 			expect(isRemoveActionEnabled([node({ watermarked: false })])).toBe(false)
 		})
 
-		it('is the exact mirror of Apply, so a row never offers both', () => {
+		it('mirrors Apply on a file of the user\'s own, so a row never offers both', () => {
 			const watermarked = [node({ watermarked: true })]
 			const clean = [node({ watermarked: false })]
 			expect(isApplyActionEnabled(watermarked)).toBe(false)
 			expect(isRemoveActionEnabled(watermarked)).toBe(true)
 			expect(isApplyActionEnabled(clean)).toBe(true)
 			expect(isRemoveActionEnabled(clean)).toBe(false)
+		})
+
+		/**
+		 * **A share recipient is not offered the button at all.**
+		 *
+		 * The server refuses them regardless - this is the half that stops the refusal
+		 * being something a user has to discover by clicking. It is the one place the two
+		 * actions deliberately stop mirroring each other: a recipient with edit permission
+		 * may still *mark* a file they were given, which only adds protection, but taking
+		 * the watermark back off is the owner's alone.
+		 */
+		it('is disabled on a file owned by somebody else, however watermarked it is', () => {
+			const shared = [node({ watermarked: true, owner: 'bob' })]
+
+			expect(isRemoveActionEnabled(shared)).toBe(false)
+			// And Apply stays available, so the recipient is not simply locked out of
+			// the menu.
+			expect(isApplyActionEnabled([node({ watermarked: false, owner: 'bob' })])).toBe(true)
+		})
+
+		it('is disabled when the badge set says watermarked but the file is not ours', () => {
+			// The id-set is the other source of truth for "watermarked", and it knows
+			// nothing about ownership - so the check has to sit outside it.
+			markWatermarked(77)
+			expect(isRemoveActionEnabled([
+				node({ fileid: 77, watermarked: false, owner: 'bob' }),
+			])).toBe(false)
+		})
+
+		it('is disabled for a node that does not say who owns it', () => {
+			// Built by hand rather than through node(), whose default owner is the acting
+			// user - the case under test is the property being *absent*, which a default
+			// would fill in. A listing from an older bundle is where this comes from.
+			const ownerless = { ...node({ watermarked: true }) }
+			delete ownerless.owner
+
+			// Unknown ownership hides a button rather than offering one the server will
+			// refuse. The safe direction is the quiet one.
+			expect(isRemoveActionEnabled([ownerless])).toBe(false)
 		})
 
 		it('is enabled from the badge set when the DAV property is still stale', () => {

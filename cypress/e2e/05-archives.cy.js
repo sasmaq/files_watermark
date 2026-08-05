@@ -132,6 +132,44 @@ describe('Archive (ZIP) downloads', () => {
 			})
 		})
 
+		/**
+		 * **The mark is what gates a member, not the policy and not the folder.**
+		 *
+		 * An archive holding one marked and one unmarked PDF has to come back with exactly
+		 * one of them stamped. Every other test here marks everything, so all of them would
+		 * still pass against a plugin that watermarked every supported member it met - which
+		 * would put a watermark on files no trigger ever marked.
+		 */
+		it('watermarks the marked members and passes the unmarked ones through', () => {
+			const unmarked = `${folder}/unmarked.pdf`
+
+			cy.task('fixture:pdf', { pages: 1, text: 'never marked' })
+				.then((base64) => cy.wmUpload(unmarked, base64))
+
+			cy.task('nc:get', {
+				url: `/remote.php/dav/files/${Cypress.env('ncUser')}/${folder}`
+					+ `?accept=zip&files=${encodeURIComponent('["one.pdf","unmarked.pdf"]')}`,
+				user: Cypress.env('ncUser'),
+				password: Cypress.env('ncPassword'),
+				headers: zipHeaders,
+			}).then((response) => {
+				expect(response.status).to.eq(200)
+				probeArchive(response.base64).then((members) => {
+					const marked = members[Object.keys(members).find((n) => n.endsWith('one.pdf'))]
+					const clean = members[Object.keys(members).find((n) => n.endsWith('unmarked.pdf'))]
+
+					expect(marked.watermarked, 'the marked member came back clean').to.be.true
+					expect(clean.watermarked, 'an unmarked member was watermarked anyway').to.be.false
+				})
+			})
+
+			cy.task('nc:delete', {
+				user: Cypress.env('ncUser'),
+				password: Cypress.env('ncPassword'),
+				path: unmarked,
+			})
+		})
+
 		it('watermarks a multi-file selection, which core streams the same way', () => {
 			cy.task('nc:get', {
 				url: `/remote.php/dav/files/${Cypress.env('ncUser')}/${folder}`
@@ -169,23 +207,6 @@ describe('Archive (ZIP) downloads', () => {
 						.filter(([name]) => name.endsWith('.pdf'))
 						.forEach(([name, pdf]) => {
 							expect(pdf.watermarked, `${name} reached the recipient clean`).to.be.true
-						})
-				})
-			})
-		})
-
-		it("leaves the owner's own folder download untouched", () => {
-			cy.task('nc:get', {
-				url: `/remote.php/dav/files/${Cypress.env('ncUser')}/${folder}?accept=zip`,
-				user: Cypress.env('ncUser'),
-				password: Cypress.env('ncPassword'),
-				headers: zipHeaders,
-			}).then((response) => {
-				probeArchive(response.base64).then((members) => {
-					Object.entries(members)
-						.filter(([name]) => name.endsWith('.pdf'))
-						.forEach(([name, pdf]) => {
-							expect(pdf.watermarked, `the owner's own archive stamped ${name}`).to.be.false
 						})
 				})
 			})

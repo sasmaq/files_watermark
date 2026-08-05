@@ -7,6 +7,7 @@ module.exports = {
     moduleFileExtensions: ['js', 'vue', 'json'],
     moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/src/$1',
+        '@nextcloud/auth': '<rootDir>/src/tests/__mocks__/@nextcloud/auth.js',
         '@nextcloud/axios': '<rootDir>/src/tests/__mocks__/@nextcloud/axios.js',
         '@nextcloud/files': '<rootDir>/src/tests/__mocks__/@nextcloud/files.js',
         '@nextcloud/event-bus': '<rootDir>/src/tests/__mocks__/@nextcloud/event-bus.js',

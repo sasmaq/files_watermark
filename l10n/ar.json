@@ -132,7 +132,8 @@
         "The file itself is not changed. From now on, every download and every preview of it carries a watermark naming whoever fetched it.": "لا يتغيّر الملف نفسه. من الآن فصاعداً يحمل كل تنزيل وكل معاينة له علامة مائية باسم من طلبه.",
         "Watermark removed": "أُزيلت العلامة المائية",
         "Downloaded": "جرى تنزيله",
-        "Downloads and previews of this file are watermarked": "تحمل تنزيلات هذا الملف ومعايناته علامة مائية"
+        "Downloads and previews of this file are watermarked": "تحمل تنزيلات هذا الملف ومعايناته علامة مائية",
+        "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية."
     },
     "pluralForm": "nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);"
 }

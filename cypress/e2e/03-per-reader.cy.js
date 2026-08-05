@@ -51,8 +51,11 @@ describe('Per-reader watermarking', () => {
 		// or rewritten at share-creation time.
 		cy.wmUnshareAll(`/${file}`)
 		cy.wmUnshareAll(`/${image}`)
-		cy.wmShare({ path: `/${file}`, shareWith: recipientUid })
-		cy.wmShare({ path: `/${image}`, shareWith: recipientUid })
+		// 19 = read + update + share. The recipient can *edit* these files, which is what
+		// makes the ownership test below prove something: nothing but ownership can be
+		// what refuses them.
+		cy.wmShare({ path: `/${file}`, shareWith: recipientUid, permissions: 19 })
+		cy.wmShare({ path: `/${image}`, shareWith: recipientUid, permissions: 19 })
 		cy.wmShare({ path: `/${file}`, shareType: 3, permissions: 1 }).then((share) => {
 			link = share
 		})
@@ -234,6 +237,49 @@ describe('Per-reader watermarking', () => {
 				// Core's own caching headers, not ours - the middleware never ran.
 				expect(String(response.headers['cache-control'] ?? '')).to.not.contain('no-store')
 			})
+		})
+	})
+
+	// ---------------------------------------------------------------------
+	// Who may take the watermark off
+	// ---------------------------------------------------------------------
+
+	/**
+	 * **A share recipient cannot unmark the file they were given**, even with edit
+	 * permission on it.
+	 *
+	 * This is the one rule where marking and unmarking part company. Marking asks for write
+	 * permission, because it is a change to the file's policy and the people who can change
+	 * the file are the people who can change that. The same rule on unmarking would hand the
+	 * off switch to the recipient - and whoever the shared copy would have named is exactly
+	 * whoever has an interest in it naming nobody.
+	 *
+	 * Run last, and it logs back in as the owner afterwards: the session is shared with the
+	 * `after()` hook, which unshares and deletes as the owner.
+	 */
+	describe('removing the watermark', () => {
+		it('refuses a share recipient with edit permission', () => {
+			cy.ncLogin(recipient.user, recipient.password)
+
+			cy.wmRemove('report.pdf', { failOnStatusCode: false }).then((response) => {
+				expect(response.status, 'a recipient took the watermark off').to.eq(403)
+				expect(response.body.error).to.contain('owner')
+			})
+
+			// And the file is still marked, fetched as the recipient.
+			cy.wmDownload('report.pdf', { as: recipient }).then((base64) => {
+				cy.task('probe:pdf', { base64 }).its('watermarked').should('be.true')
+			})
+
+			cy.ncLogin()
+		})
+
+		it('allows the owner', () => {
+			cy.wmRemove(file).its('status').should('eq', 200)
+			cy.wmIsWatermarkedProp(file).should('not.eq', '1')
+
+			// Put it back, so the ordering of this block cannot affect a rerun.
+			cy.wmApply(file).its('status').should('eq', 200)
 		})
 	})
 })

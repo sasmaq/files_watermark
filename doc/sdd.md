@@ -198,7 +198,7 @@ because the log is history and this is a statement about what happens next.
 | `POST` | `/apps/files_watermark/api/v1/config` | Create or update the global config (admin only) |
 | `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Remove the global config (admin only) |
 | `POST` | `/apps/files_watermark/api/v1/apply` | Mark a file on demand |
-| `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file |
+| `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file (**owner only**) |
 | `GET` | `/apps/files_watermark/api/v1/download` | Stream a file, watermarked if it is marked |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
 
@@ -246,6 +246,7 @@ renderer, was removed for this reason.
 - Watermarked previews are never written to Nextcloud's preview cache, which is keyed by file and size and not by viewer; they are rendered per response and marked `no-store`.
 - All API inputs are sanitized and validated; file paths are resolved through `\OCP\Files\IRootFolder` to prevent path traversal.
 - Audit log access is restricted to Nextcloud admins.
+- **Removing a watermark is restricted to the file's owner.** Applying one requires write permission, which a share recipient may have; removing one requires ownership, because a recipient who can take the watermark off the document they were given defeats the reason it is there. The asymmetry is deliberate and one-directional - a recipient may still apply.
 
 ---
 

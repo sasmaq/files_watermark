@@ -11,10 +11,16 @@
  *    `WHERE` clauses against a mocked query builder - they cannot see a clause that is
  *    valid SQL and matches the wrong thing.
  *
- * The in-place half is the one worth being careful about: those rows are not history,
- * they are how the app knows a file's stored bytes carry a watermark. Pruning cannot
- * reach them at all - not by default, but by construction - so the last test here asks
- * for the flag that used to allow it and expects the command to refuse.
+ * **What changed, and what this spec is now for.** The command used to be able to delete
+ * delivery rows and nothing else, because the other rows were not history - they were how
+ * the app knew a file was watermarked, so deleting one un-badged its file. That record
+ * lives in `watermark_mark` now, and the carve-out went with it: `--all` really does mean
+ * every row.
+ *
+ * So the assertion that matters has inverted. It is no longer "the command refuses to
+ * touch those rows" - it is **"the log can be emptied completely and the file is still
+ * watermarked"**. That is the whole benefit of splitting the two tables, and it is only
+ * observable against a real database.
  */
 
 const folder = 'e2e-prune'
@@ -38,7 +44,7 @@ describe('occ files_watermark:prune-log', () => {
 		cy.ncLogin()
 		cy.wmFolder(folder)
 
-		// One in-place row (on_demand), which must survive an ordinary prune...
+		// A file that is marked and never fetched: one mark row, no delivery rows.
 		cy.wmSetPolicy({ trigger: 'on_demand' })
 		cy.task('fixture:pdf', { text: 'applied' }).then((base64) => cy.wmUpload(applied, base64))
 		cy.wmApply(applied).its('body.status').should('eq', 'watermarked')
@@ -46,7 +52,8 @@ describe('occ files_watermark:prune-log', () => {
 			ids['applied.pdf'] = id
 		})
 
-		// ...and delivery rows, which are what it exists to remove.
+		// ...and a file that is marked *and* fetched twice, so it carries the delivery rows
+		// this command exists to remove.
 		cy.task('fixture:pdf', { text: 'delivered' }).then((base64) => cy.wmUpload(delivered, base64))
 		cy.wmFileId(delivered).then((id) => {
 			ids['delivered.pdf'] = id
@@ -69,9 +76,9 @@ describe('occ files_watermark:prune-log', () => {
 		})
 	})
 
-	it('starts from two delivery rows and two mark rows', () => {
-		// The mark itself is recorded too, so the marked-and-fetched file carries three
-		// rows: the mark, and one per download.
+	it('starts from one mark row and one mark plus two delivery rows', () => {
+		// Marking is recorded unconditionally - it is one row per policy decision - so the
+		// fetched file carries three rows: its mark, and one per download.
 		logRows().then(rowsFor('delivered.pdf'))
 			.should('deep.eq', ['on_demand', 'delivered', 'delivered'])
 		logRows().then(rowsFor('applied.pdf')).should('deep.eq', ['on_demand'])
@@ -81,10 +88,11 @@ describe('occ files_watermark:prune-log', () => {
 		cy.task('nc:occ', { args: ['files_watermark:prune-log', '--all', '--dry-run'] })
 			.then((result) => {
 				expect(result.code, result.stderr).to.eq(0)
-				expect(result.stdout).to.match(/Would delete \d+ row\(s\)/)
+				expect(result.stdout).to.match(/Would delete \d+ audit row\(s\)/)
 			})
 
-		logRows().then(rowsFor('delivered.pdf')).should('have.length', 2)
+		logRows().then(rowsFor('delivered.pdf')).should('have.length', 3)
+		logRows().then(rowsFor('applied.pdf')).should('have.length', 1)
 	})
 
 	it('leaves everything alone when nothing is old enough', () => {
@@ -92,35 +100,76 @@ describe('occ files_watermark:prune-log', () => {
 		// match them - an off-by-one on the cutoff would take the lot.
 		cy.task('nc:occ', { args: ['files_watermark:prune-log'] }).then((result) => {
 			expect(result.code, result.stderr).to.eq(0)
-			expect(result.stdout).to.contain('Deleted 0 row(s)')
+			expect(result.stdout).to.contain('Deleted 0 audit row(s)')
 		})
 
-		logRows().then(rowsFor('delivered.pdf')).should('have.length', 2)
+		logRows().then(rowsFor('delivered.pdf')).should('have.length', 3)
+		logRows().then(rowsFor('applied.pdf')).should('have.length', 1)
 	})
 
-	it('deletes delivery rows and keeps the apply row', () => {
+	/**
+	 * **The point of the whole split, asserted end to end.**
+	 *
+	 * `--all` empties the log - mark rows included, which it could not reach before - and
+	 * both files are still watermarked afterwards. Under the old scheme this exact command
+	 * would have un-badged them and let them be stamped a second time.
+	 *
+	 * The download is checked as well as the badge, because the badge is a WebDAV property
+	 * and could in principle be answered from somewhere else; a watermark in the delivered
+	 * bytes cannot be.
+	 */
+	it('empties the log without changing any file\'s watermarked status', () => {
 		cy.task('nc:occ', { args: ['files_watermark:prune-log', '--all'] }).then((result) => {
 			expect(result.code, result.stderr).to.eq(0)
-			expect(result.stdout).to.contain('delivery rows only')
+			expect(result.stdout).to.match(/Deleted \d+ audit row\(s\) of any age/)
 		})
 
 		logRows().then(rowsFor('delivered.pdf')).should('be.empty')
-		// The one that matters: the file is still watermarked, and the app still knows.
-		logRows().then(rowsFor('applied.pdf')).should('deep.eq', ['on_demand'])
+		logRows().then(rowsFor('applied.pdf')).should('be.empty')
+
 		cy.wmIsWatermarkedProp(applied).should('eq', '1')
+		cy.wmIsWatermarkedProp(delivered).should('eq', '1')
+
+		cy.wmDownload(applied).then((base64) => {
+			cy.task('probe:pdf', { base64 }).its('watermarked').should('be.true')
+		})
 	})
 
-	it('has no option that would clear a badge', () => {
-		// The guarantee is that a retention command cannot make the app forget a file it
-		// has stamped - so the flag that used to allow it is gone, and asking for it is a
-		// usage error rather than a silently ignored argument.
+	/**
+	 * A file whose history has been pruned is still marked, so applying again is the same
+	 * no-op it was before the prune.
+	 *
+	 * This is the failure the old carve-out existed to prevent, checked from the other
+	 * side: if the log were still the app's memory, an emptied log would make this report
+	 * a fresh watermark and stamp the document twice.
+	 */
+	it('still refuses to mark a pruned file a second time', () => {
+		cy.wmApply(applied).its('body.status').should('eq', 'already_watermarked')
+	})
+
+	/**
+	 * There is still no scope option, for a different reason than there used to be.
+	 *
+	 * `--include-applied` existed to unlock rows the command refused to touch. Nothing is
+	 * refused now, so `--days` and `--all` are the whole of what retention means and the
+	 * flag has nothing left to include. Asking for it is a usage error rather than a
+	 * silently ignored argument.
+	 */
+	it('has no scope option', () => {
 		cy.task('nc:occ', { args: ['files_watermark:prune-log', '--all', '--include-applied'] })
 			.then((result) => {
 				expect(result.code, 'the option still exists').to.not.eq(0)
 				expect(`${result.stdout}${result.stderr}`).to.contain('--include-applied')
 			})
+	})
 
-		logRows().then(rowsFor('applied.pdf')).should('deep.eq', ['on_demand'])
-		cy.wmIsWatermarkedProp(applied).should('eq', '1')
+	it('rejects a --days value that is not a positive number', () => {
+		// Coercing `abc` to 0 would delete everything, which is the opposite of what a
+		// mistyped retention means.
+		cy.task('nc:occ', { args: ['files_watermark:prune-log', '--days', 'abc'] })
+			.then((result) => {
+				expect(result.code, 'a mistyped retention was accepted').to.not.eq(0)
+				expect(`${result.stdout}${result.stderr}`).to.contain('--days')
+			})
 	})
 })

@@ -59,13 +59,24 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 	}
 
 	/**
+	 * @param ?string $ownerUid the file's owner; null for a node whose owner cannot be
+	 *                          resolved. Defaults to the logged-in user, so a test that says nothing about
+	 *                          ownership is testing an ordinary file of the caller's own
 	 * @return File&MockObject
 	 */
-	private function mockFile(bool $readable, bool $updateable): File {
+	private function mockFile(bool $readable, bool $updateable, ?string $ownerUid = 'alice'): File {
 		$node = $this->createMock(File::class);
 		$node->method('getMimeType')->willReturn('application/pdf');
 		$node->method('isReadable')->willReturn($readable);
 		$node->method('isUpdateable')->willReturn($updateable);
+
+		if ($ownerUid === null) {
+			$node->method('getOwner')->willReturn(null);
+		} else {
+			$owner = $this->createMock(IUser::class);
+			$owner->method('getUID')->willReturn($ownerUid);
+			$node->method('getOwner')->willReturn($owner);
+		}
 
 		$folder = $this->createMock(Folder::class);
 		$folder->method('get')->willReturn($node);
@@ -96,15 +107,23 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		);
 	}
 
-	public function testReturnsForbiddenWhenNotUpdateable(): void {
-		// Restoring rewrites the file, so read-only access must not be able to trigger it.
+	/**
+	 * Write permission is not what governs this, ownership is.
+	 *
+	 * It used to be a write: the removal rewrote the file with a preserved copy, so
+	 * read-only access had to be refused. Nothing is written now, and the check that
+	 * replaced it asks a different question - so an owner whose own file is not updateable
+	 * (a read-only mount) can still take the watermark off it. Asserted rather than left
+	 * implied, because "requires write" is the rule anyone would reintroduce by reflex.
+	 */
+	public function testWritePermissionIsNotWhatGovernsUnmarking(): void {
 		$this->loginAlice();
 		$this->mockFile(readable: true, updateable: false);
 
-		$this->watermarkService->expects($this->never())->method('unmark');
+		$this->watermarkService->expects($this->once())->method('unmark')->willReturn(true);
 
 		$this->assertSame(
-			Http::STATUS_FORBIDDEN,
+			Http::STATUS_OK,
 			$this->controller->removeWatermark('doc.pdf')->getStatus(),
 		);
 	}
@@ -118,6 +137,51 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		$this->assertSame(
 			Http::STATUS_FORBIDDEN,
 			$this->controller->removeWatermark('doc.pdf')->getStatus(),
+		);
+	}
+
+	/**
+	 * **A share recipient cannot take the watermark off the document they were given.**
+	 *
+	 * This is the one rule where marking and unmarking deliberately part company. Marking
+	 * asks for write permission, because it is a change to the file's policy and the people
+	 * who can change the file are the people who can change that. Applying the same rule to
+	 * unmarking would hand the off switch to a recipient with edit permission - and whoever
+	 * the shared copy would have named is exactly whoever has an interest in it naming
+	 * nobody.
+	 *
+	 * Note what is asserted: the recipient here has **both** read and write permission, so
+	 * nothing but the ownership check can be what refuses them.
+	 */
+	public function testAShareRecipientCannotUnmarkTheOwnersFile(): void {
+		$this->loginAlice();
+		$this->mockFile(readable: true, updateable: true, ownerUid: 'bob');
+
+		$this->watermarkService->expects($this->never())->method('unmark');
+
+		$response = $this->controller->removeWatermark('shared.pdf');
+
+		$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		// The message has to name the reason: a recipient who can rename and delete the
+		// file will otherwise read this as a bug.
+		$this->assertStringContainsString('owner', $response->getData()['error']);
+	}
+
+	/**
+	 * A node whose owner cannot be resolved - a broken mount, most of all - is refused.
+	 *
+	 * "Cannot establish who owns this" is not "this user owns it". The failure is rare and
+	 * the cost of being wrong is one-directional, so the check fails closed.
+	 */
+	public function testAnUnresolvableOwnerIsRefused(): void {
+		$this->loginAlice();
+		$this->mockFile(readable: true, updateable: true, ownerUid: null);
+
+		$this->watermarkService->expects($this->never())->method('unmark');
+
+		$this->assertSame(
+			Http::STATUS_FORBIDDEN,
+			$this->controller->removeWatermark('orphan.pdf')->getStatus(),
 		);
 	}
 

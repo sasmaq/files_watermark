@@ -375,6 +375,25 @@ class ApiController extends Controller {
 	 * Instant and complete: nothing was overwritten, so there is nothing to restore and no
 	 * way for this to half-succeed. It used to rewrite the file with a preserved copy, and
 	 * could fail for want of one - the 422 that said so has nothing left to describe.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * **ONLY THE OWNER MAY UNMARK, AND THAT IS NOT THE SAME RULE AS MARKING.**
+	 *
+	 * Marking asks for write permission, because it is a change to the file's policy and
+	 * the people who can change the file are the people who can change that. Unmarking
+	 * cannot use the same rule: a share recipient with edit permission would then be able
+	 * to take the watermark off the document they were given, which is the entire threat
+	 * the watermark exists to answer. Whoever the shared copy would have named is exactly
+	 * whoever has an interest in it naming nobody.
+	 *
+	 * So this asks who *owns* the file, not who may write it. For a file that is not shared
+	 * the two are the same person and nothing changes; the rule only ever bites on a share,
+	 * which is the case it was written for.
+	 *
+	 * Note that the reverse is deliberately not restricted: a recipient may still *mark* a
+	 * file they can write. That direction only ever adds protection, and it cannot lock the
+	 * owner out - the owner can unmark anything they own.
+	 * ---------------------------------------------------------------------------
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 120, period: 60)]
@@ -396,15 +415,19 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $this->l->t('Path is not a file')], Http::STATUS_BAD_REQUEST);
 		}
 
-		// Unmarking is a policy change like marking, so it asks for the same permissions -
-		// and asks for them symmetrically, so a user who could mark a file can always
-		// unmark it.
 		if (!$node->isReadable()) {
 			return new DataResponse(['error' => $this->l->t('You do not have permission to read this file')], Http::STATUS_FORBIDDEN);
 		}
 
-		if (!$node->isUpdateable()) {
-			return new DataResponse(['error' => $this->l->t('You do not have permission to modify this file')], Http::STATUS_FORBIDDEN);
+		// The ownership check, per the note above. `getOwner()` is nullable and answers null
+		// for a node whose owner cannot be resolved - a broken mount, most of all - and that
+		// is treated as "not the owner": a check that cannot establish who owns the file has
+		// not established that this user does.
+		if ($node->getOwner()?->getUID() !== $user->getUID()) {
+			return new DataResponse(
+				['error' => $this->l->t('Only the owner of this file can remove its watermark.')],
+				Http::STATUS_FORBIDDEN,
+			);
 		}
 
 		if (!$this->watermarkService->unmark($node)) {
