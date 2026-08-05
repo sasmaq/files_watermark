@@ -91,9 +91,6 @@ OC.L10N.register(
         "Remove Watermark": "إزالة العلامة المائية",
         "Remove watermark": "إزالة العلامة المائية",
         "Remove the watermark from: {file}": "إزالة العلامة المائية من: {file}",
-        "This restores the original file as it was before the watermark was applied. The watermarked version is discarded and cannot be recovered.": "يستعيد هذا الإجراء الملف الأصلي كما كان قبل تطبيق العلامة المائية. تُحذف النسخة المختومة ولا يمكن استرجاعها.",
-        "Original restored successfully.": "استُعيد الملف الأصلي بنجاح.",
-        "Restore original": "استعادة الأصل",
         "Invalid type \"%1$s\". Allowed values: %2$s.": "نوع غير صالح \"%1$s\". القيم المسموح بها: %2$s.",
         "Invalid trigger \"%1$s\". Allowed values: %2$s.": "مُشغِّل غير صالح \"%1$s\". القيم المسموح بها: %2$s.",
         "Invalid color \"%s\". Must be a 6-digit hex value (e.g. #cccccc).": "لون غير صالح \"%s\". يجب أن يكون قيمة ست عشرية من 6 خانات (مثل ‎#cccccc‎).",
@@ -134,6 +131,8 @@ OC.L10N.register(
         "Watermark removed": "أُزيلت العلامة المائية",
         "Downloaded": "جرى تنزيله",
         "Downloads and previews of this file are watermarked": "تحمل تنزيلات هذا الملف ومعايناته علامة مائية",
-        "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية."
+        "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية.",
+        "The file itself does not change. Downloads and previews of it simply stop being watermarked, and you can apply the watermark again at any time.": "لا يتغيّر الملف نفسه. تتوقف تنزيلاته ومعايناته عن حمل العلامة المائية فحسب، ويمكنك تطبيق العلامة عليه مجدداً في أي وقت.",
+        "Watermark removed.": "أُزيلت العلامة المائية."
     },
 "nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);");

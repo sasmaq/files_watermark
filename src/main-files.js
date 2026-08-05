@@ -242,17 +242,17 @@ registerFileAction(new FileAction({
 	},
 }))
 
-// Undo/restore icon - a counter-clockwise arrow over a document, deliberately distinct
-// from the Apply action's icon so the two are not confused in the menu.
-const RESTORE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3Zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8H12Z"/></svg>'
+// Undo icon - a counter-clockwise arrow over a document, deliberately distinct from the
+// Apply action's icon so the two are not confused in the menu.
+const UNDO_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3Zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8H12Z"/></svg>'
 
 /**
  * Mounts RemoveWatermarkModal and returns a Promise that resolves with:
- *   true  - original was restored
+ *   true  - the mark was removed
  *   null  - user cancelled
- * @param {string} filePath - Path of the file to restore
+ * @param {string} filePath - Path of the file to unmark
  * @param {string} fileName - Display name shown in the modal
- * @return {Promise<boolean|null>} true when restored, null when cancelled
+ * @return {Promise<boolean|null>} true when unmarked, null when cancelled
  */
 function mountRemoveModal(filePath, fileName) {
 	return new Promise((resolve) => {
@@ -286,7 +286,7 @@ function mountRemoveModal(filePath, fileName) {
 registerFileAction(new FileAction({
 	id: 'files_watermark_remove',
 	displayName: () => t('files_watermark', 'Remove watermark'),
-	iconSvgInline: () => RESTORE_ICON_SVG,
+	iconSvgInline: () => UNDO_ICON_SVG,
 	enabled: isRemoveActionEnabled,
 	async exec(file) {
 		const result = await mountRemoveModal(file.path, file.basename)

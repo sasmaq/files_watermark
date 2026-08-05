@@ -351,6 +351,7 @@ Getting there needs one thing worth knowing about, because it constrains the des
 Nextcloud caches previews by file id and dimensions and **never by viewer**, so a
 watermarked thumbnail written into that cache would be handed to the next person to open
 the folder with the first person's name on it. So the cache keeps doing what it is good at
+
 - holding the *clean* preview, which no client can reach directly - and the watermark is
 applied to the response, per request, after it. The response is marked `no-store`, so
 nothing downstream can hold on to an image that names a person.

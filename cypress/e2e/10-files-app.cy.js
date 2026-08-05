@@ -10,10 +10,11 @@
  *
  * **A reload is part of the sequence, deliberately.** Every check up to that point can
  * pass on state this app is holding in the page - the id set it wrote when the apply
- * returned. Only a fresh page load makes the row prove itself from what the server
- * says, and that is where this went wrong in production: the badge disappeared and the
- * menu offered Apply on a watermarked file, so Remove - the only route back to the
- * original - was gone. The restore below runs on that reloaded page for the same reason.
+ * returned. Only a fresh page load makes the row prove itself from what the server says,
+ * and that is where this went wrong in production: the badge disappeared and the menu
+ * offered Apply on a file that is already watermarked, which is how a file ends up marked
+ * twice over and its owner unable to see that it is marked at all. The removal below runs
+ * on that reloaded page for the same reason.
  */
 
 const folder = 'e2e-files-ui'
@@ -58,7 +59,7 @@ describe('Files app actions', () => {
 		})
 	})
 
-	it('applies the watermark from the modal and badges the row', () => {
+	it('marks the file from the modal and badges the row', () => {
 		cy.visit(`/apps/files/files?dir=/${folder}`)
 
 		openRowMenu().contains('Apply watermark').click({ force: true })
@@ -75,7 +76,9 @@ describe('Files app actions', () => {
 			.should('exist')
 	})
 
-	it('actually stamped the file, not just the row', () => {
+	it('actually marked the file, not just the row', () => {
+		// The badge is drawn from a WebDAV property, so it can be right while the mark is
+		// not. The delivered bytes cannot be.
 		cy.wmDownload(`${folder}/${name}`).then((base64) => {
 			cy.task('probe:pdf', { base64 }).its('watermarked').should('be.true')
 		})
@@ -105,9 +108,8 @@ describe('Files app actions', () => {
 	it('still badges the file and offers Remove after a page reload', () => {
 		// The regression this spec exists for: everything above passes on the state the
 		// browser is already holding. A reload throws that away, so the row has to be
-		// rebuilt from what the server says - and when it could not be, the badge
-		// vanished and the menu offered Apply on a file that is watermarked, which is
-		// how a user loses the ability to restore their original.
+		// rebuilt from what the server says - and when it could not be, the badge vanished
+		// and the menu offered Apply on a file that is already marked.
 		cy.visit(`/apps/files/files?dir=/${folder}`)
 
 		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 20000 })
@@ -119,12 +121,14 @@ describe('Files app actions', () => {
 		})
 	})
 
-	it('restores the original from the Remove action, badge and all', () => {
+	it('unmarks from the Remove action, badge and all', () => {
 		openRowMenu().contains('Remove watermark').click({ force: true })
 
-		// Destructive-styled confirmation: the watermarked version is discarded.
 		cy.get('.modal-container, [role="dialog"]').last().within(() => {
-			cy.contains('button', /Remove|Restore|Confirm/).click({ force: true })
+			// The dialog is informational rather than destructive, and says so: nothing is
+			// discarded, because the file has never been anything but what was uploaded.
+			cy.contains('The file itself does not change').should('exist')
+			cy.contains('button', 'Remove watermark').click({ force: true })
 		})
 
 		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 20000 })
