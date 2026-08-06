@@ -9,137 +9,6 @@
 /*
 * Ensure proper alignment of the vue material icons
 */
-.material-design-icon[data-v-cf399190] {
-  display: flex;
-  align-self: center;
-  justify-self: center;
-  align-items: center;
-  justify-content: center;
-}
-.loading-icon[data-v-cf399190] {
-  overflow: hidden;
-}
-.loading-icon svg[data-v-cf399190] {
-  animation: rotate var(--animation-duration, 0.8s) linear infinite;
-}
-/**
- * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
- */
-/**
- * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
- */
-/*
-* Ensure proper alignment of the vue material icons
-*/
-.material-design-icon[data-v-6be9fa31] {
-  display: flex;
-  align-self: center;
-  justify-self: center;
-  align-items: center;
-  justify-content: center;
-}
-.notecard[data-v-6be9fa31] {
-  --note-card-icon-size: 20px;
-  --note-card-padding: calc(2 * var(--default-grid-baseline));
-  color: var(--color-main-text) !important;
-  background-color: var(--note-background) !important;
-  border-inline-start: var(--default-grid-baseline) solid var(--note-theme);
-  border-radius: var(--border-radius-small);
-  margin: 1rem 0;
-  padding: var(--note-card-padding);
-  display: flex;
-  flex-direction: row;
-  gap: var(--note-card-padding);
-}
-.notecard__heading[data-v-6be9fa31] {
-  font-size: var(--note-card-icon-size);
-  font-weight: var(--font-weight-heading, 600);
-}
-.notecard__icon[data-v-6be9fa31] {
-  color: var(--note-theme);
-}
-.notecard__icon--heading[data-v-6be9fa31] {
-  font-size: var(--note-card-icon-size);
-  margin-block: calc((1lh - 1em) / 2) auto;
-}
-.notecard--success[data-v-6be9fa31] {
-  --note-background: var(--color-success);
-  --note-theme: var(--color-success-text);
-}
-.notecard--info[data-v-6be9fa31] {
-  --note-background: var(--color-info);
-  --note-theme: var(--color-info-text);
-}
-.notecard--error[data-v-6be9fa31] {
-  --note-background: var(--color-error);
-  --note-theme: var(--color-error-text);
-}
-.notecard--warning[data-v-6be9fa31] {
-  --note-background: var(--color-warning);
-  --note-theme: var(--color-warning-text);
-}
-.notecard--legacy[data-v-6be9fa31] {
-  background-color: color-mix(in srgb, var(--note-background), var(--color-main-background) 80%) !important;
-  color: var(--color-main-text) !important;
-}
-/**
- * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
- */
-/**
- * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
- */
-/*
-* Ensure proper alignment of the vue material icons
-*/
-.material-design-icon[data-v-aaedb1c3] {
-  display: flex;
-  align-self: center;
-  justify-self: center;
-  align-items: center;
-  justify-content: center;
-}
-.icon-vue[data-v-aaedb1c3] {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-width: var(--default-clickable-area);
-  min-height: var(--default-clickable-area);
-  opacity: 1;
-}
-.icon-vue.icon-vue--inline[data-v-aaedb1c3] {
-  display: inline-flex !important;
-  min-width: fit-content;
-  min-height: fit-content;
-  vertical-align: text-bottom;
-}
-.icon-vue span[data-v-aaedb1c3] {
-  line-height: 0;
-}
-.icon-vue[data-v-aaedb1c3] svg {
-  fill: currentColor;
-  width: var(--fb515064);
-  height: var(--fb515064);
-  max-width: var(--fb515064);
-  max-height: var(--fb515064);
-}
-.icon-vue--directional[data-v-aaedb1c3] svg:dir(rtl) {
-  transform: scaleX(-1);
-}
-/**
- * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
- */
-/**
- * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
- */
-/*
-* Ensure proper alignment of the vue material icons
-*/
 .material-design-icon[data-v-18f6cf03] {
   display: flex;
   align-self: center;
@@ -355,6 +224,137 @@
 }
 .button-vue--legacy.button-vue--error[data-v-18f6cf03], .button-vue--legacy.button-vue--success[data-v-18f6cf03], .button-vue--legacy.button-vue--warning[data-v-18f6cf03] {
   color: white;
+}
+/**
+ * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+* Ensure proper alignment of the vue material icons
+*/
+.material-design-icon[data-v-cf399190] {
+  display: flex;
+  align-self: center;
+  justify-self: center;
+  align-items: center;
+  justify-content: center;
+}
+.loading-icon[data-v-cf399190] {
+  overflow: hidden;
+}
+.loading-icon svg[data-v-cf399190] {
+  animation: rotate var(--animation-duration, 0.8s) linear infinite;
+}
+/**
+ * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+* Ensure proper alignment of the vue material icons
+*/
+.material-design-icon[data-v-6be9fa31] {
+  display: flex;
+  align-self: center;
+  justify-self: center;
+  align-items: center;
+  justify-content: center;
+}
+.notecard[data-v-6be9fa31] {
+  --note-card-icon-size: 20px;
+  --note-card-padding: calc(2 * var(--default-grid-baseline));
+  color: var(--color-main-text) !important;
+  background-color: var(--note-background) !important;
+  border-inline-start: var(--default-grid-baseline) solid var(--note-theme);
+  border-radius: var(--border-radius-small);
+  margin: 1rem 0;
+  padding: var(--note-card-padding);
+  display: flex;
+  flex-direction: row;
+  gap: var(--note-card-padding);
+}
+.notecard__heading[data-v-6be9fa31] {
+  font-size: var(--note-card-icon-size);
+  font-weight: var(--font-weight-heading, 600);
+}
+.notecard__icon[data-v-6be9fa31] {
+  color: var(--note-theme);
+}
+.notecard__icon--heading[data-v-6be9fa31] {
+  font-size: var(--note-card-icon-size);
+  margin-block: calc((1lh - 1em) / 2) auto;
+}
+.notecard--success[data-v-6be9fa31] {
+  --note-background: var(--color-success);
+  --note-theme: var(--color-success-text);
+}
+.notecard--info[data-v-6be9fa31] {
+  --note-background: var(--color-info);
+  --note-theme: var(--color-info-text);
+}
+.notecard--error[data-v-6be9fa31] {
+  --note-background: var(--color-error);
+  --note-theme: var(--color-error-text);
+}
+.notecard--warning[data-v-6be9fa31] {
+  --note-background: var(--color-warning);
+  --note-theme: var(--color-warning-text);
+}
+.notecard--legacy[data-v-6be9fa31] {
+  background-color: color-mix(in srgb, var(--note-background), var(--color-main-background) 80%) !important;
+  color: var(--color-main-text) !important;
+}
+/**
+ * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/**
+ * SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+* Ensure proper alignment of the vue material icons
+*/
+.material-design-icon[data-v-aaedb1c3] {
+  display: flex;
+  align-self: center;
+  justify-self: center;
+  align-items: center;
+  justify-content: center;
+}
+.icon-vue[data-v-aaedb1c3] {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: var(--default-clickable-area);
+  min-height: var(--default-clickable-area);
+  opacity: 1;
+}
+.icon-vue.icon-vue--inline[data-v-aaedb1c3] {
+  display: inline-flex !important;
+  min-width: fit-content;
+  min-height: fit-content;
+  vertical-align: text-bottom;
+}
+.icon-vue span[data-v-aaedb1c3] {
+  line-height: 0;
+}
+.icon-vue[data-v-aaedb1c3] svg {
+  fill: currentColor;
+  width: var(--fb515064);
+  height: var(--fb515064);
+  max-width: var(--fb515064);
+  max-height: var(--fb515064);
+}
+.icon-vue--directional[data-v-aaedb1c3] svg:dir(rtl) {
+  transform: scaleX(-1);
 }
 /**
  * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
@@ -1728,30 +1728,33 @@ to { opacity: 1; transform: none;
 }
 
 
-.section-intro[data-v-78d0f5af] {
+.section-intro[data-v-7d9a3c8c] {
     margin: 0 0 20px;
     max-width: 720px;
     color: var(--color-text-maxcontrast);
 }
-.loading-wrapper[data-v-78d0f5af] {
+.loading-wrapper[data-v-7d9a3c8c] {
     display: flex;
     justify-content: center;
     padding: 32px;
 }
-.watermark-log[data-v-78d0f5af] {
+.watermark-log[data-v-7d9a3c8c] {
     max-width: 980px;
     margin-top: 32px;
     padding-top: 28px;
     border-top: 1px solid var(--color-border);
 }
-.watermark-log__title[data-v-78d0f5af] {
+.watermark-log__title[data-v-7d9a3c8c] {
     margin: 0 0 4px;
     font-size: 20px;
     font-weight: 700;
 }
-.watermark-log__desc[data-v-78d0f5af] {
-    margin: 0 0 16px;
+.watermark-log__desc[data-v-7d9a3c8c] {
+    margin: 0 0 12px;
     font-size: 14px;
     color: var(--color-text-maxcontrast);
+}
+.watermark-log__toggle[data-v-7d9a3c8c] {
+    margin-bottom: 16px;
 }
 

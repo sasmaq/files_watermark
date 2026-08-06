@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import axios from '@nextcloud/axios'
 import AdminSettings from '../components/AdminSettings.vue'
 import WatermarkForm from '../components/WatermarkForm.vue'
+import AuditLog from '../components/AuditLog.vue'
 
 // @nextcloud/vue, axios, router and l10n are stubbed via jest.config moduleNameMapper.
 
@@ -72,6 +73,45 @@ describe('AdminSettings', () => {
 		await flushPromises()
 
 		expect(wrapper.find('.wm-status--error').text()).toContain('Invalid color')
+	})
+
+	describe('activity log', () => {
+		const LOG_URL = '/nc/apps/files_watermark/api/v1/log'
+
+		it('is collapsed on arrival, and not fetched at all', async () => {
+			mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
+			const wrapper = mount(AdminSettings)
+			await flushPromises()
+
+			expect(wrapper.findComponent(AuditLog).exists()).toBe(false)
+			// The point of `v-if` over `v-show`: an unmounted log makes no request. A
+			// hidden-but-mounted one would still cost every admin a hundred rows on load.
+			expect(axios.get.mock.calls.map(([url]) => url)).not.toContain(LOG_URL)
+		})
+
+		it('offers a control that says what it will do', async () => {
+			mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
+			const wrapper = mount(AdminSettings)
+			await flushPromises()
+
+			const toggle = wrapper.find('.watermark-log__toggle')
+			expect(toggle.text()).toContain('Show activity log')
+			expect(toggle.attributes('aria-expanded')).toBe('false')
+		})
+
+		it('mounts the log when it is opened, and drops it again when closed', async () => {
+			mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
+			const wrapper = mount(AdminSettings)
+			await flushPromises()
+
+			await wrapper.find('.watermark-log__toggle').trigger('click')
+			expect(wrapper.findComponent(AuditLog).exists()).toBe(true)
+			expect(wrapper.find('.watermark-log__toggle').text()).toContain('Hide activity log')
+			expect(wrapper.find('.watermark-log__toggle').attributes('aria-expanded')).toBe('true')
+
+			await wrapper.find('.watermark-log__toggle').trigger('click')
+			expect(wrapper.findComponent(AuditLog).exists()).toBe(false)
+		})
 	})
 
 	it('treats a 404 on load as "no config yet" without showing an error', async () => {

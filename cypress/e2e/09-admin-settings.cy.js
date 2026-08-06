@@ -93,6 +93,12 @@ describe('Admin settings page', () => {
 
 		openSettings()
 		cy.contains('h3', 'Activity log').should('exist')
+		// Collapsed on arrival - the page is here for the policy form, and the log is a
+		// hundred rows of history under it that nobody asked for yet.
+		cy.get('.audit-log').should('not.exist')
+		cy.contains('audited.pdf').should('not.exist')
+
+		cy.get('.watermark-log__toggle').click()
 		cy.contains('audited.pdf', { timeout: 20000 }).should('exist')
 
 		cy.task('nc:delete', {

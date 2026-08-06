@@ -29,7 +29,26 @@
 				<p class="watermark-log__desc">
 					{{ t('files_watermark', 'Every watermark applied to a file is recorded here.') }}
 				</p>
-				<AuditLog />
+				<!--
+					Collapsed on arrival, and the log is not rendered at all until it is
+					opened - `v-if`, never `v-show`. The page an admin comes here for is the
+					policy form; the log is a hundred rows of history underneath it, and
+					mounting it is what fires its own request. Hiding it with CSS would keep
+					that request on every load and save nothing.
+				-->
+				<NcButton class="watermark-log__toggle"
+					type="tertiary"
+					:aria-expanded="logOpen ? 'true' : 'false'"
+					aria-controls="watermark-log-panel"
+					native-type="button"
+					@click="logOpen = !logOpen">
+					{{ logOpen
+						? t('files_watermark', 'Hide activity log')
+						: t('files_watermark', 'Show activity log') }}
+				</NcButton>
+				<div v-if="logOpen" id="watermark-log-panel">
+					<AuditLog />
+				</div>
 			</section>
 		</template>
 	</div>
@@ -40,12 +59,16 @@ import { ref, onMounted } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
 import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/components/NcButton'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import WatermarkForm from './WatermarkForm.vue'
 import AuditLog from './AuditLog.vue'
 
 const config = ref({})
+// Closed on every load rather than remembered: this is history, not a working view, and an
+// admin who left it open once should not pay for the fetch on every visit afterwards.
+const logOpen = ref(false)
 const loading = ref(true)
 const loadError = ref(null)
 const saving = ref(false)
@@ -116,8 +139,11 @@ async function save(formData) {
     font-weight: 700;
 }
 .watermark-log__desc {
-    margin: 0 0 16px;
+    margin: 0 0 12px;
     font-size: 14px;
     color: var(--color-text-maxcontrast);
+}
+.watermark-log__toggle {
+    margin-bottom: 16px;
 }
 </style>

@@ -139,7 +139,9 @@
         "Everyone the file is shared with - a user, a group, or a link they signed in to follow - gets a copy stamped with their own name.": "كل من شورك الملف معه - مستخدم أو مجموعة أو رابط تابعه بعد تسجيل الدخول - يحصل على نسخة مختومة باسمه.",
         "Always watermark files opened through a public link": "ضع دائماً علامة مائية على الملفات التي تُفتَح عبر رابط عام",
         "A visitor following a public link has no account to name, so the copy carries the name of the file's owner - the person accountable for publishing it.": "الزائر الذي يتبع رابطاً عاماً لا حساب له لِيُسمَّى، لذا تحمل النسخة اسم مالك الملف - وهو المسؤول عن نشره.",
-        "A shared file that cannot be watermarked - one past the size limits, or a PDF the renderer cannot read - is refused rather than handed over clean. The same applies to a shared folder downloaded as an archive.": "الملف المشترك الذي يتعذَّر وضع علامة مائية عليه - كأن يتجاوز حدود الحجم، أو يكون ملف PDF لا يستطيع المحرِّك قراءته - يُرفَض بدل تسليمه نظيفاً. وينطبق الأمر ذاته على مجلد مشترك يُنزَّل كأرشيف."
+        "A shared file that cannot be watermarked - one past the size limits, or a PDF the renderer cannot read - is refused rather than handed over clean. The same applies to a shared folder downloaded as an archive.": "الملف المشترك الذي يتعذَّر وضع علامة مائية عليه - كأن يتجاوز حدود الحجم، أو يكون ملف PDF لا يستطيع المحرِّك قراءته - يُرفَض بدل تسليمه نظيفاً. وينطبق الأمر ذاته على مجلد مشترك يُنزَّل كأرشيف.",
+        "Show activity log": "إظهار سجل النشاط",
+        "Hide activity log": "إخفاء سجل النشاط"
     },
     "pluralForm": "nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);"
 }

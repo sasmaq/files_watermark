@@ -261,6 +261,10 @@ your shares are larger than the defaults expect.
 Every file **marked or unmarked** is recorded, always. There is one entry per policy
 decision, so the volume is bounded by how often people change their minds.
 
+The log sits at the bottom of the settings page, **collapsed** - the page is there for the
+policy, and the log is history. *"Show activity log"* opens it, and nothing is fetched until
+you do.
+
 **Downloads are not recorded unless you ask for them.** A marked file is rendered on *every
 fetch*, so recording each one writes an entry per file per download - including every file
 inside a downloaded folder - and nothing expires on its own. Turn it on under **Settings →
