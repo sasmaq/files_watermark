@@ -98,7 +98,7 @@ describe('Admin settings page', () => {
 		cy.get('.audit-log').should('not.exist')
 		cy.contains('audited.pdf').should('not.exist')
 
-		cy.get('.watermark-log__toggle').click()
+		cy.get('.watermark-log__toggle').scrollIntoView().click({ force: true })
 		cy.contains('audited.pdf', { timeout: 20000 }).should('exist')
 
 		cy.task('nc:delete', {
