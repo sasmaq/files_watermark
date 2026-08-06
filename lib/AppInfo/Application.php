@@ -15,6 +15,7 @@ use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\PdfFontPath;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -22,6 +23,7 @@ use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\IRequest;
+use OCP\IUserSession;
 use OCP\Preview\BeforePreviewFetchedEvent;
 use OCP\Util;
 use Psr\Container\ContainerInterface;
@@ -169,6 +171,13 @@ class Application extends App implements IBootstrap {
 		$context->registerService(PreviewRequestContext::class, static fn (
 			ContainerInterface $c,
 		): PreviewRequestContext => new PreviewRequestContext(), true);
+
+		// Shared for the same reason: the public-link DAV listener raises a flag on it that
+		// WatermarkService reads later in the same request. Autowiring would hand each of
+		// them its own instance, and the flag would never arrive.
+		$context->registerService(ShareAccess::class, static fn (
+			ContainerInterface $c,
+		): ShareAccess => new ShareAccess($c->get(IUserSession::class)), true);
 	}
 
 	/**

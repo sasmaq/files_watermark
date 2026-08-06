@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\EventListener;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
 use OCA\FilesWatermark\Service\ArchiveLimits;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\EventDispatcher\Event;
@@ -32,7 +33,9 @@ use Psr\Log\LoggerInterface;
  * wired into; they are the same plugins the authenticated server gets, configured
  * identically. They used to need a `$publicContext` flag to tell them a public visitor was
  * a share recipient - that question is gone, because a mark applies to every reader and the
- * visitor's identity only decides what the watermark says.
+ * visitor's identity only decides what the watermark says. The fact that this *is* a public
+ * request has come back with the "watermark external shares" policy, but it is recorded
+ * once on {@see ShareAccess} rather than threaded through two constructors.
  *
  * PropFindPlugin is deliberately not registered here - the `is-watermarked` property
  * only feeds the logged-in Files list, which no public visitor sees.
@@ -56,6 +59,12 @@ class SabrePublicPluginAddListener implements IEventListener {
 		if ($server === null) {
 			return;
 		}
+
+		// This server only ever serves public links, so reaching this listener is proof of
+		// one - which is the only proof available for a *logged-in* visitor opening somebody
+		// else's link: they have a session, and the node is mounted from the owner's own
+		// storage, so neither of ShareAccess's other signals sees anything unusual.
+		$this->container->get(ShareAccess::class)->notePublicRequest();
 
 		$server->addPlugin(new DownloadInterceptorPlugin(
 			$this->container->get(WatermarkService::class),

@@ -38,6 +38,31 @@ class WatermarkConfigTest extends TestCase {
 		$this->assertSame('42', $data['folderTag']);
 	}
 
+	/**
+	 * The share switches default to off, and the settings page has to be told so.
+	 *
+	 * A field the entity omits reads as `undefined` in the form, which the checkbox renders
+	 * unticked and then posts back as `false` - the right answer by accident. This pins the
+	 * two that would be silently wrong the day the default changes.
+	 */
+	public function testTheShareSwitchesSerialiseAndDefaultToOff(): void {
+		$data = (new WatermarkConfig())->jsonSerialize();
+
+		$this->assertFalse($data['watermarkInternalShares']);
+		$this->assertFalse($data['watermarkExternalShares']);
+	}
+
+	public function testTheShareSwitchesSerialiseWhatWasSet(): void {
+		$config = new WatermarkConfig();
+		$config->setWatermarkInternalShares(true);
+		$config->setWatermarkExternalShares(false);
+
+		$data = $config->jsonSerialize();
+
+		$this->assertTrue($data['watermarkInternalShares']);
+		$this->assertFalse($data['watermarkExternalShares']);
+	}
+
 	public function testGetAllowedMimeTypesReturnsArrayFromCsvString(): void {
 		$config = new WatermarkConfig();
 		$config->setMimeTypes('application/pdf, image/jpeg, image/png');

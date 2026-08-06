@@ -84,6 +84,11 @@ Cypress.Commands.add('wmSetPolicy', (policy = {}) => {
 			// Sent explicitly, matching the shipped default. A spec that wants delivery
 			// rows has to ask for them, exactly as an admin does.
 			logDelivery: false,
+			// Same, and more load-bearing: these two watermark files nothing has marked, so
+			// a spec that inherited them from the last one would see watermarks it never
+			// asked for - and every other spec in the suite downloads through a share.
+			watermarkInternalShares: false,
+			watermarkExternalShares: false,
 			...policy,
 		})
 	})

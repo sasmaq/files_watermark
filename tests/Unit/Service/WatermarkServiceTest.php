@@ -14,6 +14,7 @@ use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\PdfWatermarker;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -54,6 +55,7 @@ class WatermarkServiceTest extends TestCase {
 	private WatermarkImageStore&MockObject $imageStore;
 	private ImageLimits&MockObject $imageLimits;
 	private ApplyLimits&MockObject $applyLimits;
+	private ShareAccess&MockObject $shareAccess;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -74,6 +76,9 @@ class WatermarkServiceTest extends TestCase {
 		$this->imageLimits->method('maxPixels')->willReturn(ImageLimits::DEFAULT_MAX_PIXELS);
 		$this->applyLimits = $this->createMock(ApplyLimits::class);
 		$this->applyLimits->method('maxBytes')->willReturn(ApplyLimits::DEFAULT_MAX_BYTES);
+		// Owner access unless a test says otherwise: an unstubbed mock answers false to
+		// both questions, which is exactly "not a share".
+		$this->shareAccess = $this->createMock(ShareAccess::class);
 
 		$this->service = new WatermarkService(
 			$this->configMapper,
@@ -87,6 +92,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->imageStore,
 			$this->imageLimits,
 			$this->applyLimits,
+			$this->shareAccess,
 			$this->l10n(),
 		);
 	}
@@ -322,6 +328,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->imageStore,
 			$limits,
 			$this->applyLimits,
+			$this->shareAccess,
 			$this->l10n(),
 		);
 	}
@@ -706,6 +713,167 @@ class WatermarkServiceTest extends TestCase {
 		$this->cleanup($this->service->watermarkForDownload($file));
 
 		$this->assertNull($seen);
+	}
+
+	// -----------------------------------------------------------------------
+	// Watermarking what leaves through a share
+	// -----------------------------------------------------------------------
+	//
+	// The one place in this app where *who is asking* decides whether there is a watermark
+	// rather than only what it says. Nothing here places a mark, and every case below runs
+	// against an unmarked file - if any of them started marking, the switch would stop being
+	// reversible and the owner would start getting watermarked too.
+
+	/** An unmarked file, so every watermark in this section comes from the share alone. */
+	private function unmarkedFile(string $mime = 'application/pdf'): File&MockObject {
+		$this->markMapper->method('isMarked')->willReturn(false);
+		$this->markMapper->method('markedFileIds')->willReturn([]);
+
+		return $this->file($mime);
+	}
+
+	private function sharePolicy(bool $internal = false, bool $external = false): WatermarkConfig {
+		$config = $this->config();
+		$config->setWatermarkInternalShares($internal);
+		$config->setWatermarkExternalShares($external);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		return $config;
+	}
+
+	public function testAnInternalShareIsWatermarkedWhenThePolicySaysSo(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$file = $this->unmarkedFile();
+
+		$this->assertTrue($this->service->isDeliveryCandidate($file));
+
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->cleanup($this->service->watermarkForDownload($file));
+	}
+
+	/** The owner's own copy of the same file, under the same policy, is untouched. */
+	public function testTheOwnersOwnFetchOfAnUnmarkedFileStaysClean(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(false);
+		$file = $this->unmarkedFile();
+
+		$this->assertFalse($this->service->isDeliveryCandidate($file));
+		$this->assertNull($this->service->watermarkForDownload($file));
+	}
+
+	public function testAPublicLinkIsWatermarkedWhenThePolicySaysSo(): void {
+		$this->sharePolicy(external: true);
+		$this->shareAccess->method('isExternalShareAccess')->willReturn(true);
+		$file = $this->unmarkedFile();
+
+		$this->assertTrue($this->service->isDeliveryCandidate($file));
+	}
+
+	/**
+	 * The two switches are independent, and this is the pair that proves it: an instance
+	 * that watermarks internal shares only must hand a public-link visitor the clean file,
+	 * and vice versa.
+	 */
+	public function testEachSwitchAnswersOnlyItsOwnKindOfShare(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isExternalShareAccess')->willReturn(true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(false);
+
+		$this->assertFalse($this->service->isDeliveryCandidate($this->unmarkedFile()));
+	}
+
+	public function testAShareIsNotWatermarkedWhileBothSwitchesAreOff(): void {
+		$this->sharePolicy();
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$this->shareAccess->method('isExternalShareAccess')->willReturn(true);
+
+		$this->assertFalse($this->service->isDeliveryCandidate($this->unmarkedFile()));
+	}
+
+	/**
+	 * A mark still outranks everything: the file is watermarked for its owner, on an
+	 * instance with both switches off, because that is what a mark means.
+	 */
+	public function testAMarkedFileIsStillWatermarkedForItsOwnerWithBothSwitchesOff(): void {
+		$this->sharePolicy();
+
+		$this->assertTrue($this->service->isDeliveryCandidate($this->markedFile()));
+	}
+
+	/**
+	 * The policy's scope is the admin saying which files this policy is about at all, so it
+	 * binds this route exactly as it binds marking. Without it, ticking a share switch would
+	 * quietly watermark the file types the same page says to leave alone.
+	 */
+	public function testAShareOutsideTheMimeWhitelistIsNotWatermarked(): void {
+		$config = $this->sharePolicy(internal: true);
+		$config->setMimeTypes('application/pdf');
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+
+		$this->assertFalse($this->service->isDeliveryCandidate($this->unmarkedFile('image/png')));
+	}
+
+	/**
+	 * @testWith [5, false]
+	 *           [7, true]
+	 *
+	 * Both directions, because "false" is the answer a scope check that never ran would
+	 * also give - the tagged case is what proves the tag is being read at all.
+	 */
+	public function testASharedFileIsWatermarkedOnlyInsideTheTaggedFolder(
+		int $taggedFolderId,
+		bool $expected,
+	): void {
+		$config = $this->sharePolicy(internal: true);
+		$config->setFolderTag('7');
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([(string)$taggedFolderId]);
+
+		$file = $this->unmarkedFile();
+		$parent = $this->createMock(Folder::class);
+		$parent->method('getId')->willReturn(7);
+		$file->method('getParent')->willReturn($parent);
+
+		$this->assertSame($expected, $this->service->isDeliveryCandidate($file));
+	}
+
+	/**
+	 * A file too large to render is **refused**, not served clean.
+	 *
+	 * A marked file cleared the byte ceiling when it was marked. One watermarked only because
+	 * it is leaving through a share never had such a moment, so the ceiling is applied at
+	 * delivery - and the app's rule that a watermark it owes is a watermark it delivers or
+	 * denies applies here too. Serving the original would hand the clean file to precisely
+	 * the recipient the policy exists to name.
+	 */
+	public function testAnOversizedSharedFileIsDeniedRatherThanServedClean(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$this->markMapper->method('isMarked')->willReturn(false);
+
+		$applyLimits = $this->createMock(ApplyLimits::class);
+		$applyLimits->method('maxBytes')->willReturn(1024);
+		$service = new WatermarkService(
+			$this->configMapper,
+			$this->logMapper,
+			$this->markMapper,
+			$this->pdfWatermarker,
+			$this->imageWatermarker,
+			$this->userSession,
+			$this->tagObjectMapper,
+			$this->logger,
+			$this->imageStore,
+			$this->imageLimits,
+			$applyLimits,
+			$this->shareAccess,
+			$this->l10n(),
+		);
+
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+		$service->watermarkForDownload($this->file('application/pdf', 42, 'ORIGINAL', 2048));
 	}
 
 	// -----------------------------------------------------------------------

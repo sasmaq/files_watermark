@@ -103,6 +103,8 @@ class ApiController extends Controller {
 		?string $mimeTypes = null,
 		?string $folderTag = null,
 		bool $logDelivery = false,
+		bool $watermarkInternalShares = false,
+		bool $watermarkExternalShares = false,
 		?int $id = null,
 	): DataResponse {
 
@@ -229,6 +231,12 @@ class ApiController extends Controller {
 		// column's own note in Version1007Date20260801120000. Nothing to validate: it is
 		// a boolean, and the in-place rows it does not govern are written regardless.
 		$config->setLogDelivery($logDelivery);
+		// Nothing to validate on either: two booleans read at delivery, against the fetch
+		// that is happening. They mark nothing, so - unlike the trigger - there is no
+		// combination of them that can be inconsistent with the rest of the policy, and no
+		// stored state left behind when one is switched off again.
+		$config->setWatermarkInternalShares($watermarkInternalShares);
+		$config->setWatermarkExternalShares($watermarkExternalShares);
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));
 
 		if ($id !== null) {

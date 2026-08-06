@@ -31,6 +31,10 @@ use OCP\AppFramework\Db\Entity;
  * @method void setFolderTag(?string $folderTag)
  * @method bool getLogDelivery()
  * @method void setLogDelivery(bool $logDelivery)
+ * @method bool getWatermarkInternalShares()
+ * @method void setWatermarkInternalShares(bool $watermarkInternalShares)
+ * @method bool getWatermarkExternalShares()
+ * @method void setWatermarkExternalShares(bool $watermarkExternalShares)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -59,6 +63,21 @@ class WatermarkConfig extends Entity {
 	 * history, they are how the app knows a file's stored bytes carry a watermark.
 	 */
 	protected bool $logDelivery = false;
+	/**
+	 * Watermark **every fetch made through a share**, whether or not the file is marked.
+	 *
+	 * The two switches below are not triggers and they mark nothing: they are read at
+	 * delivery, against the fetch that is happening, so ticking one watermarks shared files
+	 * from that moment and unticking it stops - there is no residue either way. A file that
+	 * carries a mark is watermarked regardless of both, for every reader including its owner;
+	 * these only widen the set of *fetches* that get a watermark, never the set of marks.
+	 *
+	 * `internal` is a fetch through a received share - the file is mounted from somebody
+	 * else's storage. `external` is a public link, where the visitor has no account to name
+	 * and the watermark falls back to the owner ({@see WatermarkService::readerIdentity()}).
+	 */
+	protected bool $watermarkInternalShares = false;
+	protected bool $watermarkExternalShares = false;
 	protected string $createdAt = '';
 	protected string $updatedAt = '';
 
@@ -67,6 +86,8 @@ class WatermarkConfig extends Entity {
 		$this->addType('fontSize', 'integer');
 		$this->addType('rotation', 'integer');
 		$this->addType('logDelivery', 'boolean');
+		$this->addType('watermarkInternalShares', 'boolean');
+		$this->addType('watermarkExternalShares', 'boolean');
 	}
 
 	/** Returns the allowed MIME types as an array, or all supported types if not set. */
@@ -91,6 +112,8 @@ class WatermarkConfig extends Entity {
 			'mimeTypes' => $this->mimeTypes,
 			'folderTag' => $this->folderTag,
 			'logDelivery' => $this->logDelivery,
+			'watermarkInternalShares' => $this->watermarkInternalShares,
+			'watermarkExternalShares' => $this->watermarkExternalShares,
 			'createdAt' => $this->createdAt,
 			'updatedAt' => $this->updatedAt,
 		];

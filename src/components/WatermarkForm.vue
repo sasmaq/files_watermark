@@ -213,7 +213,43 @@
 					</div>
 				</section>
 
-				<!-- 5. Scope (admin only) -->
+				<!-- 5. Shared files (admin only) -->
+				<section v-if="isAdmin" class="wm-card">
+					<h4 class="wm-card__title">
+						{{ t('files_watermark', 'Shared files') }}
+					</h4>
+					<p class="wm-card__desc">
+						{{ t('files_watermark', 'Watermark files on their way out through a share, whether or not anyone has applied a watermark to them. This is decided each time a file is fetched, so it starts and stops the moment you save - no file is changed, and nothing is left behind when you switch it off again. The owner\'s own downloads stay untouched.') }}
+					</p>
+					<div class="wm-field wm-field--stacked wm-share-internal">
+						<NcCheckboxRadioSwitch :model-value="!!form.watermarkInternalShares"
+							@update:model-value="form.watermarkInternalShares = $event">
+							{{ t('files_watermark', 'Always watermark files opened through an internal share') }}
+						</NcCheckboxRadioSwitch>
+						<small class="wm-help">
+							{{ t('files_watermark', 'Everyone the file is shared with - a user, a group, or a link they signed in to follow - gets a copy stamped with their own name.') }}
+						</small>
+					</div>
+					<div class="wm-field wm-field--stacked wm-share-external">
+						<NcCheckboxRadioSwitch :model-value="!!form.watermarkExternalShares"
+							@update:model-value="form.watermarkExternalShares = $event">
+							{{ t('files_watermark', 'Always watermark files opened through a public link') }}
+						</NcCheckboxRadioSwitch>
+						<small class="wm-help">
+							{{ t('files_watermark', 'A visitor following a public link has no account to name, so the copy carries the name of the file\'s owner - the person accountable for publishing it.') }}
+						</small>
+					</div>
+					<!--
+						Said plainly because it is the surprise: this app never serves a clean
+						copy in place of one it owes a watermark, and these two switches put
+						files under that rule that were never marked by anybody.
+					-->
+					<p class="wm-help">
+						{{ t('files_watermark', 'A shared file that cannot be watermarked - one past the size limits, or a PDF the renderer cannot read - is refused rather than handed over clean. The same applies to a shared folder downloaded as an archive.') }}
+					</p>
+				</section>
+
+				<!-- 6. Scope (admin only) -->
 				<section v-if="isAdmin" class="wm-card">
 					<h4 class="wm-card__title">
 						{{ t('files_watermark', 'Where to apply') }}
@@ -428,6 +464,10 @@ const DEFAULTS = {
 	// Off, matching the column default. Delivery triggers render per fetch, so an
 	// audit row per fetch is what grows the log without bound.
 	logDelivery: false,
+	// Both off, matching the columns. These are not triggers: they mark nothing, and they
+	// are read per fetch against the share the file is travelling through.
+	watermarkInternalShares: false,
+	watermarkExternalShares: false,
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })

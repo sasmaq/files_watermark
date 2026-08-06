@@ -25,6 +25,9 @@ document is whoever uploaded it rather than whoever walked out with it.
 - Two trigger modes, deciding **which files are marked**: **on demand** (the file action
   menu) and **on upload** (every supported file, as it arrives). Under both, a marked file
   is watermarked on every download *and* every preview
+- Two **share** switches, deciding which *fetches* are watermarked whether or not the file
+  is marked: **internal shares** and **public links** - see
+  [Watermarking shared files](#watermarking-shared-files)
 - Global policy configurable by admins under **Settings → Additional → Watermark Settings**
 - Full audit log of every watermark event
 - Supports PDF, JPEG, PNG, and WEBP files
@@ -223,6 +226,35 @@ The end-to-end suite drives the Docker instance described under
 first, then `npm run test:e2e`. It judges each scenario on the delivered file's bytes rather
 than on the UI: what it covers, and how it tells a watermarked file from a clean one, is in
 [`cypress/README.md`](cypress/README.md).
+
+## Watermarking shared files
+
+Two switches under **Settings → Administration → Watermark → Shared files**:
+
+| Switch | What it watermarks | Whose name is on it |
+| --- | --- | --- |
+| *Always watermark files opened through an internal share* | Every fetch of a file mounted from somebody else's storage - a user, group or team share | The recipient reading it |
+| *Always watermark files opened through a public link* | Every fetch through `public.php`, and every fetch with no signed-in user at all | The file's owner, who has no other name available |
+
+They are **not a third trigger.** A trigger decides which files carry a mark, and a mark is
+durable: placed once, it follows the file until somebody removes it, and it watermarks the
+file for *everyone*, its owner included. These two decide something narrower and entirely
+reversible - that a copy *leaving through a share* carries a watermark - and they are
+evaluated per fetch, against no stored state. Ticking one starts watermarking shared files
+the moment you save; unticking it stops, with nothing left behind to undo. The owner's own
+downloads are unaffected either way.
+
+Both are off by default, including on upgrade, and they can be combined with either trigger:
+`on_demand` marking for the documents somebody deliberately protects, plus a blanket
+watermark on everything that goes out through a link.
+
+**A shared file that cannot be watermarked is refused, not handed over clean.** That is the
+same rule a marked file follows, and these switches bring files nobody marked under it: a
+file past `apply_max_bytes`, or a PDF the renderer cannot parse, answers 403 rather than
+serving the original to the one reader the policy exists to name. The same applies to a
+shared folder downloaded as an archive, which is additionally bound by `archive_max_members`
+and `archive_max_bytes`. Raise those limits (see [Server settings](#server-settings-occ)) if
+your shares are larger than the defaults expect.
 
 ## The activity log
 

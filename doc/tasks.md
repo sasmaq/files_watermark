@@ -59,7 +59,7 @@ Decided before the work started, and each is now the behaviour:
   in particular needs writing up properly: the cache-key constraint, why `IPreview`'s
   `$cacheResult` (32.0) could not be used on 31, and why a global middleware around core's
   controllers is the shape that fell out of it.
-- [ ] **Verify the preview middleware against a real instance.** It is unit-tested and
+- [x] **Verify the preview middleware against a real instance.** It is unit-tested and
   reasoned about; it has never run inside Nextcloud. Four things to check in order: that a
   global middleware really does wrap core's `PreviewController`; that the
   `BeforePreviewFetchedEvent` choke point catches the Viewer and Photos as well as the
@@ -72,6 +72,12 @@ Decided before the work started, and each is now the behaviour:
 - [ ] **`log_delivery` default.** Off means the default install audits nothing but policy
   changes. That was defensible when only two of four triggers produced delivery rows; it is
   a different product now.
+- [ ] **Team folders are outside both share switches.** A Team folder is neither an
+  `ISharedStorage` nor a public link, so *"always watermark internal shares"* watermarks
+  nothing in the one storage shape that is multi-user by construction - the same hole
+  `TeamFolder` was written to close for the old `on_share`, and it went with the rework.
+  Needs the fourth signal back, or a deliberate statement that marking is the answer there.
+  [notes](development.md#share-switches)
 - [ ] **A bulk `occ files_watermark:mark <path>`.** Settled 3 means an instance upgrading
   from `on_download` has every existing file unmarked and no UI to mark them in bulk. Not
   needed for a first release; needed by the first instance that migrates.
@@ -165,6 +171,12 @@ them.
 - [ ] ~~**Concurrent uploads of the same path.**~~ Closed by the rework - there is no burn
   to double, `suppressFor()` is gone, and a mark is idempotent on a primary key.
   [notes](development.md#manual-verification-matrix)
+- [ ] **The two share switches, end to end.** Unit-tested on both sides - `ShareAccess`
+  against the storage and the session, the service against the policy - and never run against
+  a real share. Four cells: a received share and the owner's own copy of the same file under
+  *internal*; a public link fetched anonymously and by a signed-in visitor under *external*;
+  plus the denial when a shared file is over `apply_max_bytes`.
+  [notes](development.md#share-switches)
 - [ ] **The full flow on S3.** The suite is storage-agnostic and would run against
   `docker-compose.s3.yml` unchanged; nothing wires it up.
   [notes](development.md#integration--e2e-cypress)
@@ -201,6 +213,7 @@ them.
 | [Renderers](development.md#1-renderers-goal-1) | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started | Office pipeline, encrypted PDFs |
 | [Watermark content](development.md#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
 | [Delivery and triggers](development.md#3-delivery-and-triggers-goal-3) | All four triggers, single-file and archive, on every access path; caps are `occ` settings | **Being replaced by the two-trigger rework above**; Tar (core bug), file-drop uploads |
+| [Share switches](development.md#share-switches) | Built: internal shares and public links can be watermarked whether or not the file is marked, decided per fetch | Team folders, end-to-end verification |
 | [Admin UI and file actions](development.md#4-admin-ui-and-file-actions-goal-4) | **Complete** | - |
 | [Storage backends](development.md#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | - |
 | [Team folders](development.md#team-folders) | Built: `on_share` no longer exempts the whole team, originals stay in the folder. No dependency on `groupfolders` | **Deleted by the rework** - nothing is exempt, so there is nothing to detect |

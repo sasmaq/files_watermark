@@ -210,6 +210,46 @@ class ApiControllerConfigTest extends TestCase {
 		];
 	}
 
+	/**
+	 * The share switches, both ways round.
+	 *
+	 * Saved independently of each other and of the trigger: they are policy about the
+	 * *fetch*, so there is no combination of them the rest of the config can contradict, and
+	 * nothing here validates them beyond storing what was asked for.
+	 *
+	 * @testWith [true, false]
+	 *           [false, true]
+	 *           [true, true]
+	 */
+	public function testTheShareSwitchesAreStoredAsSent(bool $internal, bool $external): void {
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			trigger: 'on_demand',
+			watermarkInternalShares: $internal,
+			watermarkExternalShares: $external,
+		);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame($internal, $response->getData()['watermarkInternalShares']);
+		$this->assertSame($external, $response->getData()['watermarkExternalShares']);
+		// Unchanged by either: the trigger still decides which files are marked.
+		$this->assertSame('on_demand', $response->getData()['trigger']);
+	}
+
+	/** Off unless asked for, so an upgrade watermarks nothing it did not watermark before. */
+	public function testTheShareSwitchesDefaultToOff(): void {
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+		);
+
+		$this->assertFalse($response->getData()['watermarkInternalShares']);
+		$this->assertFalse($response->getData()['watermarkExternalShares']);
+	}
+
 	public function testUppercaseHexIsAccepted(): void {
 		$response = $this->controller->saveConfig(
 			type: 'text',

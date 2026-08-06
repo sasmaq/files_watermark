@@ -37,10 +37,20 @@ use Psr\Log\LoggerInterface;
  * person - it names whoever uploaded the document rather than whoever walked out with it.
  * ---------------------------------------------------------------------------
  *
+ * **A share can force the watermark without a mark.** Two admin switches - internal shares
+ * and public links - are read at delivery and watermark whatever leaves through a share,
+ * marked or not ({@see isForcedByShare}). They are the one place where *who is asking*
+ * decides whether there is a watermark rather than only what it says, and they are
+ * deliberately not triggers: they place no mark, so turning one off stops the watermarking
+ * everywhere at once and leaves nothing behind to undo.
+ *
  * Two consequences worth stating because they look like bugs from the outside:
  *
  *  - **The owner is watermarked too.** There is no exemption for anybody. The watermark
- *    carries the reader's identity, and an owner reading their own file is a reader.
+ *    carries the reader's identity, and an owner reading their own file is a reader. (The
+ *    share switches are the exception that proves it: they watermark a *recipient's* fetch
+ *    of a file whose owner still gets it clean, because they are about the copy leaving,
+ *    not about the file.)
  *  - **A marked file that cannot be rendered is not served at all.** See
  *    {@see WatermarkRequiredException}.
  */
@@ -83,6 +93,7 @@ class WatermarkService {
 		private WatermarkImageStore $imageStore,
 		private ImageLimits $imageLimits,
 		private ApplyLimits $applyLimits,
+		private ShareAccess $shareAccess,
 		private IL10N $l,
 	) {
 	}
@@ -210,12 +221,28 @@ class WatermarkService {
 	 *                                    caller must deny the fetch rather than serve the original
 	 */
 	public function watermarkForDownload(File $file): ?string {
-		if (!$this->isDeliveryCandidate($file)) {
+		if (!$this->isSupported($file->getMimeType())) {
+			return null;
+		}
+
+		// The two reasons are told apart rather than folded into `isDeliveryCandidate` here,
+		// because the ceiling below depends on which one applies - and asking the mark table
+		// once is the difference between one query per delivery and two.
+		$id = $file->getId();
+		$marked = $id !== null && $this->isMarked($id);
+		if (!$marked && !$this->isForcedByShare($file)) {
 			return null;
 		}
 
 		try {
 			$config = $this->resolveConfig();
+			// A marked file passed the byte ceiling when it was marked; a file watermarked
+			// only because it is going out through a share never had such a moment, so the
+			// ceiling is applied here instead. It throws, and the catch below turns that into
+			// the same denial a failed render produces - the file is not served clean.
+			if (!$marked) {
+				$this->assertSizeAllowed($file);
+			}
 			[$tmpPath, $resolved] = $this->renderToTemp($file, $config);
 			$this->recordLog($file, self::TRIGGER_DELIVERED, $resolved);
 
@@ -235,11 +262,16 @@ class WatermarkService {
 	}
 
 	/**
-	 * Whether this fetch of $node has to be watermarked: a supported type carrying a mark.
+	 * Whether this fetch of $node has to be watermarked.
 	 *
-	 * There is nothing about *who is asking* in here, deliberately. Owner, share recipient
-	 * and public-link visitor are all readers, and the mark says every reader gets their own
-	 * copy. The reader only decides what the watermark says, never whether there is one.
+	 * Two independent reasons, and it matters that they are independent:
+	 *
+	 *  - **The file carries a mark.** Nothing about *who is asking* enters into it. Owner,
+	 *    share recipient and public-link visitor are all readers, and the mark says every
+	 *    reader gets their own copy. The reader only decides what the watermark says.
+	 *  - **The fetch is coming through a share the policy watermarks** - see
+	 *    {@see isForcedByShare}. Here it is *only* about who is asking: the same file
+	 *    downloaded by its owner is served exactly as it is stored.
 	 */
 	public function isDeliveryCandidate(FileInfo $node): bool {
 		if (!$this->isSupported($node->getMimetype())) {
@@ -247,8 +279,70 @@ class WatermarkService {
 		}
 
 		$id = $node->getId();
+		if ($id !== null && $this->isMarked($id)) {
+			return true;
+		}
 
-		return $id !== null && $this->isMarked($id);
+		return $this->isForcedByShare($node);
+	}
+
+	/**
+	 * Whether the policy watermarks this fetch **because it is a share**, mark or no mark.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * A SWITCH ON THE FETCH, NOT A THIRD TRIGGER.
+	 *
+	 * The two triggers decide which files are *marked*, and a mark is a durable statement
+	 * about a file: placed once, it follows the file everywhere until somebody removes it.
+	 * These two switches say something narrower and entirely reversible - "a copy that leaves
+	 * through a share carries a watermark" - and they are therefore evaluated here, per fetch,
+	 * against no stored state at all. Ticking one starts watermarking shared files
+	 * immediately; unticking it stops, with nothing left behind to unmark.
+	 *
+	 * That is also why an admin can run both at once: `on_demand` marking for the documents
+	 * somebody deliberately protects, plus a blanket watermark on everything that goes out
+	 * through a link.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **The policy's scope applies here and the ceilings do not.** Scope (the MIME whitelist,
+	 * the folder tag) is the admin saying which files this policy is about at all, so a file
+	 * outside it is not watermarked by any route. The ceilings are a different question -
+	 * they bound what one render may cost - and they are checked in
+	 * {@see watermarkForDownload}, at the point where exceeding one has to become a refusal.
+	 */
+	public function isForcedByShare(FileInfo $node): bool {
+		$config = $this->resolveConfig();
+
+		$forced = ($config->getWatermarkExternalShares() && $this->shareAccess->isExternalShareAccess())
+			|| ($config->getWatermarkInternalShares() && $this->shareAccess->isInternalShareAccess($node));
+
+		return $forced && $this->isInScope($node, $config);
+	}
+
+	/**
+	 * Whether $node is inside the policy's own scope.
+	 *
+	 * The same two exclusions {@see assertMarkable} applies before placing a mark, asked as a
+	 * question rather than as an assertion because there is no mark to refuse here - the
+	 * answer decides whether this fetch is watermarked, and "no" means serve the file as it
+	 * is stored.
+	 *
+	 * **The folder tag is only checked for a real node.** It reads the file's parent, which
+	 * `FileInfo` cannot give us; every delivery path in this app passes a `File`, so the
+	 * fallback is theoretical, and it is deliberately the *inclusive* one - a scope test this
+	 * cannot perform must not quietly hand out a clean copy of a shared file.
+	 */
+	private function isInScope(FileInfo $node, WatermarkConfig $config): bool {
+		try {
+			$this->assertMimeAllowed($node->getMimetype(), $config);
+			if ($node instanceof File) {
+				$this->assertFolderTagMatches($node, $config);
+			}
+		} catch (\RuntimeException) {
+			return false;
+		}
+
+		return true;
 	}
 
 	/**

@@ -650,6 +650,101 @@ every `on_share` deny goes through a failed render.
 
 ---
 
+## Watermarking what leaves through a share {#share-switches}
+
+**Position:** built, on 2026-08-06, on top of the two-trigger rework. Two booleans on the
+config - `watermark_internal_shares` and `watermark_external_shares` - and one small service,
+`ShareAccess`.
+
+Everything above under [Triggers](#triggers) that describes an `on_share` **trigger** is a
+record of the model this replaced, not of what runs. The old `on_share` was one of four
+mutually exclusive triggers; these are two switches that sit *beside* whichever trigger is
+in force.
+
+### Why a switch on the fetch rather than a third trigger
+
+The choice was between marking a file when it gets shared and watermarking a copy when it
+leaves through a share. They differ in three visible ways, and all three point the same way:
+
+| | Mark on share | Watermark on share access (**built**) |
+| --- | --- | --- |
+| Who gets a watermark | Everyone, the owner included - a mark knows nothing about readers | Only the reader who came in through the share |
+| Turning it off | Leaves every mark it placed; someone has to unmark them by hand | Stops immediately, everywhere, with no residue |
+| Unsharing the file | Still watermarked, for the owner, forever | Back to clean on the next fetch |
+
+A mark is a **durable statement about a file**, and "this file is being handed to somebody
+else right now" is not durable - it is a property of one fetch. Storing it as a mark would
+mean the app could not answer the question it was asked ("watermark shares") without also
+answering one it was not ("watermark the owner's own copy, permanently, because it was once
+shared"). So the switches are read at delivery, against no stored state at all.
+
+The cost of that choice is that the decision runs on every fetch instead of once per share.
+It is one storage test and one memoised config read, on a path that is already about to
+render a PDF, so it does not register.
+
+### Two kinds of share, two different signals
+
+`ShareAccess` answers them separately, and it has to:
+
+- **Internal** - the recipient's copy is an `ISharedStorage` mount, so the storage answers
+  it. Comparing the session user against `getOwner()` looks simpler and is what leaked last
+  time: preview and viewer requests resolve the owner inconsistently.
+- **External** - a public link is *not* a mount. `public.php/dav` resolves the node through
+  `getUserFolder($shareOwner)` and wraps it only in a permissions mask, so the storage says
+  "the owner is reading their own file" for an anonymous stranger. Two signals cover it: the
+  public DAV server raises a flag on `ShareAccess` when it is built
+  (`SabrePublicPluginAddListener`), and any request with no session user at all can only have
+  reached a file through a link.
+
+The flag is what catches a **signed-in** visitor following somebody else's public link -
+they have a session, and the node comes off the owner's storage, so neither other signal
+sees anything unusual. It needs `ShareAccess` to be a *shared* service in the container, for
+the same reason `PreviewRequestContext` is: autowiring hands out a fresh instance per
+injection and the flag would never arrive.
+
+External access is deliberately never *also* internal, so the two switches stay independent -
+an instance that watermarks internal shares and leaves links alone must not watermark a link
+through the internal test.
+
+### Where the ceilings moved to, and why a share can now be denied
+
+The caps bound the **mark** under both triggers, checked at the moment refusing is still a
+choice. A file watermarked only because it is leaving through a share never has such a
+moment, so `watermarkForDownload` applies the byte ceiling at delivery for exactly that case,
+and a file over it is **denied**, not served clean.
+
+That is the app's existing rule (settled 2 of the rework) reaching a new set of files, and it
+is the one thing about this feature that can surprise an admin: ticking a switch can turn a
+download that worked yesterday into a 403 today. It is stated on the settings page next to
+the switches, and in the README, rather than being left to be discovered. Serving the
+original instead would hand the clean file to precisely the recipient the policy exists to
+name, which is the failure the whole app is built around.
+
+The archive path inherits the same rule through `ArchiveLimits`: a shared folder over
+`archive_max_members` or `archive_max_bytes` is refused rather than shipped unwatermarked.
+An instance that turns these on and shares large folders will want those raised.
+
+### The badge still means "marked"
+
+`PropFindPlugin` was left alone, so the Files-list badge and the Apply/Remove actions go on
+answering the mark table and nothing else. That is the honest reading of the property - it
+says *this file* is watermarked, and under these switches the file is not, one class of
+fetch of it is - and it keeps the badge from changing meaning depending on who is looking at
+the same row. The visible cost is that a recipient sees no badge on a file they will receive
+watermarked. Worth revisiting only with a second property that says something different,
+never by widening this one.
+
+### Team folders
+
+Not covered, and knowingly. A Team folder is not an `ISharedStorage` and not a public link,
+so neither switch claims it - the same hole `TeamFolder::contains()` was written to close for
+the old `on_share`, and that class went with the rework. It is not reintroduced here because
+nothing in this feature needs it and the class was never verified against a running Team
+folder. Recorded as an open item in [tasks.md](tasks.md); an admin who needs Team folder
+reads watermarked today marks the files.
+
+---
+
 ## 4. Admin UI and file actions (Goal 4)
 
 **Position:** the settings page, audit log, apply/remove file actions and the watermarked

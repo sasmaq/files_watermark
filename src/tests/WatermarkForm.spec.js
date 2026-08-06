@@ -316,6 +316,74 @@ describe('WatermarkForm', () => {
 		})
 	})
 
+	describe('share switches', () => {
+		/**
+		 * One of the two share checkboxes, or null when it is not offered.
+		 * @param {object} wrapper - the mounted wrapper
+		 * @param {string} which - 'internal' or 'external'
+		 * @return {object|null} the input wrapper
+		 */
+		function shareBox(wrapper, which) {
+			const box = wrapper.find(`.wm-share-${which} input`)
+			return box.exists() ? box : null
+		}
+
+		it('is admin-only, like the rest of the server-wide policy', () => {
+			expect(shareBox(mountForm({ isAdmin: false }), 'internal')).toBeNull()
+			expect(shareBox(mountForm({ isAdmin: true }), 'internal')).not.toBeNull()
+		})
+
+		it('defaults to off, matching the columns', () => {
+			// An upgrade must not start watermarking - and refusing - files that were being
+			// handed over cleanly the day before.
+			const wrapper = mountForm({ isAdmin: true })
+			expect(shareBox(wrapper, 'internal').element.checked).toBe(false)
+			expect(shareBox(wrapper, 'external').element.checked).toBe(false)
+			expect(wrapper.vm.form.watermarkInternalShares).toBe(false)
+			expect(wrapper.vm.form.watermarkExternalShares).toBe(false)
+		})
+
+		it('reflects stored values independently', () => {
+			const wrapper = mountForm({
+				isAdmin: true,
+				modelValue: { watermarkInternalShares: true, watermarkExternalShares: false },
+			})
+			expect(shareBox(wrapper, 'internal').element.checked).toBe(true)
+			expect(shareBox(wrapper, 'external').element.checked).toBe(false)
+		})
+
+		it('is offered under either trigger, being policy about the fetch rather than a trigger', () => {
+			for (const trigger of ['on_demand', 'on_upload']) {
+				expect(shareBox(mountForm({ isAdmin: true, modelValue: { trigger } }), 'external')).not.toBeNull()
+			}
+		})
+
+		it('sends both switches in the payload', async () => {
+			const wrapper = mountForm({ isAdmin: true })
+			await shareBox(wrapper, 'internal').setValue(true)
+			await shareBox(wrapper, 'external').setValue(true)
+			await wrapper.find('.wm-save').trigger('click')
+
+			const [payload] = wrapper.emitted('save')[0]
+			expect(payload.watermarkInternalShares).toBe(true)
+			expect(payload.watermarkExternalShares).toBe(true)
+		})
+
+		it('leaves the other one alone', async () => {
+			const wrapper = mountForm({ isAdmin: true })
+			await shareBox(wrapper, 'external').setValue(true)
+
+			expect(wrapper.vm.form.watermarkExternalShares).toBe(true)
+			expect(wrapper.vm.form.watermarkInternalShares).toBe(false)
+		})
+
+		it('says that a file it cannot watermark is refused rather than served clean', () => {
+			// The one surprise worth spelling out on the page: these switches put files that
+			// nobody marked under the app's deny-rather-than-leak rule.
+			expect(mountForm({ isAdmin: true }).text()).toContain('is refused rather than handed over clean')
+		})
+	})
+
 	describe('delivery audit switch', () => {
 		/**
 		 * The "record every download" checkbox, or null when it is not offered.

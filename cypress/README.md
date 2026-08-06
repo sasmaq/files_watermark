@@ -77,6 +77,7 @@ effect - a suite re-run inside that window is testing the code you just replaced
 | `10-files-app` | the file actions, their mirroring, and the row badge |
 | `11-prune-log` | the retention command, which can now reach every row |
 | `12-trigger-matrix` | both triggers × all six access paths, in one table |
+| `13-share-switches` | the two share switches, on a file nobody marked: each audience watermarked by its own switch and by no other, the owner left untouched, and clean bytes returning the moment both go off |
 
 `03-on-download` and `04-on-share` are gone with the triggers they were named after. What
 they covered is not: per-fetch rendering, the public DAV server, the share page's download

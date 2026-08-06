@@ -133,6 +133,13 @@ OC.L10N.register(
         "Downloads and previews of this file are watermarked": "تحمل تنزيلات هذا الملف ومعايناته علامة مائية",
         "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية.",
         "The file itself does not change. Downloads and previews of it simply stop being watermarked, and you can apply the watermark again at any time.": "لا يتغيّر الملف نفسه. تتوقف تنزيلاته ومعايناته عن حمل العلامة المائية فحسب، ويمكنك تطبيق العلامة عليه مجدداً في أي وقت.",
-        "Watermark removed.": "أُزيلت العلامة المائية."
+        "Watermark removed.": "أُزيلت العلامة المائية.",
+        "Shared files": "الملفات المشتركة",
+        "Watermark files on their way out through a share, whether or not anyone has applied a watermark to them. This is decided each time a file is fetched, so it starts and stops the moment you save - no file is changed, and nothing is left behind when you switch it off again. The owner's own downloads stay untouched.": "ضع علامة مائية على الملفات أثناء خروجها عبر مشاركة، سواء طبَّق أحدٌ عليها علامة مائية أم لا. يُتَّخذ هذا القرار عند كل جلب للملف، فيبدأ العمل به ويتوقف لحظة الحفظ - لا يُعدَّل أي ملف، ولا يبقى أثر عند إيقافه لاحقاً. أما تنزيلات المالك نفسه فتبقى دون تغيير.",
+        "Always watermark files opened through an internal share": "ضع دائماً علامة مائية على الملفات التي تُفتَح عبر مشاركة داخلية",
+        "Everyone the file is shared with - a user, a group, or a link they signed in to follow - gets a copy stamped with their own name.": "كل من شورك الملف معه - مستخدم أو مجموعة أو رابط تابعه بعد تسجيل الدخول - يحصل على نسخة مختومة باسمه.",
+        "Always watermark files opened through a public link": "ضع دائماً علامة مائية على الملفات التي تُفتَح عبر رابط عام",
+        "A visitor following a public link has no account to name, so the copy carries the name of the file's owner - the person accountable for publishing it.": "الزائر الذي يتبع رابطاً عاماً لا حساب له لِيُسمَّى، لذا تحمل النسخة اسم مالك الملف - وهو المسؤول عن نشره.",
+        "A shared file that cannot be watermarked - one past the size limits, or a PDF the renderer cannot read - is refused rather than handed over clean. The same applies to a shared folder downloaded as an archive.": "الملف المشترك الذي يتعذَّر وضع علامة مائية عليه - كأن يتجاوز حدود الحجم، أو يكون ملف PDF لا يستطيع المحرِّك قراءته - يُرفَض بدل تسليمه نظيفاً. وينطبق الأمر ذاته على مجلد مشترك يُنزَّل كأرشيف."
     },
 "nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);");

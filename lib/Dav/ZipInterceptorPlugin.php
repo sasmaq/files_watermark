@@ -47,8 +47,10 @@ use Sabre\HTTP\ResponseInterface;
  * rather than falling back to core's plain one, because that fallback is a bulk leak of
  * exactly the files the marks protect.
  *
- * Registered on both DAV servers. Neither instance needs to know which it is: a mark
- * applies to every reader, so a public-link archive and an owner's own are the same case.
+ * Registered on both DAV servers, and neither instance needs to know which it is. A mark
+ * applies to every reader, so a public-link archive and an owner's own are the same case;
+ * and where the *share* is what calls for the watermark, the question is asked of the
+ * request rather than of the plugin - see {@see \OCA\FilesWatermark\Service\ShareAccess}.
  */
 class ZipInterceptorPlugin extends ServerPlugin {
 
@@ -294,7 +296,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		$maxMembers = $this->limits->maxMembers();
 		$maxBytes = $this->limits->maxBytes();
 
-		foreach ($this->markedMembers($content) as $file) {
+		foreach ($this->deliveryMembers($content) as $file) {
 			$count++;
 			$bytes += max(0, $file->getSize());
 			if ($count > $maxMembers || $bytes > $maxBytes) {
@@ -328,16 +330,24 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	}
 
 	/**
-	 * The members of this archive that carry a mark, in walk order.
+	 * The members of this archive that have to be watermarked, in walk order.
 	 *
-	 * One query for the whole archive rather than one per member: a folder download of a
-	 * few hundred files is the ordinary case, and asking the mark table per file is what
-	 * would make this plugin the slowest thing in a download.
+	 * Two reasons a member qualifies, exactly as for a single download: it carries a mark, or
+	 * the fetch itself is a share the policy watermarks. The whole point of asking per member
+	 * rather than per archive is that the second reason is not a property of the folder - a
+	 * shared *file* is mounted in the recipient's own home, so a selection download can mix
+	 * received shares with the recipient's own files, and only the members can say which is
+	 * which.
+	 *
+	 * The marks are still one query for the whole archive rather than one per member: a
+	 * folder download of a few hundred files is the ordinary case, and asking the mark table
+	 * per file is what would make this plugin the slowest thing in a download. The share test
+	 * costs nothing per member - the storage is already resolved and the policy is memoised.
 	 *
 	 * @param Node[] $content
 	 * @return File[]
 	 */
-	private function markedMembers(array $content): array {
+	private function deliveryMembers(array $content): array {
 		$candidates = [];
 		foreach ($this->flatten($content) as $file) {
 			if ($this->watermarkService->isSupported($file->getMimeType())) {
@@ -349,9 +359,16 @@ class ZipInterceptorPlugin extends ServerPlugin {
 			return [];
 		}
 
-		$marked = $this->watermarkService->markedFileIds(array_keys($candidates));
+		$marked = array_flip($this->watermarkService->markedFileIds(array_keys($candidates)));
 
-		return array_values(array_intersect_key($candidates, array_flip($marked)));
+		$members = [];
+		foreach ($candidates as $id => $file) {
+			if (isset($marked[$id]) || $this->watermarkService->isForcedByShare($file)) {
+				$members[] = $file;
+			}
+		}
+
+		return $members;
 	}
 
 	/**

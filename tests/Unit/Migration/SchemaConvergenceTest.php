@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Migration;
 
 use OCA\FilesWatermark\Migration\Version1002Date20260804120000;
 use OCA\FilesWatermark\Migration\Version1003Date20260806120000;
+use OCA\FilesWatermark\Migration\Version1004Date20260806140000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -64,6 +65,10 @@ class SchemaConvergenceTest extends TestCase {
 		'created_at',
 		'updated_at',
 		'log_delivery',
+		// 1004, and last for the same reason `log_delivery` was: appended to a table every
+		// earlier step has already built.
+		'watermark_internal_shares',
+		'watermark_external_shares',
 	];
 
 	/**
@@ -295,10 +300,11 @@ class SchemaConvergenceTest extends TestCase {
 		$migration->preSchemaChange($output, $closure, []);
 		$migration->changeSchema($output, $closure, []);
 
-		// 1003 rides along rather than getting its own runner: every state above reaches it
-		// too, and the property under test is that the whole chain converges - not that each
-		// file converges on its own.
+		// 1003 and 1004 ride along rather than getting their own runners: every state above
+		// reaches them too, and the property under test is that the whole chain converges -
+		// not that each file converges on its own.
 		(new Version1003Date20260806120000())->changeSchema($output, $closure, []);
+		(new Version1004Date20260806140000())->changeSchema($output, $closure, []);
 	}
 
 	/**

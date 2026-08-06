@@ -194,6 +194,36 @@ class ZipInterceptorPluginTest extends TestCase {
 	}
 
 	/**
+	 * The same per-member question, asked of a policy that watermarks shares rather than
+	 * of the mark table.
+	 *
+	 * Nothing in this archive is marked. What decides it is the *fetch*: the received share
+	 * is watermarked because it is a share, and the recipient's own file in the same folder
+	 * is not - which is the distinction a per-container gate cannot make and a per-archive
+	 * one would get wrong in both directions.
+	 */
+	public function testAnUnmarkedMemberIsWatermarkedWhenTheShareItselfCallsForIt(): void {
+		$shared = $this->file(1, '/bob/files/Shared/secret.pdf', 'secret.pdf');
+		$own = $this->file(2, '/bob/files/Shared/mine.pdf', 'mine.pdf', 'MY-ORIGINAL');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$shared, $own]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+
+		$this->marked([]);
+		$this->watermarkService->method('isForcedByShare')
+			->willReturnCallback(static fn (File $file): bool => $file->getId() === 1);
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->willReturn($this->renderedCopy());
+
+		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
+
+		$members = Streamer::members();
+		$this->assertSame('WATERMARKED', $members['/Shared/secret.pdf']['contents']);
+		$this->assertSame('MY-ORIGINAL', $members['/Shared/mine.pdf']['contents']);
+	}
+
+	/**
 	 * Every member's declared size must be the size of the bytes that member actually
 	 * carries - the watermarked length for a substituted member, its own for one
 	 * streamed untouched.

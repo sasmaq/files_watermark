@@ -18,6 +18,7 @@ Features:
 - The stored file is never modified - watermarks are drawn per download and per preview
 - Each copy names the person fetching it, so a shared file identifies its reader
 - Two triggers: on demand (file action menu) and on upload
+- Optionally watermark every file that leaves through an internal share or a public link
 - Admin-configurable global policy, applied server-wide
 - Full audit log of every watermark event
     ]]></description>
@@ -32,10 +33,11 @@ Features:
 - لا يُعدَّل الملف المخزَّن أبداً - تُرسم العلامة عند كل تنزيل وكل معاينة
 - تحمل كل نسخة اسم من طلبها، فيدل الملف المشترك على قارئه
 - مشغّلان اثنان: عند الطلب من قائمة إجراءات الملف، وعند الرفع
+- خيار لوضع علامة مائية على كل ملف يخرج عبر مشاركة داخلية أو رابط عام
 - سياسة عامة يضبطها المدير وتسري على الخادم كله
 - سجل تدقيق كامل لكل حدث علامة مائية
     ]]></description>
-    <version>1.3.0</version>
+    <version>1.4.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>
