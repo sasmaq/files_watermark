@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
@@ -23,6 +24,7 @@ use PHPUnit\Framework\TestCase;
 
 class ApiControllerImageTest extends TestCase {
 
+	use InstanceTimeZoneMock;
 	use L10nMock;
 
 	private IRequest&MockObject $request;
@@ -52,6 +54,7 @@ class ApiControllerImageTest extends TestCase {
 			$this->imageStore,
 			$this->createMock(ISystemTagManager::class),
 			$this->l10n(),
+			$this->timeZone(),
 		);
 	}
 

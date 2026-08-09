@@ -1538,27 +1538,27 @@ to { opacity: 1; transform: none;
 }
 
 
-.loading-wrapper[data-v-012f4b5f] {
+.loading-wrapper[data-v-ebce8782] {
 	display: flex;
 	justify-content: center;
 	padding: 32px;
 }
-.log-card[data-v-012f4b5f] {
+.log-card[data-v-ebce8782] {
 	border: 1px solid var(--color-border);
 	border-radius: var(--border-radius-large, 12px);
 	overflow: hidden;
 	background: var(--color-main-background);
 }
-.log-scroll[data-v-012f4b5f] {
+.log-scroll[data-v-ebce8782] {
 	overflow-x: auto;
 }
-.log-table[data-v-012f4b5f] {
+.log-table[data-v-ebce8782] {
 	width: 100%;
 	min-width: 560px;
 	border-collapse: collapse;
 	font-size: 14px;
 }
-.log-table thead th[data-v-012f4b5f] {
+.log-table thead th[data-v-ebce8782] {
 	/* `start`, not `left`: the header has to follow the reading direction, otherwise an
 	   RTL table has every heading pinned to the wrong end of its own column. */
 	text-align: start;
@@ -1574,39 +1574,44 @@ to { opacity: 1; transform: none;
 }
 /* Arabic is a joined script: letter-spacing breaks the joins apart, and there is no case
    for text-transform to change. Both are undone rather than left to apply harmlessly. */
-[dir="rtl"] .log-table thead th[data-v-012f4b5f] {
+[dir="rtl"] .log-table thead th[data-v-ebce8782] {
 	text-transform: none;
 	letter-spacing: normal;
 }
-.log-table tbody td[data-v-012f4b5f] {
+.log-table tbody td[data-v-ebce8782] {
 	padding: 12px 16px;
 	border-bottom: 1px solid var(--color-border);
 	vertical-align: middle;
 }
-.log-table tbody tr:last-child td[data-v-012f4b5f] {
+.log-table tbody tr:last-child td[data-v-ebce8782] {
 	border-bottom: none;
 }
-.log-table tbody tr:hover td[data-v-012f4b5f] {
+.log-table tbody tr:hover td[data-v-ebce8782] {
 	background: var(--color-background-hover);
 }
-.col-date[data-v-012f4b5f] {
+.col-date[data-v-ebce8782] {
 	white-space: nowrap;
 }
-.date-main[data-v-012f4b5f] {
+.date-main[data-v-ebce8782] {
 	font-variant-numeric: tabular-nums;
 }
-.date-time[data-v-012f4b5f] {
+.date-time[data-v-ebce8782] {
 	margin-inline-start: 6px;
 	font-size: 13px;
 	font-variant-numeric: tabular-nums;
 	color: var(--color-text-maxcontrast);
 }
-.user-cell[data-v-012f4b5f] {
+.log-timezone[data-v-ebce8782] {
+	margin: 8px 2px 0;
+	font-size: 13px;
+	color: var(--color-text-maxcontrast);
+}
+.user-cell[data-v-ebce8782] {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
 }
-.avatar[data-v-012f4b5f] {
+.avatar[data-v-ebce8782] {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -1619,29 +1624,29 @@ to { opacity: 1; transform: none;
 	font-size: 12px;
 	font-weight: 700;
 }
-.user-name[data-v-012f4b5f] {
+.user-name[data-v-ebce8782] {
 	font-weight: 500;
 }
-.file-cell[data-v-012f4b5f] {
+.file-cell[data-v-ebce8782] {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
 	max-width: 340px;
 }
-.file-icon[data-v-012f4b5f] {
+.file-icon[data-v-ebce8782] {
 	flex: none;
 	width: 18px;
 	height: 18px;
 	fill: var(--color-text-maxcontrast);
 }
-.file-path[data-v-012f4b5f] {
+.file-path[data-v-ebce8782] {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-family: var(--font-face-monospace, monospace);
 	font-size: 13px;
 }
-.trigger-badge[data-v-012f4b5f] {
+.trigger-badge[data-v-ebce8782] {
 	display: inline-flex;
 	align-items: center;
 	gap: 7px;
@@ -1653,20 +1658,20 @@ to { opacity: 1; transform: none;
 	font-weight: 500;
 	white-space: nowrap;
 }
-.trigger-dot[data-v-012f4b5f] {
+.trigger-dot[data-v-ebce8782] {
 	flex: none;
 	width: 7px;
 	height: 7px;
 	border-radius: 50%;
 	background: var(--color-text-maxcontrast);
 }
-.trigger-badge--delivered .trigger-dot[data-v-012f4b5f] { background: #4a90d9;
+.trigger-badge--delivered .trigger-dot[data-v-ebce8782] { background: #4a90d9;
 }
-.trigger-badge--unmarked .trigger-dot[data-v-012f4b5f] { background: #a05fd6;
+.trigger-badge--unmarked .trigger-dot[data-v-ebce8782] { background: #a05fd6;
 }
-.trigger-badge--on_upload .trigger-dot[data-v-012f4b5f] { background: #45ad66;
+.trigger-badge--on_upload .trigger-dot[data-v-ebce8782] { background: #45ad66;
 }
-.empty-state[data-v-012f4b5f] {
+.empty-state[data-v-ebce8782] {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -1674,24 +1679,24 @@ to { opacity: 1; transform: none;
 	gap: 6px;
 	padding: 48px 24px;
 }
-.empty-icon[data-v-012f4b5f] {
+.empty-icon[data-v-ebce8782] {
 	width: 40px;
 	height: 40px;
 	margin-bottom: 2px;
 	fill: var(--color-text-maxcontrast);
 	opacity: 0.6;
 }
-.empty-title[data-v-012f4b5f] {
+.empty-title[data-v-ebce8782] {
 	margin: 0;
 	font-weight: 600;
 }
-.empty-sub[data-v-012f4b5f] {
+.empty-sub[data-v-ebce8782] {
 	margin: 0;
 	max-width: 320px;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.pagination-bar[data-v-012f4b5f] {
+.pagination-bar[data-v-ebce8782] {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -1699,14 +1704,14 @@ to { opacity: 1; transform: none;
 	flex-wrap: wrap;
 	margin-top: 14px;
 }
-.page-size[data-v-012f4b5f] {
+.page-size[data-v-ebce8782] {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.page-size-select[data-v-012f4b5f] {
+.page-size-select[data-v-ebce8782] {
 	height: 36px;
 	padding: 0 8px;
 	border: 1px solid var(--color-border-maxcontrast, #949494);
@@ -1716,12 +1721,12 @@ to { opacity: 1; transform: none;
 	font-size: 13px;
 	cursor: pointer;
 }
-.page-nav[data-v-012f4b5f] {
+.page-nav[data-v-ebce8782] {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 }
-.page-range[data-v-012f4b5f] {
+.page-range[data-v-ebce8782] {
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 	font-variant-numeric: tabular-nums;

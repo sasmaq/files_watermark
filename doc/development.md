@@ -1825,20 +1825,57 @@ OFL face. What is left here is the `{date}` locale question - plus the
     first, Latin and Latin-1 left untouched and *not* dragging in the embedded font
   - `PdfWatermarkerTest` reads the glyph codes back out of the emitted `Tj` operand and
     compares them to the shaper's output. Mutation-tested: forcing Helvetica fails it
-  - the image test could not do that - an image carries no text - so it uses shaping's own
-    non-idempotency as a discriminator. A second pass reads visual order as logical and
-    reverses it, a third puts it back, so `x` and `shape(shape(x))` are **different strings
-    that shape identically**: a renderer that shapes draws them the same, one that draws what
-    it is handed cannot. The first version of this test compared raw against shaped output and
-    was **vacuous** - it passed with shaping deleted, which is exactly how it was caught
-- **`{date}` / `{datetime}` are still locale-free** - `date('Y-m-d')` in
-  `WatermarkService::buildPlaceholders()`: ASCII digits, Gregorian, server timezone. For an
-  Arabic deployment, decide whether to offer Arabic-Indic digits (`٠١٢٣`) and/or a Hijri date,
-  and whether that follows the *viewer's* locale or a config field. IBM Plex Sans Arabic carries both
-  digit sets, so the font is not the obstacle
+  - the image test could not do that - an image carries no text - so it renders two
+    *different* strings and asserts **identical pixels**: the raw letters and the shaped form
+    they produce. A renderer that shapes draws them the same; one that draws what it is
+    handed cannot, since the raw form has neither the joining forms nor the visual order.
+    Mutation-tested by deleting the `ShapedText::shape()` call from the engine path
+  - **this discriminator was arrived at twice.** The first attempt compared raw against
+    shaped and asserted they *differed*, which was **vacuous** - it passed with shaping
+    deleted. The second used shaping's own non-idempotency (`x` and `shape(shape(x))` being
+    different strings that shaped identically), which worked and was sound right up until
+    [that non-idempotency turned out to be a bug](#open-double-shaping) and was fixed. Asking
+    for *sameness* between raw and shaped is only a valid test now **because** shaping became
+    idempotent - the fix is what makes the honest version of the test possible
+- **`{date}` / `{datetime}` now read the instance's timezone** - `default_timezone` from
+  `config.php`, through {@see InstanceTimeZone}. They used to be `date('Y-m-d')`, which is
+  PHP's process default, **and Nextcloud pins that to UTC while it boots**: the watermark read
+  UTC on every instance in the world regardless of the host clock or php.ini. A document
+  handed over at 09:00 in Aden came out stamped 06:00, which reads as a wrong timestamp rather
+  than as another timezone, because a watermark has no room to write the offset
+  - **the viewer's timezone was the other candidate and was rejected**, which is worth
+    recording because it is the opposite of the choice made everywhere else in this app. The
+    *name* in a watermark answers "who received this copy" and must differ per reader; the
+    *timestamp* answers "when was this handed out", which is one instant. Rendering it per
+    reader gives two people two different times for the same event with nothing on the page to
+    reconcile them, and breaks the pairing with the audit row - which is what an investigation
+    actually joins on
+  - an unset `default_timezone` falls back to PHP's default, so an instance that never
+    configured one renders exactly what it rendered before. An unrecognised one (`Asia/Sanaa`
+    is a plausible thing to type and is not a tz identifier - Yemen is `Asia/Aden`) warns and
+    falls back rather than throwing, because this is read on the delivery path
+  - **`WatermarkLogMapper` was deliberately left alone.** Its `created_at` is a stored
+    instant that `prune-log` compares against, not display text; rendering it in a local zone
+    would make retention arithmetic depend on an admin's config line
+  - **the activity log is converted on the way out instead**, in `ApiController::getLog()`,
+    so the admin table reads in the same zone as the watermark while the column stays fixed.
+    Two things fall out of that split, and both are the reason for it: changing
+    `default_timezone` re-reads the *whole* history rather than leaving a seam at the moment
+    it changed, and `prune-log` keeps deleting exactly the rows it says it does. The stored
+    string is parsed with no explicit zone, so PHP reads it in the same default that `date()`
+    wrote it in - an equivalence that holds whatever that default is, which is what makes
+    this correct without a migration
+  - the zone is named once under the table, from `IInitialState` rather than a field on every
+    row: it is a property of the instance, and per-row would invite the reading that rows
+    could differ. An hour with no zone beside it cannot be reconciled with a mail timestamp
+    or a server log, which is the state this replaced
+- **`{date}` / `{datetime}` are still locale-free in every other respect** - ASCII digits,
+  Gregorian. For an Arabic deployment, decide whether to offer Arabic-Indic digits (`٠١٢٣`)
+  and/or a Hijri date, and whether that follows the *viewer's* locale or a config field. IBM
+  Plex Sans Arabic carries both digit sets, so the font is not the obstacle
   - this is a real trade-off rather than cosmetics: the watermark is traceability evidence, and
     a date that renders differently depending on who fetched the file is harder to reason about
-    in an audit
+    in an audit - the same argument that settled the timezone question above
 - **Drive a real Arabic instance.** Everything above is asserted against generated
   fixtures and rendered output read back byte by byte, and the interface half against the real
   `@nextcloud/l10n` runtime driven directly - but neither has been through the Files

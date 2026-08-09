@@ -95,6 +95,7 @@ class WatermarkService {
 		private ApplyLimits $applyLimits,
 		private ShareAccess $shareAccess,
 		private IL10N $l,
+		private InstanceTimeZone $timeZone,
 	) {
 	}
 
@@ -814,6 +815,7 @@ class WatermarkService {
 	 */
 	private function buildPlaceholders(File $file, ?IUser $actor = null): array {
 		$user = $actor ?? $this->readerIdentity($file);
+		$now = new \DateTimeImmutable('now', $this->timeZone->get());
 
 		return $this->scrubPlaceholders([
 			// Two different identities, and the difference matters in a watermark. The
@@ -824,8 +826,12 @@ class WatermarkService {
 			'username' => $user?->getUID() ?? 'Unknown',
 			'displayname' => $user?->getDisplayName() ?? 'Unknown',
 			'email' => $user?->getEMailAddress() ?? '',
-			'date' => date('Y-m-d'),
-			'datetime' => date('Y-m-d H:i:s'),
+			// In the instance's timezone rather than PHP's, which Nextcloud pins to UTC -
+			// see {@see InstanceTimeZone}. Both read the same instant: a template using both
+			// tokens must not be able to show a date from one day and a time from another,
+			// which is what two separate clock reads either side of midnight would do.
+			'date' => $now->format('Y-m-d'),
+			'datetime' => $now->format('Y-m-d H:i:s'),
 			'filename' => $file->getName(),
 		]);
 	}

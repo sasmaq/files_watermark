@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkLog;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
@@ -31,6 +32,7 @@ use PHPUnit\Framework\TestCase;
  */
 class ApiControllerLogTest extends TestCase {
 
+	use InstanceTimeZoneMock;
 	use L10nMock;
 
 	private WatermarkLogMapper&MockObject $logMapper;
@@ -47,7 +49,7 @@ class ApiControllerLogTest extends TestCase {
 	 * group manager answers `$isAdmin`. Built per test rather than reconfigured, because a
 	 * PHPUnit mock cannot have the same method stubbed twice.
 	 */
-	private function controllerFor(?string $uid, bool $isAdmin): ApiController {
+	private function controllerFor(?string $uid, bool $isAdmin, string $zone = 'UTC'): ApiController {
 		$session = $this->createMock(IUserSession::class);
 		$groupManager = $this->createMock(IGroupManager::class);
 
@@ -72,6 +74,7 @@ class ApiControllerLogTest extends TestCase {
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
 			$this->l10n(),
+			$this->timeZone($zone),
 		);
 	}
 
@@ -100,6 +103,35 @@ class ApiControllerLogTest extends TestCase {
 		$this->assertSame('alice', $response->getData()[0]['userId']);
 		$this->assertSame('on_download', $response->getData()[0]['trigger']);
 		$this->assertSame(1001, $response->getData()[1]['fileId']);
+	}
+
+	/**
+	 * Rows are stored as a fixed instant and **shown** in the instance's timezone, so a log
+	 * read on an Aden server does not report a download as having happened three hours
+	 * before it did.
+	 *
+	 * The column itself is deliberately left in the clock that wrote it: `prune-log` does
+	 * date arithmetic against it, and a stored value whose meaning depends on a `config.php`
+	 * line is a retention command that deletes the wrong rows the day somebody edits it.
+	 * Converting on the way out also means changing `default_timezone` re-reads the whole
+	 * history rather than leaving a seam at the moment it changed.
+	 */
+	public function testTimestampsAreShownInTheInstanceTimeZone(): void {
+		$this->logMapper->method('findAll')->willReturn([$this->logEntry(1, 'alice', 'on_demand')]);
+
+		// The entry is stored as 09:00 UTC; Aden is UTC+3 and does not observe DST.
+		$controller = $this->controllerFor('admin', true, 'Asia/Aden');
+
+		$this->assertSame('2026-08-04 12:00:00', $controller->getLog()->getData()[0]['createdAt']);
+	}
+
+	/** A row this app did not write is shown as stored rather than dropped or blanked. */
+	public function testAnUnparseableTimestampIsPassedThrough(): void {
+		$entry = $this->logEntry(1, 'alice', 'on_demand');
+		$entry->setCreatedAt('not a date');
+		$this->logMapper->method('findAll')->willReturn([$entry]);
+
+		$this->assertSame('not a date', $this->controller->getLog()->getData()[0]['createdAt']);
 	}
 
 	public function testAnEmptyLogIsAnEmptyList(): void {

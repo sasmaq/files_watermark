@@ -77,6 +77,7 @@
         "Watermark activity will appear here as files are stamped.": "سيظهر نشاط العلامة المائية هنا كلما خُتمت الملفات.",
         "Rows per page": "عدد الصفوف في الصفحة",
         "Showing {from}–{to}": "عرض {from}–{to}",
+        "Times shown in {timezone}": "الأوقات معروضة بتوقيت {timezone}",
         "Previous": "السابق",
         "Next": "التالي",
         "Apply Watermark": "تطبيق العلامة المائية",

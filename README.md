@@ -19,6 +19,10 @@ document is whoever uploaded it rather than whoever walked out with it.
   - `{displayname}` is the name shown in Nextcloud (*John Doe*); `{username}` is the account
     name used to sign in (*john.doe*). Display names are neither unique nor permanent, so use
     the account name when the watermark has to identify exactly one account
+  - `{date}` and `{datetime}` are rendered in the instance's timezone - `default_timezone`
+    in `config.php`, the same setting the rest of Nextcloud dates by. Set it, or the
+    watermark reads UTC: Nextcloud pins PHP's own timezone to UTC while it boots, whatever
+    the server is set to. The format is `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS`
 - **Image watermarks** - overlay a logo or image on files
 - **Combined** text + image watermarks
 - Diagonal tiled placement at 45° rotation, mid grey (`#808080`) and 40% opacity by default
@@ -188,6 +192,12 @@ decision, so the volume is bounded by how often people change their minds.
 The log sits at the bottom of the settings page, **collapsed** - the page is there for the
 policy, and the log is history. *"Show activity log"* opens it, and nothing is fetched until
 you do.
+
+**Times are shown in the instance's timezone** - the same `default_timezone` the watermark
+dates use - and the table says which zone under it, so an hour can be reconciled with a mail
+timestamp or a server log. The stored column stays a fixed instant, so changing
+`default_timezone` re-reads the whole history in the new zone rather than leaving a seam in
+it, and retention arithmetic never depends on that setting.
 
 **Downloads are recorded by default**, because *"who received a copy of this file"* is the
 question a watermark exists to answer, and an install that records only the policy cannot

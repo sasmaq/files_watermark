@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
@@ -38,6 +39,7 @@ use PHPUnit\Framework\TestCase;
  */
 class ApiControllerConfigTest extends TestCase {
 
+	use InstanceTimeZoneMock;
 	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
@@ -87,6 +89,7 @@ class ApiControllerConfigTest extends TestCase {
 			$this->createMock(WatermarkImageStore::class),
 			$this->createMock(ISystemTagManager::class),
 			$this->l10n(),
+			$this->timeZone(),
 		);
 	}
 

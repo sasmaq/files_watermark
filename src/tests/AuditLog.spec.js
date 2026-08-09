@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import axios from '@nextcloud/axios'
+import { __setState, __resetState } from '@nextcloud/initial-state'
 import AuditLog from '../components/AuditLog.vue'
 
 // @nextcloud/vue, axios, router and l10n are stubbed via jest.config moduleNameMapper.
@@ -18,7 +19,36 @@ const FULL_PAGE = Array.from({ length: 50 }, (_, i) => ({
 describe('AuditLog', () => {
 	beforeEach(() => {
 		jest.clearAllMocks()
+		__resetState()
 		axios.get.mockResolvedValue({ data: SAMPLE })
+	})
+
+	// The API has already converted every row into the instance's timezone, so the table is
+	// the one place an admin can be told which clock they are reading. An hour on its own
+	// cannot be reconciled with a mail timestamp or a server log.
+	describe('timezone caption', () => {
+		it('names the zone the server provided', async () => {
+			__setState('files_watermark', 'time-zone', 'Asia/Aden')
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			expect(wrapper.text()).toContain('Times shown in Asia/Aden')
+		})
+
+		it('says UTC when the page loaded without state, which is what the server falls back to', async () => {
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			expect(wrapper.text()).toContain('Times shown in UTC')
+		})
+
+		it('is not shown over an empty log', async () => {
+			axios.get.mockResolvedValue({ data: [] })
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			expect(wrapper.text()).not.toContain('Times shown in')
+		})
 	})
 
 	it('fetches the log on mount and renders a row per entry', async () => {

@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
@@ -31,6 +32,7 @@ use PHPUnit\Framework\TestCase;
  */
 class ApiControllerScopeTest extends TestCase {
 
+	use InstanceTimeZoneMock;
 	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
@@ -58,6 +60,7 @@ class ApiControllerScopeTest extends TestCase {
 			$this->createMock(WatermarkImageStore::class),
 			$this->tagManager,
 			$this->l10n(),
+			$this->timeZone(),
 		);
 
 		$this->configMapper->method('insert')->willReturnCallback(

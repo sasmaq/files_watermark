@@ -13,6 +13,7 @@ use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
+use OCA\FilesWatermark\Service\InstanceTimeZone;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
@@ -56,6 +57,7 @@ class WatermarkServiceTest extends TestCase {
 	private ImageLimits&MockObject $imageLimits;
 	private ApplyLimits&MockObject $applyLimits;
 	private ShareAccess&MockObject $shareAccess;
+	private InstanceTimeZone&MockObject $timeZone;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -79,6 +81,10 @@ class WatermarkServiceTest extends TestCase {
 		// Owner access unless a test says otherwise: an unstubbed mock answers false to
 		// both questions, which is exactly "not a share".
 		$this->shareAccess = $this->createMock(ShareAccess::class);
+		// Fixed, so a `{date}` assertion cannot depend on where the suite is run. What the
+		// zone resolves *from* is InstanceTimeZoneTest's business.
+		$this->timeZone = $this->createMock(InstanceTimeZone::class);
+		$this->timeZone->method('get')->willReturn(new \DateTimeZone('UTC'));
 
 		$this->service = new WatermarkService(
 			$this->configMapper,
@@ -94,6 +100,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->applyLimits,
 			$this->shareAccess,
 			$this->l10n(),
+			$this->timeZone,
 		);
 	}
 
@@ -330,6 +337,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->applyLimits,
 			$this->shareAccess,
 			$this->l10n(),
+			$this->timeZone,
 		);
 	}
 
@@ -499,6 +507,82 @@ class WatermarkServiceTest extends TestCase {
 		$this->cleanup($this->service->watermarkForDownload($file));
 
 		$this->assertSame(['Alice Smith', 'Bob Jones'], $names);
+	}
+
+	/**
+	 * `{date}` and `{datetime}` are rendered in the instance's timezone, not PHP's.
+	 *
+	 * Nextcloud pins PHP's default to UTC while it boots, so `date()` stamped UTC on every
+	 * instance in the world - an hour that reads as wrong rather than as elsewhere, because
+	 * a watermark has no room to write the offset.
+	 *
+	 * Two zones 26 hours apart, which is more than a day: whatever instant this runs at,
+	 * they are on different calendar dates, so the assertion needs no fixed clock and cannot
+	 * flake at a boundary.
+	 */
+	public function testTheDateIsRenderedInTheInstanceTimeZone(): void {
+		$dates = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$dates): void {
+				$dates[] = $placeholders['date'];
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		foreach (['Pacific/Kiritimati', 'Etc/GMT+12'] as $zone) {
+			$this->cleanup(
+				$this->serviceInTimeZone($zone)->watermarkForDownload($this->markedFile('application/pdf')),
+			);
+		}
+
+		$this->assertNotSame(
+			$dates[0],
+			$dates[1],
+			'both zones produced the same date, so the configured timezone is not reaching the watermark',
+		);
+	}
+
+	/**
+	 * A template using both tokens must not be able to show a date from one day beside a
+	 * time from the next, which is what two separate clock reads either side of midnight
+	 * would eventually produce.
+	 */
+	public function testDateAndDatetimeReadTheSameInstant(): void {
+		$seen = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$seen): void {
+				$seen = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile('application/pdf')));
+
+		$this->assertStringStartsWith($seen['date'], $seen['datetime']);
+	}
+
+	private function serviceInTimeZone(string $zone): WatermarkService {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+
+		$timeZone = $this->createMock(InstanceTimeZone::class);
+		$timeZone->method('get')->willReturn(new \DateTimeZone($zone));
+
+		return new WatermarkService(
+			$this->configMapper,
+			$this->logMapper,
+			$this->markMapper,
+			$this->pdfWatermarker,
+			$this->imageWatermarker,
+			$this->userSession,
+			$this->tagObjectMapper,
+			$this->logger,
+			$this->imageStore,
+			$this->imageLimits,
+			$this->applyLimits,
+			$this->shareAccess,
+			$this->l10n(),
+			$timeZone,
+		);
 	}
 
 	/**
@@ -873,6 +957,7 @@ class WatermarkServiceTest extends TestCase {
 			$applyLimits,
 			$this->shareAccess,
 			$this->l10n(),
+			$this->timeZone,
 		);
 
 		$this->pdfWatermarker->expects($this->never())->method('apply');

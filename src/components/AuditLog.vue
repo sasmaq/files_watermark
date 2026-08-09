@@ -72,6 +72,16 @@
 				</div>
 			</div>
 
+			<!--
+				Which clock the two date columns are on. The API converts every row into the
+				instance's timezone, and an hour with no zone beside it cannot be reconciled
+				with anything - a mail timestamp, a server log, or what the person who
+				downloaded the file remembers.
+			-->
+			<p v-if="rows.length" class="log-timezone">
+				{{ t('files_watermark', 'Times shown in {timezone}', { timezone: timeZone }) }}
+			</p>
+
 			<div v-if="showPagination" class="pagination-bar">
 				<div class="page-size">
 					<label for="audit-page-size">{{ t('files_watermark', 'Rows per page') }}</label>
@@ -110,10 +120,16 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
+import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+
+// Provided by AdminSettings::getForm(). The fallback is what the server falls back to when
+// `default_timezone` is unset, so a page that somehow loads without state says UTC rather
+// than an empty parenthesis - and never claims a zone the rows are not in.
+const timeZone = loadState('files_watermark', 'time-zone', 'UTC')
 
 const entries = ref([])
 const loading = ref(false)
@@ -256,6 +272,11 @@ onMounted(fetchLog)
 	margin-inline-start: 6px;
 	font-size: 13px;
 	font-variant-numeric: tabular-nums;
+	color: var(--color-text-maxcontrast);
+}
+.log-timezone {
+	margin: 8px 2px 0;
+	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
 

@@ -9,6 +9,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
+use OCA\FilesWatermark\Service\InstanceTimeZone;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
@@ -39,6 +40,7 @@ class ApiController extends Controller {
 		private WatermarkImageStore $imageStore,
 		private ISystemTagManager $tagManager,
 		private IL10N $l,
+		private InstanceTimeZone $timeZone,
 	) {
 		parent::__construct($appName, $request);
 	}
@@ -498,6 +500,50 @@ class ApiController extends Controller {
 		}
 
 		$entries = $this->logMapper->findAll($limit, $offset);
-		return new DataResponse(array_map(fn ($e) => $e->jsonSerialize(), $entries));
+		return new DataResponse(array_map(fn ($e) => $this->inInstanceTimeZone($e->jsonSerialize()), $entries));
+	}
+
+	/**
+	 * One log row with `createdAt` moved into the instance's timezone.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * WHY THIS CONVERTS ON THE WAY OUT RATHER THAN STORING LOCAL TIME.
+	 *
+	 * `created_at` is written with `date('Y-m-d H:i:s')`, which is PHP's process default -
+	 * UTC, because that is what Nextcloud pins it to during boot. That is the right thing to
+	 * *store*: `prune-log` does date arithmetic against it, and a column whose meaning depends
+	 * on an admin's `config.php` line is a retention command that deletes the wrong rows the
+	 * day somebody edits it.
+	 *
+	 * So the column stays a fixed instant and the **display** moves, which also means an
+	 * admin who changes `default_timezone` sees the whole history re-read in the new zone
+	 * rather than a log with a seam in it.
+	 *
+	 * The string is parsed with no explicit zone, so PHP reads it in its own default - the
+	 * same clock that wrote it. That equivalence is the load-bearing part: it holds whatever
+	 * PHP's default is, so this is correct even on an install where something has moved it
+	 * off UTC, and it needs no migration for rows already written.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * @param array<string, mixed> $row
+	 * @return array<string, mixed>
+	 */
+	private function inInstanceTimeZone(array $row): array {
+		$createdAt = $row['createdAt'] ?? '';
+		if (!is_string($createdAt) || $createdAt === '') {
+			return $row;
+		}
+
+		try {
+			$row['createdAt'] = (new \DateTimeImmutable($createdAt))
+				->setTimezone($this->timeZone->get())
+				->format('Y-m-d H:i:s');
+		} catch (\Exception) {
+			// An unparseable timestamp is a row written by something other than this app.
+			// Shown as stored rather than dropped or blanked: the log is evidence, and a
+			// row nobody can explain is still a row that happened.
+		}
+
+		return $row;
 	}
 }

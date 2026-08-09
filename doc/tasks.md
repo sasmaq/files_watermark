@@ -72,10 +72,11 @@ Things that produce a wrong file, or say something untrue about one.
   acting user and timestamp, `metadata` accepted as a `type` (needs both `VALID_TYPES` and
   a migration), usable alongside *or* instead of a visible mark, and proven to survive the
   download path. [notes](development.md#open-2)
-- [ ] **`{date}` / `{datetime}` are locale-free** - ASCII digits, Gregorian, server
-  timezone. For an Arabic deployment, decide on Arabic-Indic digits and/or a Hijri date,
-  and whether that follows the viewer's locale or a config field. The bundled font carries
-  both digit sets, so the font is not the obstacle. [notes](development.md#open-arabic)
+- [ ] **`{date}` / `{datetime}` are locale-free** - ASCII digits, Gregorian. For an Arabic
+  deployment, decide on Arabic-Indic digits and/or a Hijri date, and whether that follows the
+  viewer's locale or a config field. The bundled font carries both digit sets, so the font is
+  not the obstacle. (The timezone half is done: they read `default_timezone` from
+  `config.php`.) [notes](development.md#open-arabic)
 - [ ] **Folder downloads through `/api/v1/download`** - accept a folder path, or document
   that archives go through the DAV route. [notes](development.md#open-3)
 **Dropped: the file-versions undo option** ([notes](development.md#open-versions-undo)).
