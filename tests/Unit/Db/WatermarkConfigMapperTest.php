@@ -304,7 +304,8 @@ class WatermarkConfigMapperTest extends TestCase {
 		$config->setOpacity(55);
 		$config->setFontSize(18);
 		$config->setRotation(30);
-		$config->setLogDelivery(true);
+		// False, because the default is now true - this is the value that differs.
+		$config->setLogDelivery(false);
 
 		$saved = $this->mapper->insert($config);
 

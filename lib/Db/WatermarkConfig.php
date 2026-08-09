@@ -56,13 +56,23 @@ class WatermarkConfig extends Entity {
 	/** Nextcloud system-tag ID for per-folder targeting; null means global */
 	protected ?string $folderTag = null;
 	/**
-	 * Whether to write an audit row for every *delivery* - `on_download` / `on_share`,
-	 * which render per fetch. Off by default: those rows are the ones that grow without
-	 * bound (a row per member of every archive, every time it is downloaded), and they
-	 * are pure audit. The in-place events are recorded regardless of this: they are not
-	 * history, they are how the app knows a file's stored bytes carry a watermark.
+	 * Whether to write an audit row for every *delivery* - one watermarked copy handed to
+	 * one reader.
+	 *
+	 * **On by default**, which it was not under the four-trigger model. There, two of the
+	 * four triggers never produced a delivery row at all, so an install that had one was a
+	 * minority case and the rows were an opt-in extra. Now every marked file renders on
+	 * every fetch, and *"who received a copy of this document"* is the question the app
+	 * exists to answer - a default install that cannot answer it is recording the policy
+	 * and not the thing the policy is about.
+	 *
+	 * What that costs is one row per file per download, archive members included; the
+	 * bound is `archive_max_members`, and `occ files_watermark:prune-log` is the retention.
+	 * Previews render per viewer but write no rows - the volume would be per thumbnail.
+	 *
+	 * The mark/unmark events are recorded regardless of this, and always have been.
 	 */
-	protected bool $logDelivery = false;
+	protected bool $logDelivery = true;
 	/**
 	 * Watermark **every fetch made through a share**, whether or not the file is marked.
 	 *

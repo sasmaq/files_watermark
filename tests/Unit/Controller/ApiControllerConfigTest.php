@@ -306,8 +306,25 @@ class ApiControllerConfigTest extends TestCase {
 		];
 	}
 
-	public function testDeliveryLoggingIsOffUnlessAskedFor(): void {
+	/**
+	 * A save that says nothing about delivery logging gets it **on**, which is the default a
+	 * fresh install runs with. It was off here until every trigger started rendering per
+	 * fetch; a payload that omits the field must not be a silent way to stop recording who
+	 * received what.
+	 */
+	public function testDeliveryLoggingIsOnUnlessTurnedOff(): void {
 		$response = $this->controller->saveConfig(type: 'text', textTemplate: '{username}', imagePath: null);
+
+		$this->assertTrue($response->getData()['logDelivery']);
+	}
+
+	public function testDeliveryLoggingIsStoredWhenTurnedOff(): void {
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			logDelivery: false,
+		);
 
 		$this->assertFalse($response->getData()['logDelivery']);
 	}

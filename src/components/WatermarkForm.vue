@@ -208,7 +208,7 @@
 							{{ t('files_watermark', 'Record every download in the activity log') }}
 						</NcCheckboxRadioSwitch>
 						<small class="wm-help">
-							{{ t('files_watermark', 'Off by default: a watermarked file is rendered on every fetch, so this writes one entry per file per download - including every file inside a downloaded folder. Marking and unmarking a file is always recorded.') }}
+							{{ t('files_watermark', 'On by default, because it is what answers "who received a copy of this file". It writes one entry per file per download, including every file inside a downloaded folder, and nothing expires on its own - use occ files_watermark:prune-log to keep it in hand. Previews are not recorded. Marking and unmarking a file is always recorded, whatever this is set to.') }}
 						</small>
 					</div>
 				</section>
@@ -461,9 +461,10 @@ const DEFAULTS = {
 	trigger: 'on_demand',
 	mimeTypes: '',
 	folderTag: '',
-	// Off, matching the column default. Delivery triggers render per fetch, so an
-	// audit row per fetch is what grows the log without bound.
-	logDelivery: false,
+	// On, matching the column default: every marked file renders on every fetch, so who
+	// received a copy is a question every install can answer and this is what decides
+	// whether it does. Pruning is what bounds the log, not leaving it unwritten.
+	logDelivery: true,
 	// Both off, matching the columns. These are not triggers: they mark nothing, and they
 	// are read per fetch against the share the file is travelling through.
 	watermarkInternalShares: false,

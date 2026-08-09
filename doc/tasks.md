@@ -34,9 +34,6 @@ model, the six decisions it was built on and the preview design are written up i
   file now renders, and the preview path renders per thumbnail per viewer. A render cache
   keyed by file id + mtime + viewer uid is the obvious answer if it does not hold up, and
   the obvious answer reintroduces stored watermarked bytes - so measure first.
-- [ ] **`log_delivery` default.** Off means the default install audits nothing but policy
-  changes. That was defensible when only two of four triggers produced delivery rows; it is
-  a different product now.
 - [ ] **Team folders are outside both share switches.** A Team folder is neither an
   `ISharedStorage` nor a public link, so *"always watermark internal shares"* watermarks
   nothing in the one storage shape that is multi-user by construction - the same hole

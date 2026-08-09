@@ -485,8 +485,13 @@ class WatermarkServiceTest extends TestCase {
 			},
 		);
 
+		// Twice per fetch, and the pairing is the point: the identity that goes into the
+		// watermark is the identity that goes into the audit row. Delivery logging is on by
+		// default, so the second call of each pair is the row being written.
 		$this->userSession->method('getUser')->willReturnOnConsecutiveCalls(
 			$this->user('alice', 'Alice Smith'),
+			$this->user('alice', 'Alice Smith'),
+			$this->user('bob', 'Bob Jones'),
 			$this->user('bob', 'Bob Jones'),
 		);
 

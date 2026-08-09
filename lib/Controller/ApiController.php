@@ -102,7 +102,9 @@ class ApiController extends Controller {
 		string $trigger = 'on_demand',
 		?string $mimeTypes = null,
 		?string $folderTag = null,
-		bool $logDelivery = false,
+		// On, matching the entity default: a save that omits the field gets the behaviour a
+		// fresh install has, rather than silently turning the audit trail off.
+		bool $logDelivery = true,
 		bool $watermarkInternalShares = false,
 		bool $watermarkExternalShares = false,
 		?int $id = null,

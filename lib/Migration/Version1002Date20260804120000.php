@@ -199,10 +199,10 @@ class Version1002Date20260804120000 extends SimpleMigrationStep {
 		]);
 		$table->addColumn('created_at', Types::DATETIME, ['notnull' => true]);
 		$table->addColumn('updated_at', Types::DATETIME, ['notnull' => true]);
-		// Delivery-trigger audit rows are opt-in; see ensureLogDeliveryColumn().
+		// Delivery audit rows are on by default; see ensureLogDeliveryColumn().
 		$table->addColumn('log_delivery', Types::BOOLEAN, [
 			'notnull' => false,
-			'default' => false,
+			'default' => true,
 		]);
 		$table->setPrimaryKey(['id']);
 	}
@@ -282,27 +282,44 @@ class Version1002Date20260804120000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * Add `log_delivery`, the switch that makes delivery-time audit rows opt-in.
+	 * Add `log_delivery`, the switch that decides whether a delivery writes an audit row.
 	 *
-	 * `on_download` and `on_share` render **per fetch**, so they also logged per fetch - one
-	 * row per watermarked member of every archive, every time anyone downloaded it, forever.
-	 * That is the growth this column answers.
+	 * **It governs the delivery rows only.** The mark/unmark rows are not history an admin
+	 * may decline to keep - they are how the app knows a file carries a mark, which the
+	 * Files-list badge reads - and they are written regardless of this column.
 	 *
-	 * **It governs the delivery rows only.** The in-place rows (`on_demand`, `on_upload`,
-	 * `removed`) are not history an admin may decline to keep: they are how the app knows a
-	 * file's stored bytes carry a watermark - the Files-list badge and the guard against a
-	 * second burn both read them. They are written regardless of this column.
+	 * ---------------------------------------------------------------------------
+	 * IT DEFAULTS TO **ON**, AND IT DID NOT ALWAYS.
 	 *
-	 * **It defaults to off, including on upgrade**, which is a deliberate change of
-	 * behaviour for an instance that already had a delivery trigger configured: delivery
-	 * downloads stop being recorded until an admin ticks the box. Defaulting existing rows
-	 * to on would have left every current install with the unbounded growth this exists to
-	 * fix, and the setting is one checkbox away. `occ files_watermark:prune-log` deals with
-	 * what is already there.
+	 * The column was introduced opt-out at a time when two of the four triggers
+	 * (`on_demand`, `on_upload`) burned the watermark into the file and produced no delivery
+	 * rows at all. An install with a delivery trigger was the minority case, the rows were an
+	 * extra, and the argument for off was unbounded growth: a row per member of every
+	 * archive, every time anyone downloaded it, forever.
 	 *
-	 * Separate from `ensureConfigTable()` rather than folded into it, because the two
-	 * answer different states: a fresh install gets the column with the table, and every
-	 * upgrade path gets it added to a table that already exists.
+	 * The [trigger rework](../../doc/development.md) removed that asymmetry. **Every** marked
+	 * file now renders on every fetch, whichever trigger marked it, so *"who received a copy
+	 * of this document"* is a question every install can answer and the default decides
+	 * whether it does. A watermark exists to trace a leaked document back to the person who
+	 * received it; an install that records the policy and not the deliveries has the audit
+	 * trail for the half nobody needs to reconstruct.
+	 *
+	 * The growth argument did not go away, it got a bound and a tool: `archive_max_members`
+	 * caps the rows one request can write, and `occ files_watermark:prune-log --days` is the
+	 * retention. Previews render per viewer and write **no** rows - that volume would be per
+	 * thumbnail per person, which is the case where the argument still holds.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **An instance that already has the column keeps whatever is stored in it**, on or off.
+	 * This is a default, and a default only decides what happens in the absence of a choice;
+	 * rewriting rows would overwrite admins who ticked the box off on purpose, and there is
+	 * no way to tell those apart from the ones who never opened the page. The release note
+	 * says to tick it, which is the honest version of the same thing.
+	 *
+	 * Separate from `ensureConfigTable()` rather than folded into it, because the two answer
+	 * different states: a fresh install gets the column with the table, and every upgrade
+	 * path gets it added to a table that already exists. **Both must declare the same
+	 * default** or `SchemaConvergenceTest` fails - which is the point of that test.
 	 */
 	private function ensureLogDeliveryColumn(ISchemaWrapper $schema): void {
 		if (!$schema->hasTable('watermark_config')) {
@@ -314,9 +331,11 @@ class Version1002Date20260804120000 extends SimpleMigrationStep {
 			return;
 		}
 
+		// True, so an instance old enough to predate the column gets delivery logging back:
+		// before the switch existed, every delivery was recorded unconditionally.
 		$table->addColumn('log_delivery', Types::BOOLEAN, [
 			'notnull' => false,
-			'default' => false,
+			'default' => true,
 		]);
 	}
 

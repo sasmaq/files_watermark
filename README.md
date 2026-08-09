@@ -151,7 +151,6 @@ occ app:enable files_watermark
 
 Or via the web UI: **Admin → Apps → search "files_watermark" → Enable**.
 
-
 ## Watermarking shared files
 
 Two switches under **Settings → Administration → Watermark → Shared files**:
@@ -190,11 +189,23 @@ The log sits at the bottom of the settings page, **collapsed** - the page is the
 policy, and the log is history. *"Show activity log"* opens it, and nothing is fetched until
 you do.
 
-**Downloads are not recorded unless you ask for them.** A marked file is rendered on *every
-fetch*, so recording each one writes an entry per file per download - including every file
-inside a downloaded folder - and nothing expires on its own. Turn it on under **Settings →
-Administration → Watermark → When to apply** with *"Record every download in the activity
-log"*.
+**Downloads are recorded by default**, because *"who received a copy of this file"* is the
+question a watermark exists to answer, and an install that records only the policy cannot
+answer it. One entry per file per download, including every file inside a downloaded folder.
+
+What that costs is worth knowing before you leave it on: a marked file is rendered on every
+fetch, so a folder downloaded twice writes its rows twice, and **nothing expires on its
+own** - [pruning](#pruning-old-entries) is what keeps it in hand. The bound on a single
+request is `archive_max_members`. **Previews are not recorded**: they render per viewer, so
+rows there would be per thumbnail per person.
+
+The switch is **Settings → Administration → Watermark → When to apply**, *"Record every
+download in the activity log"*.
+
+> **Upgrading:** an instance that already has this setting keeps whatever is stored in it,
+> off included. Only new installs get the new default - a default decides what happens when
+> nobody has chosen, and rewriting the value would overwrite admins who turned it off on
+> purpose. Tick the box if you want the new behaviour.
 
 The log is history and nothing else. It used to double as the app's record of which files
 were watermarked, which is why the pruning command below could not reach most of it; that

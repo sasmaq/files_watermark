@@ -81,8 +81,10 @@ Cypress.Commands.add('wmSetPolicy', (policy = {}) => {
 			rotation: 45,
 			mimeTypes: null,
 			folderTag: null,
-			// Sent explicitly, matching the shipped default. A spec that wants delivery
-			// rows has to ask for them, exactly as an admin does.
+			// Deliberately the *opposite* of the shipped default, which is on. The suite
+			// needs a baseline where a delivery writes nothing, so that a spec asserting
+			// "no rows" is asserting something; the two specs that want delivery rows
+			// (05-archives, 11-prune-log) ask for them, exactly as an admin does.
 			logDelivery: false,
 			// Same, and more load-bearing: these two watermark files nothing has marked, so
 			// a spec that inherited them from the last one would see watermarks it never

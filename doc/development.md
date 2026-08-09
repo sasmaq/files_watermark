@@ -636,6 +636,8 @@ the DAV interceptors, the archive rebuild, the caps, the HEAD handling - is stil
     instance already running a delivery trigger: downloads stop being recorded until an admin
     ticks the box. Defaulting existing rows to *on* would have left every current install with
     the unbounded growth this release exists to fix, and the box is one click away
+    - **reversed after the rework**, once every trigger rendered per fetch and the minority
+      case became the only case. See [the audit-trail default](#log-delivery-default)
   - `Version1007Date20260801120000` adds `log_delivery`; the app version is **1.6.0**, without
     which the migration would not run. `SchemaConvergenceTest` gained the step and - the part
     that matters - its pre-1007 seed now omits the column, so the upgrade paths actually
@@ -1043,6 +1045,62 @@ price above: a folder of marked files renders one thumbnail per file per viewer,
 The obvious answer - a render cache keyed by file id + mtime + viewer uid - reintroduces
 stored watermarked bytes, which is what this rework exists to delete, so it is not being
 built before the cost is measured.
+
+### The audit trail, and why its default flipped {#log-delivery-default}
+
+`log_delivery` decides whether handing one watermarked copy to one reader writes a row. It
+shipped **off** and is now **on**, and the reversal is a consequence of the rework rather
+than a change of mind about logging.
+
+**Under four triggers the delivery row was a minority feature.** `on_demand` and `on_upload`
+burned the watermark into the file and delivered nothing per fetch, so only the two delivery
+triggers produced rows at all. Off was the right default for a setting most installs had no
+use for, and the argument against on was unbounded growth - a row per member of every
+archive, every time anyone downloaded it, forever.
+
+**The rework deleted that asymmetry.** Every marked file is now rendered per fetch whichever
+trigger marked it, so every install produces deliveries and the default decides whether any
+of them are recorded. What that leaves is an app whose whole purpose is tracing a leaked
+document back to the person who received it, shipping with the receiving half unrecorded: the
+log answers *"who set the policy"* and not *"who got a copy"*. The [per-member
+granularity](#open-3) decision was taken because "bob downloaded an archive at 14:02" cannot
+say which documents were in it - the same argument, one level up, says an install that
+records nothing at 14:02 cannot say anything at all.
+
+The growth argument did not evaporate; it acquired a bound and a tool. `archive_max_members`
+caps what one request can write, `occ files_watermark:prune-log --days` is the retention, and
+that command can now reach every row because the mark table took over the job the log used to
+double as. **Previews write no rows**, which is what keeps the volume defensible: they render
+per viewer, so logging them would be per thumbnail per person rather than per download.
+
+**Three defaults had to move together**, and a fourth deliberately did not:
+
+- `WatermarkConfig::$logDelivery` - what a config object is before anybody touches it
+- the `log_delivery` column, in **both** places `Version1002` declares it: the fresh-install
+  `createTable` and the `addColumn` upgrade path. They must agree or `SchemaConvergenceTest`
+  fails, which is exactly what that test is for
+- `ApiController::saveConfig()`'s parameter default, so a payload that omits the field gets
+  what a fresh install has rather than silently turning the audit trail off
+- **not** the stored value on an existing row. A default decides what happens when nobody has
+  chosen; rewriting rows would overwrite the admins who turned it off on purpose, and nothing
+  distinguishes those from the ones who never opened the page. The upgrade note says to tick
+  the box, which is the honest version of the same thing
+
+An instance old enough to predate the column is the one case where an upgrade *does* switch
+it on, and that is not an exception to the rule above: before the column existed, every
+delivery was recorded unconditionally. Those instances get back what the switch took away.
+
+Two test changes are worth knowing about, because both were tests that had quietly encoded
+the old default:
+
+- `WatermarkConfigMapperTest` asserts the bound column types by setting every field to
+  something *other* than its default - `Entity` marks a field updated only when it changes,
+  so a "save" of the defaults writes no columns at all. `setLogDelivery(true)` stopped being
+  a change and the column vanished from the insert; it is `false` now, for the same reason it
+  was `true` before
+- the frontend spec drove the switch to `true` in three places, which after the flip would
+  have passed against a form that ignored the stored value entirely. All three drive it to
+  `false` now - the only direction that proves anything
 
 ---
 

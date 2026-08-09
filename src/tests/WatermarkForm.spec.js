@@ -404,30 +404,33 @@ describe('WatermarkForm', () => {
 			}
 		})
 
-		it('defaults to off, matching the column default', () => {
+		it('defaults to on, matching the column default', () => {
 			const wrapper = mountForm({ modelValue: { trigger: 'on_demand' } })
-			expect(auditBox(wrapper).element.checked).toBe(false)
-			expect(wrapper.vm.form.logDelivery).toBe(false)
+			expect(auditBox(wrapper).element.checked).toBe(true)
+			expect(wrapper.vm.form.logDelivery).toBe(true)
 		})
 
+		// The three below drive the switch to **false**, which is the only direction that
+		// proves anything now that the default is true: setting it to true would pass on a
+		// form that ignored the stored value entirely.
 		it('reflects a stored value', () => {
-			const wrapper = mountForm({ modelValue: { trigger: 'on_upload', logDelivery: true } })
-			expect(auditBox(wrapper).element.checked).toBe(true)
+			const wrapper = mountForm({ modelValue: { trigger: 'on_upload', logDelivery: false } })
+			expect(auditBox(wrapper).element.checked).toBe(false)
 		})
 
 		it('writes the change back to the form', async () => {
 			const wrapper = mountForm({ modelValue: { trigger: 'on_demand' } })
-			await auditBox(wrapper).setValue(true)
-			expect(wrapper.vm.form.logDelivery).toBe(true)
+			await auditBox(wrapper).setValue(false)
+			expect(wrapper.vm.form.logDelivery).toBe(false)
 		})
 
 		it('is included in the payload the server is asked to save', async () => {
 			const wrapper = mountForm({ modelValue: { trigger: 'on_demand' } })
-			await auditBox(wrapper).setValue(true)
+			await auditBox(wrapper).setValue(false)
 			await wrapper.find('.wm-save').trigger('click')
 
 			const [payload] = wrapper.emitted('save')[0]
-			expect(payload.logDelivery).toBe(true)
+			expect(payload.logDelivery).toBe(false)
 		})
 
 		it('offers exactly the two triggers the server accepts', () => {
