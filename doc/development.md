@@ -357,6 +357,13 @@ Not started. The largest piece of missing SDD scope.
 **Position:** all four triggers work, for single files and archives, across owner, internal
 share, and public-link access. This is where every delivery-time bug has been found.
 
+**Superseded by [the trigger rework](#trigger-rework) on 2026-08-06.** There are two triggers
+now, neither of which writes to the stored file, so everything below that describes an
+in-place burn, a preserved original, the on-upload job or the `on_share` / `on_download`
+triggers is history rather than behaviour. It is kept in full because each paragraph records
+a bug that was found the expensive way, and because the delivery-path machinery it describes -
+the DAV interceptors, the archive rebuild, the caps, the HEAD handling - is still what runs.
+
 ### Notes and open questions {#open-3}
 
 - **The `on_upload` overwrite hole - fixed, and it had two more bugs behind it.**
@@ -647,6 +654,230 @@ every `on_share` deny goes through a failed render.
 - `applyWatermark` checks readability and updateability before processing
 - All file paths resolved through `\OCP\Files\IRootFolder`, so no traversal outside the
   acting user's home
+
+---
+
+## The trigger rework: a mark, not burned bytes {#trigger-rework}
+
+**Position:** built, landed on 2026-08-06. Four triggers became two, and the app stopped
+writing to user storage altogether. Everything in
+[section 3](#3-delivery-and-triggers-goal-3) that describes a watermark being written into a
+stored file - the in-place burn, the preserved original, the on-upload job and the DAV plugin
+that raced cron to it - is a record of the model this replaced, kept because every one of
+those paragraphs is a bug that was found and paid for.
+
+**Two triggers, and neither one touches the stored file.**
+
+- **On demand** - the action menu *marks* the file.
+- **On upload** - a supported upload is marked automatically.
+
+A marked file is rendered watermarked **at every fetch** - download, archive member and
+preview alike - against the identity of whoever is asking. A share recipient sees their own
+name; a public-link visitor, who has no identity to read, sees the file's owner. Two people
+downloading the same marked file get two different files, and neither is the one on disk.
+
+### Why the burn had to go {#trigger-rework-why}
+
+**A watermark burned into content can only name the person who triggered it.** For a shared
+file that is the wrong person: it names whoever uploaded the document rather than whoever
+walked out with it, which is the one question this app exists to answer. Everything else
+below is a consequence, but this alone was enough.
+
+The consequences were not small, and they are the reason the rework deleted more code than
+it added:
+
+- **The destructive write needed a whole apparatus to be survivable.** `OriginalStore` kept
+  a second copy of every burned file so Remove could give it back; that copy had to be
+  hidden from search and the activity feed (two core patches, [patch.md](patch.md)); and an
+  [undo through file versions](#open-versions-undo) was specified on top of it. None of it
+  exists now, because there is no second copy to preserve, hide or restore - unmarking is
+  one row deleted, and the next fetch serves the file exactly as it is stored.
+- **It could not run where the trigger fired.** `NodeWrittenEvent` fires while the
+  triggering write still holds a lock on the node, so `putContent()` from the listener threw
+  `LockedException`. That bought a background job, a second DAV plugin (`afterMethod:PUT`
+  plus `afterMethod:MOVE` for chunked uploads) so an upload did not sit clean until cron ran,
+  and a static suppression map so the app's own writes did not re-trigger the listener.
+  Marking takes no lock and costs one insert, so `NodeWrittenListener` now does the work
+  inline and the other three pieces are gone.
+- **Overwrites were a leak, three bugs deep.** The full account is in
+  [section 3](#open-3): a guard keyed by file id suppressed the first burn of new content
+  that reused the id, `Sabre\DAV\Tree`'s cached node read the wrong storage path behind it,
+  and the preserved original still held the *first* upload, so Remove would have restored a
+  file the user had already replaced. All three are properties of writing to storage. Under
+  a mark, an overwrite is new content served through a mark that never moved.
+- **"Is this file watermarked?" was an inference.** The answer came from replaying that
+  file's in-place `watermark_log` rows and taking the last one, which is why `PruneLog`
+  could never be allowed to touch them - deleting a line of history would have un-badged a
+  file - and why one boolean cost an ordered scan. `watermark_mark` makes the mark a fact
+  and leaves the log as history, which is what it always claimed to be.
+
+The cost of the new model is stated plainly because it is real: **every fetch renders**. The
+burn paid once per file; this pays once per fetch per reader, on the delivery path. That
+trade is what buys a watermark that names the reader, and measuring it on a real folder is
+the open item in [tasks.md](tasks.md).
+
+### What a mark is {#trigger-rework-mark}
+
+One row in `watermark_mark`, keyed by file id: who placed it, which trigger placed it, and
+which config was in force. `marked_by` is deliberately **not** who the watermark names -
+that is resolved per fetch, from whoever is asking - and the trigger column is audit, not
+behaviour, because the two triggers differ only in *which files get marked* and not at all
+in what happens afterwards.
+
+Two things follow from the mark being a durable statement about a file rather than about a
+set of bytes or a reader:
+
+- **The policy's scope is consulted when the mark is placed, and never again.** The MIME
+  whitelist and the folder tag decide which files get marked; an admin who narrows the
+  whitelist afterwards has changed what gets marked next, not disowned the marks already
+  placed. A marked file that silently stopped being watermarked because somebody moved it
+  out of a tagged folder is exactly the failure the app exists to prevent.
+- **The share switches are not a third trigger**, for the same reason from the other
+  direction - "this file is being handed to somebody else right now" is a property of one
+  fetch, not of the file. See [share switches](#share-switches).
+
+### The six decisions taken before the work started {#trigger-rework-settled}
+
+Each was settled up front and each is now the behaviour:
+
+1. **A marked file is watermarked for its owner too. No exemption for anybody.** The
+   watermark carries the reader's identity, and an owner reading their own file is a reader.
+   The alternative - exempting the owner - is what the old `on_share` did, and it is what
+   made `TeamFolder` necessary: a folder with no single owner to exempt turned the exemption
+   into a hole. Nothing is exempt now, so there is nothing to detect, and that class went
+   with the rework. (The share switches are the exception that proves the rule: they
+   watermark a *recipient's* fetch of a file whose owner still gets it clean, because they
+   are about the copy leaving rather than about the file.)
+2. **A marked file whose render fails is denied, never served clean** - 403 on every
+   delivery path, including an archive whose member is over the caps.
+   `WatermarkRequiredException` is thrown where a clean fallback would have been returned.
+   Serving the original on failure would hand the unprotected file to precisely the reader
+   the policy exists to name, and it would do it silently, at the moment the protection was
+   needed. The visible cost is a file that cannot be downloaded by anyone until it can be
+   rendered, which is why encrypted PDFs matter more after the rework than before.
+3. **No upgrade path, in either direction.** `watermark_mark` is created empty: files burned
+   by a previous version keep the watermark in their bytes, because marking them would draw
+   a second watermark over the first on every fetch, and this app does not rewrite user
+   content to tidy up after itself. Configs still set to `on_download` or `on_share` are not
+   migrated either - `effectiveTrigger()` refuses a value that is not one of the two, logs a
+   warning naming it, and marks nothing until an admin re-picks. Choosing a trigger *for* an
+   admin would have been a silent policy change on upgrade day; the price is that such an
+   instance protects nothing in the meantime, and has no bulk way to mark what it already
+   has ([tasks.md](tasks.md)).
+4. **Apply and Remove are not offered under `on_upload`.** The app marks every supported
+   upload itself, so Apply is a no-op on anything the policy covers, and Remove would be
+   undone by the next write to the file. Offering either would be the UI promising something
+   the server contradicts. Both actions are gated on the effective trigger being
+   `on_demand`, which the frontend reads from `loadState`.
+5. **An overwrite keeps the mark.** The mark is a policy on the file id, not a claim about
+   a particular set of bytes, so new content is served through it unchanged - and the
+   listener re-marking on every write is a no-op that returns false. This is the exact
+   inverse of the old model, where a file id surviving an overwrite *was* the bug, and it
+   deletes the `replaced`-row machinery that was written to cope with it.
+6. **The caps bound the *mark*, not the fetch.** `ApplyLimits` (bytes, read from the file
+   cache) and `ImageLimits` (pixels, read from the image header - the first few KiB, never
+   the whole file) are both enforced in `assertMarkable()`, under both triggers. That is the
+   only moment at which refusing is still a choice: past it the file is promised a watermark
+   on every fetch, and a ceiling discovered *then* would deny the download of a file nobody
+   was ever warned about. The one file that never has such a moment - watermarked only
+   because it is leaving through a share - is why `watermarkForDownload` carries a byte
+   check of its own, and why that one can 403 ([share switches](#share-switches)).
+
+### Watermarking previews {#preview-watermarking}
+
+The hardest part of the rework, and the part whose shape is least obvious from the code.
+Previews used to be **denied** to share recipients and public-link visitors, because a
+watermarked preview could not be produced safely. The rework had to bring them back: under
+the new model a marked file is watermarked at every fetch, and a thumbnail is a fetch.
+
+**The constraint is core's preview cache, and it is not negotiable on 31.** That cache is
+keyed by file id and dimensions and **never by viewer**. A stamped thumbnail written into it
+is handed to the next person who opens the folder, with the first person's name on it -
+which is not a degraded watermark, it is the exact inversion of what a watermark is for.
+`IPreview::getPreview()` grew a `$cacheResult` argument for precisely this case, in
+**32.0.0**; this app targets 31, so there is no supported way to ask core for an uncached
+preview. Every part of the design below falls out of that one sentence.
+
+**So nothing watermarked goes into the cache at all.** The cache goes on holding the
+*clean* preview, and the watermark is applied per response, after it. Two things make that
+the right split rather than a workaround:
+
+- **the expensive half stays cached and the cheap half repeats.** Rendering a thumbnail out
+  of a 30-page PDF is the cost; stamping a 256px image is not.
+- **the clean preview it holds is unreachable.** No client can obtain it except through the
+  endpoints this app now sits on, so caching it leaks nothing.
+
+**The interception point is an event, not a list of routes.** The obvious way to catch
+previews is to enumerate the routes that serve one - `core.Preview.getPreviewByFileId`,
+`core.Preview.getPreview`, the `files_sharing` public preview, `files_versions`,
+`files_trashbin`, and whatever the Viewer and Photos apps reach for. **One missed route is
+not a missing feature, it is an unwatermarked copy of a protected file**, and the list is
+core's to change between releases without telling anyone. Every one of those endpoints goes
+through `OCP\IPreview`, which emits `BeforePreviewFetchedEvent` before it generates or
+serves anything, so the event is the choke point and a route this app has never heard of
+arrives at it exactly like the ones it has.
+
+**But the event can only watch.** It fires before generation and has no say in the response,
+so it cannot be where the watermark happens. That splits the work in two, across a
+request-scoped `PreviewRequestContext` registered as a *shared* service - autowiring hands
+out a fresh instance per injection, and the two halves would never see each other's state:
+
+- `BeforePreviewFetchedListener` records **which file** this request is fetching a preview
+  of, and the requested dimensions, when the node is one this app watermarks. It blocks
+  nothing.
+- `WatermarkPreviewMiddleware`, running after the controller, finds the recorded file and
+  replaces the response.
+
+**A global middleware is the only thing in the framework that can reach core's
+controllers.** `registerMiddleware($class, global: true)` (Nextcloud 26+) is what makes an
+app's middleware run around controllers it does not own. Registered app-local - the default,
+and the shape every other app-framework middleware in this codebase would take - it would
+run on this app's own six routes, none of which serves a preview, and every thumbnail on the
+server would go out clean with nothing to show for it. That is why the flag is called out in
+`Application::register()` rather than left to be read as boilerplate.
+
+The rest is consequences of running there:
+
+- **Core's response is discarded, not modified.** `FileDisplayResponse` keeps its file
+  private and streams through a callback, so there are no bytes to intercept. The middleware
+  asks `IPreview` for the same preview itself - a cache hit, because the controller has just
+  generated it - and answers with a `DataDisplayResponse` of its own.
+- **Which means the middleware fires the event that put it there.** Without a guard the
+  listener records a second time from inside the render and the two halves chase each other.
+  `whileGenerating()` sets a flag rather than inspecting the call stack, because the guard
+  has to hold across the event dispatcher; `record()` also keeps only the *first* preview of
+  a request, so an unrelated internal render cannot displace the one being served.
+- **Only a 200 is stamped.** A 304, a 404 or a redirect means core did not serve an image,
+  so there is nothing to stamp and nothing to leak. The 304 matters most: the client is
+  being told to reuse what it already has, which it got from here.
+- **It fails closed.** If the stamped preview cannot be produced the response is a 404 and
+  the client shows a generic file-type icon. Passing core's clean preview through instead
+  would publish a readable copy of the file's first page to anybody who can list the folder,
+  which is settled decision 2 arriving on the preview path.
+- **`no-store`, not a short max-age.** The image names the person looking at it, so a shared
+  proxy or a second user on the same browser profile must never be able to produce it again.
+  It is the one place in this app where re-rendering on every scroll is the cheaper mistake.
+- **The watermark is scaled from the image core actually produced.** The requested
+  dimensions are a hint that core clamps against its own maxima and against the source's real
+  size, so an unscaled request for 4096px can arrive as a 1024px image and would carry a
+  watermark four times too large. The middleware measures the bytes it received and falls
+  back to the recorded request only if it cannot.
+
+**Four assumptions this design rests on, none of which a unit test can hold up**: that a
+global middleware really does wrap core's `PreviewController`; that the
+`BeforePreviewFetchedEvent` choke point catches the Viewer and Photos as well as the Files
+list; that `IPreview::getPreview()` from inside `afterController` is a cache hit rather than
+a second render; and that the recursion guard holds when it is not. **All four were checked
+by hand against a running instance, in that order, and all four hold.** Until that was done
+the whole design was an argument from documentation - the middleware had never run inside
+Nextcloud - and any one of them failing would have taken a different shape entirely, not a
+patch.
+
+**The cost is uncacheable by construction**, and it is the sharpest form of the per-fetch
+price above: a folder of marked files renders one thumbnail per file per viewer, every time.
+The obvious answer - a render cache keyed by file id + mtime + viewer uid - reintroduces
+stored watermarked bytes, which is what this rework exists to delete, so it is not being
+built before the cost is measured.
 
 ---
 
@@ -1618,6 +1849,19 @@ Both patches also have tests that fail if they did not run, so a skipped patch c
 release through a green suite either. Neither is a substitute for an upstream fix: 2.11.0 is the
 current release, so there is nothing to upgrade to today, but these should be dropped the moment
 there is.
+
+**`tecnickcom/tc-lib-unicode` is pinned to exactly `2.11.0` in `composer.json`.** It is a
+*transitive* dependency - `tc-lib-pdf` asks for `^2.11` - so without a root requirement of its
+own, a `composer update` for any other reason would take a 2.12 and carry the patch anchors
+with it. The runner would refuse loudly rather than mis-apply, which is the design working, but
+it fails at `composer install` time in CI or at packaging, on a change nobody made deliberately.
+The pin turns that into a decision: **raising it means re-reading both defects against the new
+source before trusting Arabic output**, and dropping the patch outright if the fix landed
+upstream. The same reasoning already pins `tc-lib-pdf` and `tc-lib-pdf-parser`.
+
+`tc-lib-unicode-data` (2.7.1) is deliberately *not* pinned - the patches are in
+`tc-lib-unicode`'s own source, and the data package carries the Unicode tables, which move for
+Unicode's reasons and not this app's.
 
 ---
 

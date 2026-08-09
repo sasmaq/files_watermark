@@ -37,9 +37,14 @@ namespace OCA\FilesWatermark\Service;
  * ```
  * ---------------------------------------------------------------------------
  *
- * Unlike the byte cap this is enforced on **every** trigger, not just the on-demand
- * endpoint. `on_download` and `on_share` decode the same image on the delivery path, so a
- * guard that only sat on the file action would leave the bomb reachable by downloading it.
+ * Enforced **twice, against different bytes**, and it has to be. When a mark is placed the
+ * only cheap measurement available is the image header - `assertPixelsAllowedFromHeader()`
+ * reads the first few KiB rather than the whole file - and that is what refuses the mark
+ * under both triggers. The render then measures the image it actually receives
+ * (`assertPixelsAllowed()`, inside `renderToTemp()`), because an overwrite keeps the mark:
+ * the bytes being decoded on a fetch are not necessarily the bytes that were measured when
+ * the mark went on, and a guard that only ran at mark time would leave the bomb reachable
+ * by uploading it over something already marked.
  */
 class ImageLimits extends ConfiguredLimits {
 

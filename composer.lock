@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "f8a945871958a7e68119cc9c2078a6e0",
+    "content-hash": "19fc0ca88c6352b1b674b66aa5952cde",
     "packages": [
         {
             "name": "tecnickcom/tc-lib-barcode",

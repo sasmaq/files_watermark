@@ -25,46 +25,11 @@ follows it. **Office support** and **release packaging** are what stand between 
 
 ## The trigger rework - **built**
 
-**Two triggers, and neither one touches the stored file.**
+Landed on 2026-08-06: two triggers, neither of which touches the stored file, and a marked
+file rendered watermarked at every fetch against the identity of whoever is asking. The
+model, the six decisions it was built on and the preview design are written up in
+[development.md](development.md#trigger-rework). What follows is what remains.
 
-- **On demand** - the action menu *marks* the file.
-- **On upload** - a supported upload is marked automatically.
-
-A marked file is rendered watermarked **at every fetch** - download, archive member and
-preview alike - against the identity of whoever is asking. A share recipient sees their own
-name; a public-link visitor, who has no identity to read, sees the file's owner.
-
-Landed on 2026-08-06. The reasoning has not yet moved to [development.md](development.md) -
-that is the one item still open here. What follows is what remains, not what was done.
-
-### Settled
-
-Decided before the work started, and each is now the behaviour:
-
-1. **A marked file is watermarked for its owner too.** No exemption for anybody.
-2. **A marked file whose render fails is denied, never served clean** - 403 on every
-   delivery path, including an archive whose member is over the caps.
-3. **No upgrade path.** Files already burned by the previous version are left as they are,
-   and configs still set to `on_download` / `on_share` are not migrated - they resolve to
-   nothing and mark nothing, with a warning in the log.
-4. **Apply and Remove are not offered under `on_upload`.**
-5. **An overwrite keeps the mark.**
-6. **The caps bound the *mark*, not the fetch** - `ApplyLimits` from the file cache,
-   `ImageLimits` from the image header, both under both triggers.
-
-### Still open
-
-- [ ] **Move the reasoning into `development.md`.** This section is the only record of why
-  the model is what it is, and this file is supposed to be a checklist. The preview design
-  in particular needs writing up properly: the cache-key constraint, why `IPreview`'s
-  `$cacheResult` (32.0) could not be used on 31, and why a global middleware around core's
-  controllers is the shape that fell out of it.
-- [x] **Verify the preview middleware against a real instance.** It is unit-tested and
-  reasoned about; it has never run inside Nextcloud. Four things to check in order: that a
-  global middleware really does wrap core's `PreviewController`; that the
-  `BeforePreviewFetchedEvent` choke point catches the Viewer and Photos as well as the
-  Files list; that `IPreview::getPreview()` from inside `afterController` is a cache hit
-  rather than a re-render; and that the recursion guard holds when it is not.
 - [ ] **Measure the per-fetch render cost on a real folder.** Every download of a marked
   file now renders, and the preview path renders per thumbnail per viewer. A render cache
   keyed by file id + mtime + viewer uid is the obvious answer if it does not hold up, and
@@ -78,9 +43,10 @@ Decided before the work started, and each is now the behaviour:
   `TeamFolder` was written to close for the old `on_share`, and it went with the rework.
   Needs the fourth signal back, or a deliberate statement that marking is the answer there.
   [notes](development.md#share-switches)
-- [ ] **A bulk `occ files_watermark:mark <path>`.** Settled 3 means an instance upgrading
-  from `on_download` has every existing file unmarked and no UI to mark them in bulk. Not
-  needed for a first release; needed by the first instance that migrates.
+- [ ] **A bulk `occ files_watermark:mark <path>`.** [No upgrade
+  path](development.md#trigger-rework-settled) means an instance upgrading from `on_download`
+  has every existing file unmarked and no UI to mark them in bulk. Not needed for a first
+  release; needed by the first instance that migrates.
 
 ## Correctness
 
@@ -166,8 +132,9 @@ them.
   and the new model exempts nobody, so there is nothing left to verify.
   [notes](development.md#team-folders-unverified)
 - [ ] **Encrypted / password-protected PDF** through every trigger. Sharper after the
-  rework, not milder: settled 2 turns "this file was skipped" into "this file cannot be
-  downloaded by anyone".
+  rework, not milder: [deny, never serve
+  clean](development.md#trigger-rework-settled) turns "this file was skipped" into "this
+  file cannot be downloaded by anyone".
 - [ ] ~~**Concurrent uploads of the same path.**~~ Closed by the rework - there is no burn
   to double, `suppressFor()` is gone, and a mark is idempotent on a primary key.
   [notes](development.md#manual-verification-matrix)
@@ -212,7 +179,8 @@ them.
 | --- | --- | --- |
 | [Renderers](development.md#1-renderers-goal-1) | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started | Office pipeline, encrypted PDFs |
 | [Watermark content](development.md#2-watermark-content-goal-2) | Visible watermarks complete | Invisible metadata watermark |
-| [Delivery and triggers](development.md#3-delivery-and-triggers-goal-3) | All four triggers, single-file and archive, on every access path; caps are `occ` settings | **Being replaced by the two-trigger rework above**; Tar (core bug), file-drop uploads |
+| [Trigger rework](development.md#trigger-rework) | **Built.** Two triggers, a mark instead of a burn, rendered per fetch against the reader - previews included | Per-fetch render cost unmeasured, bulk `occ` mark |
+| [Delivery and triggers](development.md#3-delivery-and-triggers-goal-3) | Single-file, archive and preview delivery on every access path; caps are `occ` settings | **The four-trigger model it describes is [superseded](development.md#trigger-rework)**; Tar (core bug), file-drop uploads |
 | [Share switches](development.md#share-switches) | Built: internal shares and public links can be watermarked whether or not the file is marked, decided per fetch | Team folders, end-to-end verification |
 | [Admin UI and file actions](development.md#4-admin-ui-and-file-actions-goal-4) | **Complete** | - |
 | [Storage backends](development.md#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | - |
