@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
+use OCA\FilesWatermark\Service\ArabicShaping;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\ShapedText;
+use OCP\IAppConfig;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 
 /**
  * Functional tests for {@see ImageWatermarker}. They run against the real image stack.
@@ -299,38 +302,111 @@ class ImageWatermarkerTest extends TestCase {
 	 * satisfy - "the output changed" is not, because unshaped Arabic renders differently
 	 * too, just wrongly.
 	 *
-	 * The discriminator uses shaping's own non-idempotency. A second pass reads visual
-	 * order as logical and reverses it, and a third puts it back:
+	 * The discriminator is that **two different strings must render identically**: the raw
+	 * logical-order letters, and the presentation forms they shape into. A renderer that
+	 * shapes draws the same glyphs for both; one that draws what it is handed cannot, because
+	 * the raw form has neither the joining forms nor the visual order. Verified by mutation:
+	 * deleting the `ShapedText::shape()` call from either engine path fails this.
 	 *
-	 *     shape(x)  =  shape(shape(shape(x)))       but  x  ≠  shape(shape(x))
-	 *
-	 * So the raw text and its twice-shaped form are two **different** strings that shape to
-	 * the **same** glyphs. A renderer that shapes draws them identically; one that draws
-	 * what it is handed cannot. Verified by mutation: deleting the `ShapedText::shape()`
-	 * call from either engine path fails this.
+	 * This used to exploit shaping's non-idempotency instead - `x ≠ shape(shape(x))` - which
+	 * was true, was a bug, and is fixed. See {@see testAlreadyShapedArabicIsDrawnAsGiven}.
 	 */
 	public function testArabicIsShapedBeforeItIsDrawn(): void {
 		if ($this->findSystemFont() === null && !class_exists('Imagick')) {
 			$this->markTestSkipped('No TrueType font available.');
 		}
 
-		$twiceShaped = ShapedText::shape(ShapedText::shape(self::ARABIC_PROBE));
-		$this->assertNotSame(self::ARABIC_PROBE, $twiceShaped, 'the two inputs must differ for this to prove anything');
-		$this->assertSame(ShapedText::shape(self::ARABIC_PROBE), ShapedText::shape($twiceShaped));
+		$shaped = ShapedText::shape(self::ARABIC_PROBE);
+		$this->assertNotSame(self::ARABIC_PROBE, $shaped, 'the two inputs must differ for this to prove anything');
 
 		$base = $this->createImage('image/png', 'png', 500, 360);
 
 		$fromRaw = $this->tmpDir . '/ar_raw.png';
-		$fromTwiceShaped = $this->tmpDir . '/ar_twice.png';
+		$fromShaped = $this->tmpDir . '/ar_shaped.png';
 		$this->watermarker->apply($base, $fromRaw, $this->arabicConfig(self::ARABIC_PROBE), []);
-		$this->watermarker->apply($base, $fromTwiceShaped, $this->arabicConfig($twiceShaped), []);
+		$this->watermarker->apply($base, $fromShaped, $this->arabicConfig($shaped), []);
 
 		$this->assertGreaterThan(0, $this->changedPixels($base, $fromRaw), 'nothing was drawn at all');
 		$this->assertSame(
-			md5_file($fromTwiceShaped),
+			md5_file($fromShaped),
 			md5_file($fromRaw),
 			'two inputs that shape identically rendered differently, so the shaping pass is not running',
 		);
+	}
+
+	/**
+	 * **The reported bug**: an Arabic display name that arrives already shaped was shaped a
+	 * second time and came out backwards.
+	 *
+	 * A name typed on Windows - or pasted from a PDF, or read out of a directory populated
+	 * from either - can hold Arabic Presentation Forms rather than the U+06xx letters a
+	 * modern input method produces. Those are already in visual order, and the Bidi pass has
+	 * no way to know it: it read them as logical and reversed them. The watermark was a valid
+	 * image of a name spelled backwards, on a server where every other view of that same name
+	 * read correctly.
+	 *
+	 * Asserted against the *logical* form's pixels rather than against a code-point list,
+	 * because the guarantee that matters is the one a reader sees: both spellings of the same
+	 * name produce the same watermark.
+	 */
+	public function testAlreadyShapedArabicIsDrawnAsGiven(): void {
+		if ($this->findSystemFont() === null && !class_exists('Imagick')) {
+			$this->markTestSkipped('No TrueType font available.');
+		}
+
+		$fromWindows = ShapedText::shape(self::ARABIC_PROBE);
+		$this->assertTrue(ShapedText::isAlreadyShaped($fromWindows));
+
+		$base = $this->createImage('image/png', 'png', 500, 360);
+		$logical = $this->tmpDir . '/ar_logical.png';
+		$preShaped = $this->tmpDir . '/ar_preshaped.png';
+
+		$this->watermarker->apply($base, $logical, $this->arabicConfig(self::ARABIC_PROBE), []);
+		$this->watermarker->apply($base, $preShaped, $this->arabicConfig($fromWindows), []);
+
+		$this->assertSame(
+			md5_file($logical),
+			md5_file($preShaped),
+			'an already-shaped name rendered differently from the same name in logical order, '
+				. 'so it went through the shaper twice',
+		);
+	}
+
+	/**
+	 * `arabic_shaping=always` really does reach the renderer.
+	 *
+	 * The escape hatch is worth nothing if the setting is read and dropped, and no pixel test
+	 * of the *default* can catch that - `auto` and a broken lookup that falls back to `auto`
+	 * are indistinguishable. Forcing the mode that reinstates the old double pass is the one
+	 * value whose effect is visible, so it is the one worth asserting.
+	 */
+	public function testShapingModeReachesTheRenderer(): void {
+		if ($this->findSystemFont() === null && !class_exists('Imagick')) {
+			$this->markTestSkipped('No TrueType font available.');
+		}
+
+		$fromWindows = ShapedText::shape(self::ARABIC_PROBE);
+		$base = $this->createImage('image/png', 'png', 500, 360);
+
+		$auto = $this->tmpDir . '/ar_auto.png';
+		$always = $this->tmpDir . '/ar_always.png';
+		(new ImageWatermarker())
+			->apply($base, $auto, $this->arabicConfig($fromWindows), []);
+		(new ImageWatermarker(null, $this->shapingMode(ShapedText::MODE_ALWAYS)))
+			->apply($base, $always, $this->arabicConfig($fromWindows), []);
+
+		$this->assertNotSame(
+			md5_file($auto),
+			md5_file($always),
+			'forcing "always" drew the same pixels as "auto", so the setting is not being read',
+		);
+	}
+
+	private function shapingMode(string $mode): ArabicShaping {
+		$appConfig = $this->createMock(IAppConfig::class);
+		$appConfig->method('getValueString')->willReturn($mode);
+
+		return new ArabicShaping($appConfig, $this->createMock(LoggerInterface::class));
 	}
 
 	/**

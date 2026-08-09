@@ -10,6 +10,171 @@ value is in the failures behind a feature, which no diff records.
 
 Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3.
 
+The first two sections are orientation - where the code lives and how to build, run and test
+it. Everything after them is the record itself. [README.md](../README.md) covers installing
+and configuring the app and does not repeat any of this.
+
+---
+
+## Project layout {#project-layout}
+
+```text
+files_watermark/
+├── appinfo/          # App metadata and route definitions
+├── lib/
+│   ├── AppInfo/      # Bootstrap and event listener registration
+│   ├── Controller/   # REST API controller
+│   ├── Db/           # Entities and QBMapper classes
+│   ├── EventListener/# Node writes, preview fetches, Sabre and script registration
+│   ├── Middleware/   # The global preview middleware
+│   ├── Preview/      # Request-scoped preview state
+│   ├── Service/      # WatermarkService, PdfWatermarker, ImageWatermarker
+│   └── Settings/     # Admin settings panel registration
+├── resources/
+│   └── fonts/        # The bundled watermark font (see the README there)
+├── migration/        # Database schema migration
+├── patches/          # The tc-lib-unicode fixes, applied by composer
+├── src/              # Vue 3 frontend source
+│   ├── components/   # AdminSettings.vue, WatermarkModal.vue
+│   ├── adminSettings.js
+│   └── fileAction.js
+├── js/               # Compiled frontend assets (generated, and committed)
+├── templates/        # PHP templates
+├── tests/            # PHPUnit suites (Unit/, plus the DAV stubs)
+├── cypress/          # End-to-end suite (see cypress/README.md)
+│   ├── e2e/          # One spec per trigger / surface
+│   ├── support/      # Login, policy, upload/download commands
+│   └── tasks/        # Node side: binary-safe HTTP, PDF/image/zip probes
+└── doc/
+    ├── sdd.md          # Software Development Document
+    ├── tasks.md        # what is left to do - the checklist
+    ├── development.md  # this file - the engineering record
+    └── patch.md        # optional Nextcloud core patches, and what they cost
+```
+
+---
+
+## Working on the app {#working-on-the-app}
+
+Installing the app is in [README.md](../README.md#installation). This is the loop for
+changing it.
+
+### Building
+
+```bash
+npm run watch           # rebuild on every change
+npm run dev             # one development build, with source maps
+npm run build           # what a release ships, and what CI checks
+```
+
+`js/` is **committed**, so a frontend change is not finished until it is rebuilt - the
+container and the app store both run the compiled output, not the sources. The `build` job in
+`.github/workflows/nodejs.yml` exists to catch a checked-in bundle that no longer matches
+`src/`.
+
+### Linting and static analysis
+
+```bash
+npm run lint            # ESLint, over src/ and cypress/
+composer lint           # php -l over every PHP file
+composer cs:check       # Nextcloud coding standard (composer cs:fix applies it)
+composer psalm          # static analysis of lib/
+```
+
+`composer psalm` type-checks `lib/` against core's public API: the `nextcloud/ocp` package
+supplies the typed OCP interfaces, and `tests/stubs/CoreStubs.php` the server classes that are
+not installable from packagist (`OCA\DAV\Connector\Sabre\*`, `OC\Streamer`, the two events). It
+is clean with no baseline; the configuration, and what it deliberately does not check, is
+commented in [`psalm.xml`](../psalm.xml). What each gate runs in CI is under
+[Linting and CI](#linting-and-ci).
+
+### Running the suites
+
+```bash
+vendor/bin/phpunit      # PHP unit tests
+npm test                # Jest, for the Vue components and the Files-app integration
+npm run test:e2e        # Cypress, against a running instance
+```
+
+The end-to-end suite drives the Docker instance below - start it and enable the app first. It
+judges each scenario on the delivered file's bytes rather than on the UI; what it covers and
+how it tells a watermarked file from a clean one is in
+[`cypress/README.md`](../cypress/README.md) and under
+[Integration / E2E](#integration--e2e-cypress).
+
+### A real instance, in Docker {#docker-dev-instance}
+
+[`docker-compose.yml`](../docker-compose.yml) runs the app against a real Nextcloud 31. It
+bind-mounts this repo into Nextcloud's `custom_apps/`, so **build on the host first** - the
+container runs the compiled output.
+
+```bash
+# 1. Build on the host
+composer install
+npm install
+npm run build
+
+# 2. Start Nextcloud (SQLite, admin auto-provisioned)
+docker compose up -d
+
+# 3. Wait ~30-60s for first-run install, then enable the app
+docker compose exec -u www-data nextcloud php occ app:enable files_watermark
+```
+
+Open <http://localhost:8080> and log in as **admin / admin**. Then: admin settings under
+Settings → Administration → **Watermark**; upload a PDF/JPEG/PNG/WEBP and use the file row's
+`...` menu → **Apply Watermark**; logs with `docker compose logs -f nextcloud`.
+
+Iterating:
+
+- **frontend change** - re-run `npm run build` on the host and hard-refresh. The mount is
+  live, so there is nothing to restart
+- **PHP, routes or migration change** - `docker compose exec -u www-data nextcloud php occ
+  app:disable files_watermark && … app:enable files_watermark`
+- **reset everything** - `docker compose down -v`, which deletes the Nextcloud volume
+
+The compose file uses SQLite for zero-config single-container testing; a PostgreSQL variant -
+closer to production, and the one that exercises the migration on a real RDBMS - is documented
+inline at the bottom of the file.
+
+### S3, with RustFS {#docker-s3-instance}
+
+The app is storage-agnostic: it reads and writes content through the Files API
+(`getContent()` / `putContent()` / `newFile()`) and touches the local filesystem only for
+short-lived temp copies. Watermarking therefore works unchanged on S3, and this stack is how
+that gets verified rather than assumed.
+
+**1. S3 as primary object storage** - every file lives on S3, via
+[`docker-compose.s3.yml`](../docker-compose.s3.yml), which runs Nextcloud + RustFS:
+
+```bash
+composer install && npm install && npm run build
+docker compose -p fw_s3 -f docker-compose.s3.yml up -d
+docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php occ app:enable files_watermark
+```
+
+Open <http://localhost:8081> (admin / admin), then confirm that an on-demand mark produces a
+watermarked *download* while the S3 object itself is untouched, and that an `on_upload` policy
+marks a file without ever rewriting it. The RustFS console
+(<http://localhost:9001>, rustfsadmin / rustfsadmin) shows what actually landed in the
+`nextcloud` bucket. Tear down with
+`docker compose -p fw_s3 -f docker-compose.s3.yml down -v`.
+
+**2. S3 as an external mount** - the same RustFS, mounted as a folder on an otherwise-local
+instance:
+
+```bash
+docker compose exec -u www-data nextcloud php occ app:enable files_external
+docker compose exec -u www-data nextcloud php occ files_external:create \
+  /s3mount amazons3 amazons3::accesskey \
+  -c bucket=externalbucket -c hostname=rustfs -c port=9000 -c use_ssl=false \
+  -c use_path_style=true -c region=us-east-1 \
+  -c key=rustfsadmin -c secret=rustfsadmin
+```
+
+Then watermark a file inside `/s3mount` through the file action. Either reuse the RustFS from
+the S3 stack or add a RustFS service to the default one.
+
 ---
 
 ## 1. Renderers (Goal 1)
@@ -1820,6 +1985,64 @@ Two things made this survive a suite that asserts on code points:
   covers PDFs and images alike
 
 Fixed by matching on `'pos'`, in `patches/patch-tc-lib-unicode-lam-alef.php`.
+
+### Reported from a RHEL instance: a Windows-typed name drew backwards {#open-double-shaping}
+
+**`ShapedText::shape()` was not idempotent, and a display name can arrive already shaped.**
+Reported against the image watermarks on the RHEL 9 instance, with the name entered from a
+Windows client; the PDF watermarks of the same name read correctly, which is what made it
+look like a platform problem rather than a text one.
+
+It is neither. Measured on `محمد`:
+
+| | Code points | |
+| --- | --- | --- |
+| as typed | `0645 062D 0645 062F` | logical order, unshaped |
+| `shape()` | `FEAA FEE4 FEA4 FEE3` | visual order, presentation forms - correct |
+| `shape(shape())` | `FEE3 FEA4 FEE4 FEAA` | backwards, and still a valid image |
+
+**Shaping puts a string into visual order, and a second pass has no way to know that.** It
+reads the visual order as logical and reverses it. That is not a defect in the shaper - the
+information simply is not in the string - so the fix cannot live inside the Bidi pass.
+
+The reason it reached production is that **not every Arabic string arrives in logical order**.
+A modern input method produces U+06xx letters, but legacy Windows Arabic tooling, text pasted
+out of a PDF, and directories populated from either store **presentation forms**, already
+visually ordered. Those are precisely the code points a shaper emits, so the second pass
+reversed a name that was already right.
+
+`ShapedText::isAlreadyShaped()` now answers that question by scanning for the presentation-form
+blocks, and `shape()` returns such a string untouched. Two details are load-bearing:
+
+- **U+FEFF is excluded from the Forms-B range**, which is the trap in writing this as one
+  `FE70-FEFF` test. It closes the block but is the byte-order mark, not an Arabic glyph, and it
+  rides along on text off a Windows clipboard. Including it would let one invisible character
+  stop an ordinary name being shaped at all - the exact failure [the bad-byte
+  bug](#arabic-bad-byte) was about, arriving by a different route. Pinned by
+  `testAByteOrderMarkIsNotMistakenForShapedText`.
+- **the scan runs after `mayNeedShaping()`**, so everything Latin - which is most watermarks -
+  never reaches it.
+
+**Only the image renderers were affected**, and the asymmetry is the one `ShapedText` opens
+with: the PDF path never calls `shape()`, because `getTextCell()` runs its own Bidi pass inside
+tc-lib-pdf. GD is where it was seen because GD is the default engine and Imagick is EPEL-only
+on the RHEL target, but the defect was in the shared helper and both image engines had it.
+
+**The admin escape hatch, and why there is one.** Detection reads bytes, and bytes cannot say
+where a directory's names came from. One case they genuinely do not settle is presentation
+forms in *logical* order: skipping leaves them unjoined, shaping fixes them, and only somebody
+looking at the rendered watermark can say which. `occ config:app:set files_watermark
+arabic_shaping --value auto|always|never` ({@see ArabicShaping}) is that decision, `auto` is
+the default, and `always` restores the old unconditional pass exactly.
+
+**The test that encoded the bug.** `ImageWatermarkerTest::testArabicIsShapedBeforeItIsDrawn`
+proved the renderer shapes by *exploiting* the non-idempotency - it rendered `x` and
+`shape(shape(x))` and asserted identical pixels, on the identity `shape(x) =
+shape(shape(shape(x)))`. The property was real and the test was sound; what it was not was
+suspicious of the property it depended on. It now compares `x` against `shape(x)`, which is a
+strictly stronger discriminator and does not rest on a bug. Worth remembering the next time a
+test needs an identity to lean on: an identity that only holds because something is broken will
+hold right up until it is fixed.
 
 ### How the vendor patches are applied {#vendor-patches}
 

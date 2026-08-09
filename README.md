@@ -116,39 +116,6 @@ Presentation Forms-B coverage, which rules out most modern Arabic fonts includin
 and before moving anything in that directory - the path reaches the renderer through the
 global `K_PATH_FONTS`.
 
-## Project Structure
-
-```text
-files_watermark/
-├── appinfo/          # App metadata and route definitions
-├── lib/
-│   ├── AppInfo/      # Bootstrap and event listener registration
-│   ├── Controller/   # REST API controller
-│   ├── Db/           # Entities and QBMapper classes
-│   ├── Listener/     # ShareCreatedEvent listener
-│   ├── Service/      # WatermarkService, PdfWatermarker, ImageWatermarker
-│   └── Settings/     # Admin settings panel registration
-├── resources/
-│   └── fonts/        # The bundled watermark font (see the README there)
-├── migration/        # Database schema migration
-├── src/              # Vue 3 frontend source
-│   ├── components/   # AdminSettings.vue, WatermarkModal.vue
-│   ├── adminSettings.js
-│   └── fileAction.js
-├── js/               # Compiled frontend assets (generated)
-├── templates/        # PHP templates
-├── tests/            # PHPUnit suites (Unit/, plus the DAV stubs)
-├── cypress/          # End-to-end suite (see cypress/README.md)
-│   ├── e2e/          # One spec per trigger / surface
-│   ├── support/      # Login, policy, upload/download commands
-│   └── tasks/        # Node side: binary-safe HTTP, PDF/image/zip probes
-└── doc/
-    ├── sdd.md          # Software Development Document
-    ├── tasks.md        # what is left to do - the checklist
-    ├── development.md  # the engineering record: why each piece is the way it is
-    └── patch.md        # optional Nextcloud core patches, and what they cost
-```
-
 ## Installation
 
 ### 1. PHP dependencies
@@ -184,48 +151,6 @@ occ app:enable files_watermark
 
 Or via the web UI: **Admin → Apps → search "files_watermark" → Enable**.
 
-## Development
-
-Watch mode (rebuilds on file changes):
-
-```bash
-npm run watch
-```
-
-Development build (with source maps):
-
-```bash
-npm run dev
-```
-
-Lint:
-
-```bash
-npm run lint            # ESLint, for the Vue frontend
-composer lint           # php -l over every PHP file
-composer cs:check       # Nextcloud coding standard (composer cs:fix applies it)
-composer psalm          # Static analysis of lib/
-```
-
-`composer psalm` type-checks `lib/` against core's public API - the `nextcloud/ocp`
-package supplies the typed OCP interfaces, and `tests/stubs/CoreStubs.php` the server
-classes that are not installable from packagist (`OCA\DAV\Connector\Sabre\*`,
-`OC\Streamer`, the two events). It is clean with no baseline; the configuration, and
-what it deliberately does not check, is commented in [`psalm.xml`](psalm.xml).
-
-### Tests
-
-```bash
-vendor/bin/phpunit      # PHP unit tests
-npm test                # Jest, for the Vue components and the Files-app integration
-npm run test:e2e        # Cypress, against a running instance (see below)
-```
-
-The end-to-end suite drives the Docker instance described under
-[Docker (local test environment)](#docker-local-test-environment) - start it and enable the app
-first, then `npm run test:e2e`. It judges each scenario on the delivered file's bytes rather
-than on the UI: what it covers, and how it tells a watermarked file from a clean one, is in
-[`cypress/README.md`](cypress/README.md).
 
 ## Watermarking shared files
 
@@ -348,6 +273,40 @@ header - the first few kilobytes, never the whole file - so a bomb is refused a 
 than refused a download. At render time it is checked again against the bytes that actually
 arrived, because a marked file can be overwritten and the mark stands.
 
+### Arabic that arrives already shaped
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `arabic_shaping` | `auto` | Whether the image renderers shape Arabic text before drawing it |
+
+```bash
+occ config:app:set files_watermark arabic_shaping --value always
+occ config:app:delete files_watermark arabic_shaping   # back to auto
+```
+
+This is the one `occ` setting that **does** change what the watermark looks like, which is
+why it is described here rather than added to the table above. It exists because Arabic can
+reach the server in two different shapes and only one of them needs work.
+
+A modern keyboard produces Arabic letters in logical order, which the renderer has to join
+into their contextual forms and reverse into visual order before drawing - neither GD nor a
+stock ImageMagick will do it. But a display name typed on Windows, pasted out of a PDF, or
+read from a directory populated from either can already hold **Arabic presentation forms**,
+already in visual order. Running the shaper over those reverses them, and the watermark
+draws the name backwards while every other view of it in Nextcloud reads correctly.
+
+`auto` looks at the text and shapes it only when it has not been shaped already. That is
+right for both shapes of input and needs no configuration. The other two values are for the
+case the bytes cannot settle - text holding presentation forms in *logical* order, which
+neither reading fixes automatically:
+
+- `always` shapes unconditionally. This is what the renderer did before `auto` existed.
+- `never` draws the text exactly as configured, for a directory that is pre-shaped
+  throughout.
+
+It applies to **image watermarks only**. PDF watermarks go through a different text engine
+that has always handled this correctly, and this setting does not reach it.
+
 Marking and unmarking are also rate limited to **120 per user per minute** by Nextcloud's
 own middleware, which answers `429`. Each one is a database write rather than a render, so
 the limit is well above anything the file action can produce by hand - but it is the only
@@ -451,86 +410,13 @@ Three things to know:
   triggers in the admin settings. Note that existing files are **not** retroactively
   marked: `on_upload` covers files written from then on
 
-## Docker (local test environment)
+## Storage backends
 
-A [`docker-compose.yml`](docker-compose.yml) is provided to run the app against a
-real Nextcloud 31 instance. It bind-mounts this repo into Nextcloud's
-`custom_apps/`, so **build the app on the host first** - the container runs the
-compiled output, not the sources.
-
-```bash
-# 1. Build on the host
-composer install
-npm install
-npm run build
-
-# 2. Start Nextcloud (SQLite, admin auto-provisioned)
-docker compose up -d
-
-# 3. Wait ~30–60s for first-run install, then enable the app
-docker compose exec -u www-data nextcloud php occ app:enable files_watermark
-```
-
-Open <http://localhost:8080> and log in as **admin / admin**.
-
-Then test:
-
-- **Admin settings:** Settings → Administration → **Watermark**
-- **On demand:** upload a PDF/JPEG/PNG/WEBP, open the file row `...` menu → **Apply Watermark**
-- **Logs:** `docker compose logs -f nextcloud`
-
-Iterating:
-
-- **Frontend change:** re-run `npm run build` on the host and hard-refresh the browser (the mount is live; no restart needed).
-- **PHP / routes / migration change:** `docker compose exec -u www-data nextcloud php occ app:disable files_watermark && docker compose exec -u www-data nextcloud php occ app:enable files_watermark`
-- **Reset everything:** `docker compose down -v` (deletes the Nextcloud volume).
-
-The compose file uses SQLite for zero-config single-container testing; a
-PostgreSQL variant (closer to production, exercises the migration on a real
-RDBMS) is documented inline at the bottom of the file.
-
-### Testing with S3 storage (RustFS)
-
-The app is storage-agnostic: it reads/writes file content through the Nextcloud
-Files API (`getContent()` / `putContent()` / `newFile()`) and only touches the
-local filesystem for short-lived temp copies. So watermarking works unchanged on
-S3 - this stack lets you verify it.
-
-**1. S3 as primary object storage** (every file lives on S3) - use the dedicated
-[`docker-compose.s3.yml`](docker-compose.s3.yml), which runs Nextcloud + RustFS:
-
-```bash
-composer install && npm install && npm run build
-docker compose -p fw_s3 -f docker-compose.s3.yml up -d
-docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php occ app:enable files_watermark
-```
-
-Open <http://localhost:8081> (admin / admin). Then verify:
-
-- **On demand:** upload a PDF/image → `...` menu → **Apply Watermark**, then download it
-  and confirm the copy is watermarked while the S3 object itself is untouched.
-- **On upload:** set the global trigger to *On upload* in admin settings, then upload a
-  file and confirm it comes back watermarked without ever having been rewritten.
-- Cross-check in the RustFS console (<http://localhost:9001>, rustfsadmin / rustfsadmin)
-  that objects are written to the `nextcloud` bucket.
-
-Tear down: `docker compose -p fw_s3 -f docker-compose.s3.yml down -v`.
-
-**2. External S3 storage mount** (S3 mounted as a folder on an otherwise-local
-instance) - on the default stack, point an external mount at the same RustFS:
-
-```bash
-docker compose exec -u www-data nextcloud php occ app:enable files_external
-docker compose exec -u www-data nextcloud php occ files_external:create \
-  /s3mount amazons3 amazons3::accesskey \
-  -c bucket=externalbucket -c hostname=rustfs -c port=9000 -c use_ssl=false \
-  -c use_path_style=true -c region=us-east-1 \
-  -c key=rustfsadmin -c secret=rustfsadmin
-```
-
-Then watermark a file inside the `/s3mount` folder via the file action and confirm it
-succeeds (the same RustFS from the S3 stack can be reused, or add a RustFS service to
-the default stack).
+Nothing here is storage-specific. The app reads and writes content through the Nextcloud
+Files API and touches the local filesystem only for short-lived temp copies, so watermarking
+works unchanged on local disk, on S3 as primary object storage, and on an S3 external mount.
+All three are verified rather than assumed - the stacks that do it are in
+[doc/development.md](doc/development.md#docker-s3-instance).
 
 ## License
 

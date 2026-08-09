@@ -44,10 +44,26 @@ class ImageWatermarker {
 	 *                                 so the tests can drive both engines on a host that has
 	 *                                 both, which is otherwise impossible now that one of them
 	 *                                 always wins.
+	 * @param ?ArabicShaping $shaping how to treat text that is already shaped. Unlike the
+	 *                                scalar above this *is* resolved by the container - it is
+	 *                                a class - so in production the admin's setting always
+	 *                                arrives; null is for direct construction in tests and
+	 *                                means the shipped default.
 	 */
 	public function __construct(
 		private ?string $preferredEngine = null,
+		private ?ArabicShaping $shaping = null,
 	) {
+	}
+
+	/**
+	 * The shaping mode in force, defaulting to `auto` when no config was injected.
+	 *
+	 * Read once per render rather than per tile: the lattice draws the same string dozens of
+	 * times per image and the answer cannot change underneath one of them.
+	 */
+	private function shapingMode(): string {
+		return $this->shaping?->mode() ?? ShapedText::MODE_AUTO;
 	}
 
 	public function apply(string $sourcePath, string $destPath, WatermarkConfig $config, array $placeholders): void {
@@ -150,7 +166,7 @@ class ImageWatermarker {
 			// Shaped here rather than trusted to the backend: ImageMagick only reorders and
 			// joins Arabic when it was built against Raqm/HarfBuzz, which no host can be
 			// required to have. Doing it in PHP is what makes the output the same everywhere.
-			$text = ShapedText::shape($text);
+			$text = ShapedText::shape($text, $this->shapingMode());
 
 			$draw = new \ImagickDraw();
 			$draw->setFont($this->fontFor($text));
@@ -237,8 +253,9 @@ class ImageWatermarker {
 			$fontSize = $config->getFontSize();
 			$rotation = $config->getRotation();
 			// FreeType draws code points in the order given and joins nothing, so Arabic
-			// has to arrive already shaped and already in visual order.
-			$text = ShapedText::shape($text);
+			// has to arrive already shaped and already in visual order - including when it
+			// arrived that way from the directory, which is what the mode decides.
+			$text = ShapedText::shape($text, $this->shapingMode());
 			$fontPath = $this->fontFor($text);
 
 			// imagettfbbox measures the glyphs this font will actually draw, at angle 0

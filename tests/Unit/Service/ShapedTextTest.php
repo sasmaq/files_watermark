@@ -293,6 +293,77 @@ class ShapedTextTest extends TestCase {
 	}
 
 	/**
+	 * **Shaping is idempotent.** This is the reported bug, at the level it was caused.
+	 *
+	 * A display name typed on Windows can arrive already in presentation forms, already in
+	 * visual order. The Bidi pass cannot tell that from logical order, so it reversed it, and
+	 * the watermark drew the name backwards - in an image that was in every other respect
+	 * valid, on an instance where the same name read correctly everywhere else.
+	 *
+	 * Asserted on code points rather than on "the string is unchanged", because the failure
+	 * is a *reordering*: the same glyphs come back, and only their sequence says which way
+	 * round the name reads.
+	 */
+	public function testShapingTwiceChangesNothing(): void {
+		$once = ShapedText::shape(self::PROBE);
+		$twice = ShapedText::shape($once);
+
+		$this->assertSame(
+			$this->codepoints($once),
+			$this->codepoints($twice),
+			'a second shaping pass reordered the text, so an already-shaped name renders backwards',
+		);
+	}
+
+	public function testAlreadyShapedTextIsRecognised(): void {
+		$this->assertFalse(ShapedText::isAlreadyShaped(self::PROBE), 'logical-order Arabic is not shaped');
+		$this->assertFalse(ShapedText::isAlreadyShaped('Alice'));
+		$this->assertFalse(ShapedText::isAlreadyShaped(''));
+		$this->assertTrue(ShapedText::isAlreadyShaped(ShapedText::shape(self::PROBE)));
+		// Forms-A as well as Forms-B: Persian and Urdu names land there.
+		$this->assertTrue(ShapedText::isAlreadyShaped("\u{FB50}"));
+	}
+
+	/**
+	 * U+FEFF closes the Presentation Forms-B block and is **not** an Arabic glyph - it is the
+	 * byte-order mark, and it rides along on text off a Windows clipboard. Treating the block
+	 * as one range would let one invisible character stop an ordinary name being shaped at
+	 * all, which is the very failure this class was written to prevent.
+	 */
+	public function testAByteOrderMarkIsNotMistakenForShapedText(): void {
+		$withBom = "\u{FEFF}" . self::PROBE;
+
+		$this->assertFalse(ShapedText::isAlreadyShaped($withBom));
+		$this->assertSame(
+			$this->codepoints(ShapedText::shape(self::PROBE)),
+			$this->codepoints(str_replace("\u{FEFF}", '', ShapedText::shape($withBom))),
+			'a leading BOM cost the name its shaping',
+		);
+	}
+
+	/**
+	 * The two overrides an admin can reach through `occ`. `always` is the behaviour from
+	 * before the fix, kept because detection reads bytes and cannot know what produced them;
+	 * `never` draws exactly what was configured.
+	 */
+	public function testModesOverrideTheDetection(): void {
+		$shaped = ShapedText::shape(self::PROBE);
+
+		$this->assertNotSame(
+			$this->codepoints($shaped),
+			$this->codepoints(ShapedText::shape($shaped, ShapedText::MODE_ALWAYS)),
+			'"always" did not re-shape, so it is indistinguishable from "auto"',
+		);
+		$this->assertSame(self::PROBE, ShapedText::shape(self::PROBE, ShapedText::MODE_NEVER));
+		$this->assertSame($shaped, ShapedText::shape($shaped, ShapedText::MODE_NEVER));
+	}
+
+	/** `never` still repairs bytes that are not UTF-8 - that guard is not a shaping choice. */
+	public function testNeverStillScrubsInvalidBytes(): void {
+		$this->assertSame('Ahmed', ShapedText::shape(self::DIRTY, ShapedText::MODE_NEVER));
+	}
+
+	/**
 	 * The non-Arabic characters of a shaped string, in the order they are drawn.
 	 *
 	 * Everything Arabic shaping produces lands in Presentation Forms-B (U+FE70–U+FEFF), so

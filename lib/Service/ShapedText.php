@@ -27,6 +27,18 @@ final class ShapedText {
 	/** Font program committed in `resources/fonts`, zlib-compressed. */
 	private const FONT_ARCHIVE = 'ibmplexsansarabicb.z';
 
+	/** Shape unless the text arrives already shaped. The default, and what an admin wants. */
+	public const MODE_AUTO = 'auto';
+
+	/** Shape unconditionally - the behaviour before {@see isAlreadyShaped()} existed. */
+	public const MODE_ALWAYS = 'always';
+
+	/** Never shape; draw exactly what was configured. */
+	public const MODE_NEVER = 'never';
+
+	/** @var list<string> */
+	public const MODES = [self::MODE_AUTO, self::MODE_ALWAYS, self::MODE_NEVER];
+
 	/**
 	 * `$text` with any byte sequence that is not valid UTF-8 removed.
 	 *
@@ -93,6 +105,42 @@ final class ShapedText {
 	}
 
 	/**
+	 * Whether `$text` has **already** been through a shaper.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * WHY THIS HAS TO BE ASKED, AND WHY IT IS ASKED THIS WAY.
+	 *
+	 * {@see shape()} is **not idempotent**, and cannot be made so: shaping puts a string into
+	 * *visual* order, and a second pass has no way to know that - it reads the visual order as
+	 * logical and reverses it. Measured on `محمد`:
+	 *
+	 *     محمد          U+0645 U+062D U+0645 U+062F   logical, unshaped
+	 *     shape(…)      U+FEAA U+FEE4 U+FEA4 U+FEE3   visual, presentation forms
+	 *     shape(shape)  U+FEE3 U+FEA4 U+FEE4 U+FEAA   backwards, and still a valid image
+	 *
+	 * That second line is what a display name typed on Windows can arrive as. Legacy Windows
+	 * Arabic tooling, text pasted out of a PDF, and directories populated from either store
+	 * **presentation forms**, already in visual order, rather than the U+06xx letters a modern
+	 * input method produces. Shaping those again is the reported bug: Arabic reversed in the
+	 * rendered image while the same name reads correctly everywhere else in Nextcloud.
+	 *
+	 * The test is the presentation-form blocks themselves - Forms-A (U+FB50-U+FDFF) and
+	 * Forms-B (U+FE70-U+FEFE) - because they are exactly the code points a shaper *emits* and
+	 * a keyboard does not. **U+FEFF is deliberately excluded** though it closes the Forms-B
+	 * block: it is the byte-order mark, not an Arabic glyph, and one stray BOM off a Windows
+	 * clipboard would otherwise stop a perfectly ordinary name from being shaped at all.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **A subject `preg_match()` cannot scan counts as "no"**, which points the same way as
+	 * {@see mayNeedShaping()}: both failures fall towards shaping, because unshaped Arabic is
+	 * the failure this app has already shipped once. {@see shape()} repairs its input first,
+	 * so that branch is unreachable from there.
+	 */
+	public static function isAlreadyShaped(string $text): bool {
+		return preg_match('/[\x{FB50}-\x{FDFF}\x{FE70}-\x{FEFE}]/u', $text) === 1;
+	}
+
+	/**
 	 * `$text` in visual order, with Arabic letters in their contextual forms.
 	 *
 	 * Arabic is written right to left and its letters change shape according to their
@@ -114,14 +162,33 @@ final class ShapedText {
 	 * `testShapedSequenceIsExact()` and `testLatinRunsAreNotReorderedInsideRtl()`
 	 * respectively. The PDF renderer reaches the same library through `getTextCell()`, so the
 	 * two patches cover both rendering paths.
+	 *
+	 * **Text that is already shaped is returned untouched** ({@see isAlreadyShaped()}), which
+	 * is what `$mode` exists to override. `auto` is the default and the answer for every
+	 * instance that has not been told otherwise; `always` restores the unconditional pass for
+	 * a directory whose Arabic is logical-order throughout and contains presentation forms
+	 * only by accident; `never` draws exactly what was configured, for one that pre-shapes its
+	 * own display names. {@see ArabicShaping} is where an admin sets it.
+	 *
+	 * @param string $mode one of {@see MODES}
 	 */
-	public static function shape(string $text): string {
+	public static function shape(string $text, string $mode = self::MODE_AUTO): string {
 		// Before anything asks a question about this string. Bidi walks it as UTF-8 and the
-		// guard below scans it as UTF-8; neither can answer for bytes that are not, and the
+		// guards below scan it as UTF-8; neither can answer for bytes that are not, and the
 		// failure mode of asking anyway is a silently unshaped watermark - see toValidUtf8().
 		$text = self::toValidUtf8($text);
 
+		if ($mode === self::MODE_NEVER) {
+			return $text;
+		}
+
 		if (!self::mayNeedShaping($text)) {
+			return $text;
+		}
+
+		// Ordered after mayNeedShaping() because it is the more expensive scan of the two and
+		// answers false for everything Latin, which is most watermarks.
+		if ($mode !== self::MODE_ALWAYS && self::isAlreadyShaped($text)) {
 			return $text;
 		}
 
