@@ -1891,6 +1891,18 @@ base direction is pinned to the rule the renderer uses rather than to the viewer
   Nextcloud reads the JSON from PHP and the JS from the browser, and nothing in the platform
   checks that they match - a string fixed in one and not the other gives a settings page whose
   server errors and interface are in different languages
+- **The catalogue is written without harakat.** 157 marks were removed across 53 of the 144
+  strings - the catalogue had drifted into being half-vowelled, a string at a time, because
+  somebody writing one line cannot see the convention the rest follow. Unvowelled is what
+  interface Arabic is set in, Nextcloud's own catalogue included; fatha, damma and shadda on a
+  settings panel read as children's or liturgical text beside the panels around it
+  - `testTranslationsCarryNoHarakat` keeps it that way, per string, and is mutation-tested -
+    one shadda put back into one translation fails it by name
+  - the range is **U+064B-U+0652 exactly**. U+0653-U+0655 (maddah, hamza above, hamza below)
+    are combining marks too and are deliberately left alone: they are orthography rather than
+    vowelling, so stripping them would change how a word is *spelled*. Neither they nor
+    tatweel nor the Quranic marks were present anyway - the strip was measured before it was
+    run, which is why it could be a blanket regex rather than a review of 144 strings
 - **The audit for unwrapped strings found four**, all in `WatermarkForm.vue`: the
   `PLACEHOLDERS` sample values, and `LOGO`, which went through `t()` on one branch and not the
   other so the word changed when an admin uploaded a logo. `TYPE_OPTIONS`, `TRIGGER_OPTIONS`,

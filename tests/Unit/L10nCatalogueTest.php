@@ -80,6 +80,31 @@ class L10nCatalogueTest extends TestCase {
 	}
 
 	/**
+	 * **The catalogue is written without harakat**, and stays that way.
+	 *
+	 * Interface Arabic is set unvowelled - every other app on the server is, and Nextcloud's
+	 * own catalogue is - so a settings page carrying fatha, damma and shadda reads as
+	 * children's or liturgical text beside the panels around it. The marks were removed in
+	 * one pass; the point of this test is that they were creeping *back* in, a string at a
+	 * time, because a translator writing one line has no way to see the convention the other
+	 * 143 follow.
+	 *
+	 * The range is U+064B-U+0652 exactly. **U+0653-U+0655 are deliberately outside it**:
+	 * maddah and the two hamzas are combining marks too, but they are orthography rather than
+	 * vowelling, and stripping them changes how a word is spelled rather than how fully it is
+	 * pointed.
+	 *
+	 * @dataProvider translationProvider
+	 */
+	public function testTranslationsCarryNoHarakat(string $source, string $target): void {
+		$this->assertSame(
+			0,
+			preg_match('/[\x{064B}-\x{0652}]/u', $target),
+			"Arabic diacritics in a translation; the catalogue is written unvowelled:\n$source\n$target",
+		);
+	}
+
+	/**
 	 * Every substitution in the source has to survive into the translation.
 	 *
 	 * This is the failure that hurts most and shows least: `System tag ID "%s" does not
