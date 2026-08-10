@@ -11,8 +11,11 @@
 # Then:
 #
 #   docker compose up -d
-#   # wait for first-run install (~30-60s), then enable the app:
-#   docker compose exec -u www-data nextcloud php occ app:enable files_watermark
+#
+# The app enables itself on start (see the hook mount below), so there is no occ step to
+# run by hand - just wait ~30-60s for the first-run install. To watch it happen:
+#
+#   docker compose logs -f nextcloud
 #
 # Open http://localhost:8080  (admin / admin)
 #
@@ -60,6 +63,11 @@ services:
       # Live-mount the app. After a frontend change, re-run `npm run build`
       # on the host and hard-refresh the browser - no container restart needed.
       - ./:/var/www/html/custom_apps/files_watermark
+      # `occ app:enable`, run by the image's own entrypoint on every start - after the
+      # first-run install and after any `occ upgrade`, which is the only point where occ
+      # can be relied on. The script explains why it is `before-starting` and why it
+      # never exits non-zero. Mounted read-only: the container has no business editing it.
+      - ./tools/enable-app.sh:/docker-entrypoint-hooks.d/before-starting/enable-app.sh:ro
 
 volumes:
   nextcloud_data:

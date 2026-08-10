@@ -41,6 +41,7 @@ files_watermark/
 ├── js/               # Compiled frontend assets (generated, and committed)
 ├── templates/        # PHP templates
 ├── tests/            # PHPUnit suites (Unit/, plus the DAV stubs)
+├── tools/            # Dev-environment helpers (the Docker enable-app hook)
 ├── cypress/          # End-to-end suite (see cypress/README.md)
 │   ├── e2e/          # One spec per trigger / surface
 │   ├── support/      # Login, policy, upload/download commands
@@ -114,12 +115,24 @@ composer install
 npm install
 npm run build
 
-# 2. Start Nextcloud (SQLite, admin auto-provisioned)
+# 2. Start Nextcloud (SQLite, admin auto-provisioned, app enabled)
 docker compose up -d
-
-# 3. Wait ~30-60s for first-run install, then enable the app
-docker compose exec -u www-data nextcloud php occ app:enable files_watermark
 ```
+
+**The app enables itself.** [`tools/enable-app.sh`](../tools/enable-app.sh) is mounted into
+the image's `before-starting` hook directory, which the stock entrypoint runs as `www-data`
+on every container start - after the first-run install and after any `occ upgrade`, the only
+point at which occ can be relied on. `before-starting` rather than `post-installation`
+because the latter fires once, on the very first boot: a `docker compose up` on a kept volume
+would skip it, and so would every restart after somebody disabled the app to test something.
+`app:enable` on an already-enabled app is a no-op, which is what makes that safe.
+
+The script **never exits non-zero**, and that is the whole of its error handling. `run_path()`
+in the entrypoint aborts start-up when a hook fails, so a bad exit code there does not mean
+"the app is not enabled", it means the instance does not come up at all - a terrible trade
+for a convenience. A missing `vendor/`, an unbuilt `js/`, a Nextcloud that is not installed
+yet and a refused `app:enable` are each a line in `docker compose logs nextcloud` and nothing
+more.
 
 Open <http://localhost:8080> and log in as **admin / admin**. Then: admin settings under
 Settings → Administration → **Watermark**; upload a PDF/JPEG/PNG/WEBP and use the file row's
@@ -150,8 +163,10 @@ that gets verified rather than assumed.
 ```bash
 composer install && npm install && npm run build
 docker compose -p fw_s3 -f docker-compose.s3.yml up -d
-docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php occ app:enable files_watermark
 ```
+
+It mounts the same `before-starting` hook, so the app is enabled by the time the instance
+answers.
 
 Open <http://localhost:8081> (admin / admin), then confirm that an on-demand mark produces a
 watermarked *download* while the S3 object itself is untouched, and that an `on_upload` policy

@@ -155,6 +155,11 @@ occ app:enable files_watermark
 
 Or via the web UI: **Admin → Apps → search "files_watermark" → Enable**.
 
+> The Docker development stacks (`docker-compose.yml` and `docker-compose.s3.yml`) run this
+> step for you on every container start, via `tools/enable-app.sh` mounted into the image's
+> `before-starting` hook. It is a convenience for local work only - see
+> [the development guide](doc/development.md#docker-dev-instance).
+
 ## Watermarking shared files
 
 Two switches under **Settings → Administration → Watermark → Shared files**:

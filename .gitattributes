@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts keep LF whatever the platform. `tools/enable-app.sh` is executed *inside*
+# the Linux container by the Nextcloud image's entrypoint, and a CRLF checkout turns its
+# shebang into `/bin/sh\r` - "not found". The entrypoint aborts start-up on a failed hook,
+# so on a Windows clone that would not be a disabled app, it would be an instance that never
+# comes up.
+*.sh text eol=lf

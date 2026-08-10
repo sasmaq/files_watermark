@@ -12,7 +12,9 @@
 # Then bring up the isolated S3 stack (its own project name + volumes):
 #
 #   docker compose -p fw_s3 -f docker-compose.s3.yml up -d
-#   docker compose -p fw_s3 -f docker-compose.s3.yml exec -u www-data nextcloud php occ app:enable files_watermark
+#
+# The app enables itself on start (see the hook mount below), so there is no occ step to
+# run by hand.
 #
 # Open http://localhost:8081  (admin / admin). RustFS console: http://localhost:9001
 # (rustfsadmin / rustfsadmin). Tear down with:
@@ -75,6 +77,9 @@ services:
     volumes:
       - nextcloud_data:/var/www/html
       - ./:/var/www/html/custom_apps/files_watermark
+      # Enables the app on every start - same hook as docker-compose.yml (see the notes
+      # there, and the header of the script itself).
+      - ./tools/enable-app.sh:/docker-entrypoint-hooks.d/before-starting/enable-app.sh:ro
 
 volumes:
   rustfs_data:
