@@ -50,7 +50,22 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->server = new Server();
 		$this->server->tree = $this->tree;
 
-		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->watermarkService->method('isSupported')
+			->willReturnCallback(static fn (string $mime): bool => $mime === 'application/pdf');
+		// Stands in for the real resolution, including its shape: the cached type answers
+		// without a read, and only a name that says nothing renderable reaches the bytes.
+		$this->watermarkService->method('deliveryMime')
+			->willReturnCallback(static function (File $file): ?string {
+				if ($file->getMimeType() === 'application/pdf') {
+					return 'application/pdf';
+				}
+
+				$stream = $file->fopen('rb');
+				$header = fread($stream, 1024);
+				fclose($stream);
+
+				return str_contains($header, '%PDF-') ? 'application/pdf' : null;
+			});
 	}
 
 	protected function tearDown(): void {
@@ -112,12 +127,13 @@ class ZipInterceptorPluginTest extends TestCase {
 		string $name,
 		string $contents = 'ORIGINAL',
 		int $size = 8,
+		string $mime = 'application/pdf',
 	): File&MockObject {
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn($id);
 		$file->method('getPath')->willReturn($path);
 		$file->method('getName')->willReturn($name);
-		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getMimeType')->willReturn($mime);
 		$file->method('getSize')->willReturn($size);
 		$file->method('getMTime')->willReturn(1700000000);
 		$file->method('fopen')->willReturnCallback(static function () use ($contents) {
@@ -191,6 +207,33 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->assertSame('WATERMARKED', $members['/Shared/secret.pdf']['contents']);
 		// The recipient's own file is untouched.
 		$this->assertSame('MY-ORIGINAL', $members['/Shared/mine.pdf']['contents']);
+	}
+
+	/**
+	 * Renaming a marked member used to drop it from the archive as a clean original.
+	 *
+	 * The member list was built by filtering on the cached MIME type, which Nextcloud derives
+	 * from the extension - so `secret.pdf` renamed to `secret.txt` was never a candidate, was
+	 * never rendered, and went into the zip exactly as stored. An archive is the worst place
+	 * for it: the marked file leaves alongside a hundred others, and nothing in the download
+	 * says one of them came out unwatermarked.
+	 */
+	public function testARenamedMarkedMemberIsStillWatermarked(): void {
+		$renamed = $this->file(1, '/bob/files/Shared/secret.txt', 'secret.txt', "%PDF-1.7\nbody", 13, 'text/plain');
+		$own = $this->file(2, '/bob/files/Shared/notes.txt', 'notes.txt', 'JUST-TEXT', 9, 'text/plain');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$renamed, $own]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->marked([1]);
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(fn ($file) => $file->getId() === 1 ? $this->renderedCopy() : null);
+
+		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
+
+		$members = Streamer::members();
+		$this->assertSame('WATERMARKED', $members['/Shared/secret.txt']['contents']);
+		// The member that is text all the way down is still just text.
+		$this->assertSame('JUST-TEXT', $members['/Shared/notes.txt']['contents']);
 	}
 
 	/**

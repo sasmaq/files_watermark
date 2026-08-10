@@ -439,12 +439,100 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertNull($this->service->watermarkForDownload($this->file()));
 	}
 
-	public function testAnUnsupportedTypeIsNeverADeliveryCandidate(): void {
-		// Not even asked: the type check comes first, and a text file has no watermark to
-		// carry however it got marked.
-		$this->markMapper->expects($this->never())->method('isMarked');
+	public function testAnUnsupportedTypeIsNotADeliveryCandidateUnlessItIsMarked(): void {
+		$this->markMapper->method('isMarked')->willReturn(false);
 
-		$this->assertFalse($this->service->isDeliveryCandidate($this->file('text/plain')));
+		// Unmarked and named as something unrenderable: the bytes are never read. The mark
+		// is what makes the question worth asking at all.
+		$file = $this->file('text/plain', content: 'just text');
+		$file->expects($this->never())->method('fopen');
+
+		$this->assertFalse($this->service->isDeliveryCandidate($file));
+	}
+
+	/**
+	 * Renaming a marked file used to strip its watermark.
+	 *
+	 * Nextcloud derives the MIME type from the extension and re-derives it on every rename,
+	 * so `report.pdf` renamed to `report.txt` reported `text/plain` while the mark - which is
+	 * a row against the file id - stayed exactly where it was. Delivery consulted the type
+	 * first and handed over the stored bytes: the clean original, one rename away, with the
+	 * Files list still showing the file as watermarked throughout.
+	 */
+	public function testARenamedMarkedFileIsStillWatermarkedFromItsContent(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+		$renamed = $this->file('text/plain', content: "%PDF-1.7\nbody");
+
+		$this->assertTrue($this->service->isDeliveryCandidate($renamed));
+
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->assertNotNull($this->service->watermarkForDownload($renamed));
+	}
+
+	/**
+	 * @dataProvider provideRenamedContent
+	 */
+	public function testTheContentDecidesWhichRendererARenamedFileGoesTo(
+		string $content,
+		bool $expectPdf,
+	): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+
+		$this->pdfWatermarker->expects($expectPdf ? $this->once() : $this->never())->method('apply');
+		$this->imageWatermarker->expects($expectPdf ? $this->never() : $this->once())->method('apply');
+
+		$this->assertNotNull($this->service->watermarkForDownload(
+			$this->file('application/octet-stream', content: $content),
+		));
+	}
+
+	/**
+	 * @return array<string, array{0: string, 1: bool}>
+	 */
+	public static function provideRenamedContent(): array {
+		return [
+			'pdf' => ["%PDF-1.4\ntrailer", true],
+			'pdf behind a byte-order mark' => ["\xEF\xBB\xBF%PDF-1.4", true],
+			'jpeg' => ["\xFF\xD8\xFF\xE0\x00\x10JFIF", false],
+			'png' => ["\x89PNG\x0D\x0A\x1A\x0A\x00\x00\x00\x0DIHDR", false],
+			'webp' => ["RIFF\x24\x00\x00\x00WEBPVP8 ", false],
+		];
+	}
+
+	/**
+	 * The rename dodge only works in one direction, and this is the other one: a marked file
+	 * whose content is genuinely nothing this app renders is served as it is stored. There is
+	 * no watermark to withhold, so refusing the download would take a file hostage over a
+	 * policy that could never have applied to it.
+	 */
+	public function testAMarkedFileWhoseContentIsUnrenderableIsServedAsStored(): void {
+		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$this->imageWatermarker->expects($this->never())->method('apply');
+
+		$this->assertNull($this->service->watermarkForDownload(
+			$this->file('text/plain', content: 'PK not a pdf'),
+		));
+	}
+
+	/**
+	 * The read costs something on object storage, so it happens only where the alternative
+	 * is serving an unwatermarked copy - never for a file whose name already says there is
+	 * work to do.
+	 */
+	public function testAMarkedFileWithASupportedNameIsNeverSniffed(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+
+		$file = $this->file('application/pdf');
+		// `getContent()` supplies the render; `fopen()` is the type probe and the header
+		// check, neither of which a plainly-named PDF has any reason to reach.
+		$file->expects($this->never())->method('fopen');
+
+		$this->assertNotNull($this->service->watermarkForDownload($file));
 	}
 
 	public function testAMarkedPdfIsRenderedThroughThePdfWatermarker(): void {

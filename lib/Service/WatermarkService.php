@@ -222,15 +222,25 @@ class WatermarkService {
 	 *                                    caller must deny the fetch rather than serve the original
 	 */
 	public function watermarkForDownload(File $file): ?string {
-		if (!$this->isSupported($file->getMimeType())) {
-			return null;
-		}
-
 		// The two reasons are told apart rather than folded into `isDeliveryCandidate` here,
 		// because the ceiling below depends on which one applies - and asking the mark table
 		// once is the difference between one query per delivery and two.
 		$id = $file->getId();
 		$marked = $id !== null && $this->isMarked($id);
+
+		// **The mark is asked before the type, and the type is asked of the bytes.** A
+		// rename changes the cached MIME - the server derives it from the name - so testing
+		// `isSupported($file->getMimeType())` first handed anyone who could rename a marked
+		// file a one-click way to fetch it clean: `report.pdf` to `report.txt`, download,
+		// rename back. See {@see deliveryMime}.
+		$mime = $marked
+			? $this->deliveryMime($file)
+			: ($this->isSupported($file->getMimeType()) ? $file->getMimeType() : null);
+
+		if ($mime === null) {
+			return null;
+		}
+
 		if (!$marked && !$this->isForcedByShare($file)) {
 			return null;
 		}
@@ -244,7 +254,7 @@ class WatermarkService {
 			if (!$marked) {
 				$this->assertSizeAllowed($file);
 			}
-			[$tmpPath, $resolved] = $this->renderToTemp($file, $config);
+			[$tmpPath, $resolved] = $this->renderToTemp($file, $config, null, $mime);
 			$this->recordLog($file, self::TRIGGER_DELIVERED, $resolved);
 
 			return $tmpPath;
@@ -275,16 +285,127 @@ class WatermarkService {
 	 *    downloaded by its owner is served exactly as it is stored.
 	 */
 	public function isDeliveryCandidate(FileInfo $node): bool {
+		$id = $node->getId();
+
 		if (!$this->isSupported($node->getMimetype())) {
-			return false;
+			// The *name* says this is nothing we can watermark. Only a mark makes it worth
+			// asking the bytes, and only a `File` can be asked - so an unmarked file still
+			// costs one indexed lookup and no read at all. {@see deliveryMime}.
+			return $node instanceof File
+				&& $id !== null
+				&& $this->isMarked($id)
+				&& $this->deliveryMime($node) !== null;
 		}
 
-		$id = $node->getId();
 		if ($id !== null && $this->isMarked($id)) {
 			return true;
 		}
 
 		return $this->isForcedByShare($node);
+	}
+
+	/**
+	 * The type to watermark $file as, or null when it is nothing this app can render.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE NAME IS NOT THE TYPE.
+	 *
+	 * Nextcloud derives a file's MIME type from its **extension** and re-derives it on every
+	 * rename, so `getMimeType()` reports what a file is called, not what it holds. For a
+	 * marked file that difference is a hole rather than a detail: a mark is a durable
+	 * statement about a file id, it survives the rename by design, and every other part of
+	 * this app went on treating the file as marked - the Files list still showed the badge -
+	 * while delivery quietly decided it was a text file and served the stored bytes. Rename
+	 * `q3-report.pdf` to `q3-report.txt`, download the clean original, rename it back.
+	 *
+	 * So the cached type is taken only as a *hint*, and the bytes are consulted whenever the
+	 * hint says nothing renderable. That ordering is what keeps it cheap: a marked PDF still
+	 * called `.pdf` never opens the file here, and the read only happens on the path where
+	 * the alternative is handing over an unwatermarked copy.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The reverse case needs no special handling: a marked `.pdf` whose *content* was
+	 * replaced with something unrenderable still reports `application/pdf`, is still rendered
+	 * here, and the render's failure is what refuses the download - fail-closed, as before.
+	 */
+	public function deliveryMime(File $file): ?string {
+		$mime = $file->getMimeType();
+		if ($this->isSupported($mime)) {
+			return $mime;
+		}
+
+		return $this->sniffMime($file);
+	}
+
+	/**
+	 * How much of a file to read to recognise its format.
+	 *
+	 * Every signature below lives in the first dozen bytes; the rest of the window is for
+	 * the PDF header, which is allowed to sit behind a little leading junk. Deliberately
+	 * nothing like {@see HEADER_BYTES} - that one hunts for a JPEG's dimensions past
+	 * kilobytes of EXIF, this one only has to answer "which of four formats is this".
+	 */
+	private const SNIFF_BYTES = 1024;
+
+	/**
+	 * The supported type $file's leading bytes actually declare, or null for anything else.
+	 *
+	 * Only the four types this app renders are recognised, and each by the signature its
+	 * format puts at a fixed place - this is a router, not a MIME database, and a type it
+	 * cannot name is one the renderers could not have drawn on anyway.
+	 */
+	private function sniffMime(File $file): ?string {
+		try {
+			$handle = $file->fopen('rb');
+			if ($handle === false) {
+				return null;
+			}
+			$header = fread($handle, self::SNIFF_BYTES);
+			fclose($handle);
+		} catch (\Exception $e) {
+			// Storage that will not open is the caller's problem to report. Answering "not
+			// renderable" here would turn an unreadable file into an unwatermarked download,
+			// which is the one answer this method exists to prevent - but the caller cannot
+			// render bytes it cannot read either, so it fails on its own a moment later.
+			//
+			// `\Exception` and not `\Throwable`: everything storage throws is one, and a
+			// swallowed `\Error` here is a bug in this method that presents as files quietly
+			// going out clean. That is precisely the failure this whole path exists to close,
+			// so it is left to crash loudly instead.
+			$this->logger->warning('files_watermark: could not read {path} to detect its type: {reason}', [
+				'path' => $file->getPath(),
+				'reason' => $e->getMessage(),
+				'exception' => $e,
+			]);
+
+			return null;
+		}
+
+		if ($header === false || $header === '') {
+			return null;
+		}
+
+		if (str_starts_with($header, "\xFF\xD8\xFF")) {
+			return 'image/jpeg';
+		}
+
+		if (str_starts_with($header, "\x89PNG\x0D\x0A\x1A\x0A")) {
+			return 'image/png';
+		}
+
+		if (str_starts_with($header, 'RIFF') && substr($header, 8, 4) === 'WEBP') {
+			return 'image/webp';
+		}
+
+		// Not anchored at byte 0: the header may carry a byte-order mark or a few bytes of
+		// junk ahead of the signature, and every PDF reader in existence - including the
+		// parser this app hands the file to - accepts that. Matching stricter here would
+		// refuse to watermark a file that then downloads and opens perfectly.
+		if (strpos($header, '%PDF-') !== false) {
+			return 'application/pdf';
+		}
+
+		return null;
 	}
 
 	/**
@@ -417,11 +538,14 @@ class WatermarkService {
 	/**
 	 * Render a watermarked copy of $file to a temp path.
 	 *
+	 * @param ?string $mime the type to render as, when the caller has already resolved it
+	 *                      from the bytes ({@see deliveryMime}); null falls back to the
+	 *                      cached type, which is derived from the file's name
 	 * @return array{0: string, 1: WatermarkConfig} the temp path and the config the render
 	 *                                              resolved to (callers need its id for the audit row)
 	 */
-	private function renderToTemp(File $file, WatermarkConfig $config, ?IUser $actor = null): array {
-		$mime = $file->getMimeType();
+	private function renderToTemp(File $file, WatermarkConfig $config, ?IUser $actor = null, ?string $mime = null): array {
+		$mime ??= $file->getMimeType();
 		$this->assertSupported($mime, $file);
 
 		$placeholders = $this->buildPlaceholders($file, $actor);

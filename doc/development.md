@@ -2682,7 +2682,7 @@ still missing.
 
 ## Security
 
-**Position:** two real vulnerabilities were found and fixed here; three refinements remain.
+**Position:** three real vulnerabilities were found and fixed here; three refinements remain.
 
 ### Notes and open questions {#open-security}
 
@@ -2836,6 +2836,33 @@ still missing.
   - `WatermarkImageStore::localPath()` refuses non-references at *render* time too, so configs
     already holding a path resolve to no image and log a warning instead of reading the file -
     verified against the pre-fix row
+- **Fixed: renaming a marked file stripped its watermark.** Nextcloud derives a file's MIME
+  type from its **extension** and re-derives it on every rename, and every delivery path
+  asked `getMimeType()` before it asked the mark table. So `q3-report.pdf` renamed to
+  `q3-report.txt` reported `text/plain`, fell out of the supported set, and was served as
+  stored - the clean original, one rename away, available to anyone with write permission on
+  the file. The mark itself never moved (it is a row against the file id) and the Files list
+  went on showing the badge throughout, which is what made it quiet
+  - the order is now inverted: **the mark is asked first, and the type is asked of the
+    bytes.** `WatermarkService::deliveryMime()` takes the cached type as a hint and falls
+    through to a signature check on the first 1 KB when the hint says nothing renderable
+  - that ordering is also what keeps it cheap. A marked PDF still called `.pdf` is answered
+    from the cache and never opened, so the read only happens on the path whose alternative
+    is handing over an unwatermarked copy - which matters on object storage, where an open is
+    a request
+  - fixed in all three places that gated on the name: single downloads
+    (`watermarkForDownload`), previews (`isDeliveryCandidate`), and archive members
+    (`ZipInterceptorPlugin::deliveryMembers`, where the member would have gone into the zip
+    clean alongside a hundred others). `DownloadController` and the DAV interceptor both
+    route through the first
+  - **not** extended to the reverse case: a marked `.pdf` whose *content* is unrenderable
+    still reports `application/pdf`, is still rendered, and the render's failure refuses the
+    download. Fail-closed, unchanged
+  - **still open, deliberately:** the share switches (`isForcedByShare`) and the `on_upload`
+    trigger both still go by the cached type. Sniffing there means reading *every* candidate
+    rather than only marked ones - every member of a shared folder download, every upload -
+    and the exposure is narrower: no durable mark is being contradicted, and uploading a PDF
+    named `.txt` evades the *marking*, which is a different hole from evading delivery
 - **Fixed: a mistyped folder tag turned every watermark request into an HTTP 500.** See
   the "Where to apply" notes under Goal 4. Validated at save time *and* made survivable at
   render time, because validation cannot reach configs that already exist

@@ -350,9 +350,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	private function deliveryMembers(array $content): array {
 		$candidates = [];
 		foreach ($this->flatten($content) as $file) {
-			if ($this->watermarkService->isSupported($file->getMimeType())) {
-				$candidates[$file->getId()] = $file;
-			}
+			$candidates[$file->getId()] = $file;
 		}
 
 		if ($candidates === []) {
@@ -363,7 +361,24 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 		$members = [];
 		foreach ($candidates as $id => $file) {
-			if (isset($marked[$id]) || $this->watermarkService->isForcedByShare($file)) {
+			if (isset($marked[$id])) {
+				// A marked member is asked what it *holds*, not what it is called: a rename to
+				// an unwatermarkable extension used to drop it from this list silently, and an
+				// archive is exactly where that goes unnoticed. The read only happens for a
+				// marked file whose name already says "nothing to do here", so the ordinary
+				// folder download still costs one mark query and no reads.
+				// {@see \OCA\FilesWatermark\Service\WatermarkService::deliveryMime}
+				if ($this->watermarkService->deliveryMime($file) !== null) {
+					$members[] = $file;
+				}
+
+				continue;
+			}
+
+			// Unmarked: only the share switches can pull it in, and those are a rule about
+			// *this fetch* rather than about the file, so the cached type is answer enough.
+			if ($this->watermarkService->isSupported($file->getMimeType())
+				&& $this->watermarkService->isForcedByShare($file)) {
 				$members[] = $file;
 			}
 		}
