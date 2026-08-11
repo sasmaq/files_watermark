@@ -9,8 +9,8 @@ what was measured, why a design is what it is - lives in
 **Closed items are deleted from here, not ticked.** What was done, and what it cost to
 learn, is recorded in `development.md`; everything below is genuinely still open.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. PHPUnit (**555**) and Jest
-(**93**) are green, along with Psalm at level 3, php-cs-fixer and ESLint.
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. PHPUnit (**784**) and Jest
+(**116**) are green, along with Psalm at level 3, php-cs-fixer and ESLint.
 
 **The Cypress suite has not been run since the trigger rework.** Every spec was rewritten
 for the new model and none of them has met an instance - the rework changed what the app
@@ -215,5 +215,5 @@ them.
 | [Data model](development.md#data-model) | Schema carries every implemented feature; the whole migration chain is squashed into one step at app version 1.2.0 | `metadata` type, cross-DB run |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
 | [Security](development.md#security) | Two real vulnerabilities found and fixed. On-demand applies bounded by rate limit + size cap; images by a pixel ceiling on every trigger | - |
-| [Testing](development.md#testing) | 622 PHPUnit + 93 Jest + 89 Cypress, no host-conditional skips | Psalm level 3 |
+| [Testing](development.md#testing) | 784 PHPUnit + 116 Jest + 80 Cypress (one skipped), no host-conditional skips | Psalm level 3 |
 | [Docs and release](development.md#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |
