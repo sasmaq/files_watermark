@@ -47,8 +47,12 @@ class WatermarkConfig extends Entity {
 	protected ?string $imagePath = null;
 	protected int $opacity = 40;
 	protected int $fontSize = 24;
-	/** Mid grey: legible over both light pages and dark imagery, unlike a near-white tint. */
-	protected string $color = '#808080';
+	/**
+	 * Light grey. It tints rather than obscures, which is the point and also the cost: it is
+	 * at its faintest over a white page, where opacity and font size are the dials that
+	 * answer. Every install can override it.
+	 */
+	protected string $color = '#d3d3d3';
 	protected int $rotation = 45;
 	protected string $trigger = 'on_demand';
 	/** Comma-separated MIME types to watermark; null means all supported types */

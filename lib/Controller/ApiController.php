@@ -99,7 +99,7 @@ class ApiController extends Controller {
 		?string $imagePath,
 		int $opacity = 40,
 		int $fontSize = 24,
-		string $color = '#808080',
+		string $color = '#d3d3d3',
 		int $rotation = 45,
 		string $trigger = 'on_demand',
 		?string $mimeTypes = null,

@@ -175,7 +175,7 @@ class Version1002Date20260804120000 extends SimpleMigrationStep {
 		$table->addColumn('color', Types::STRING, [
 			'notnull' => true,
 			'length' => 7,
-			'default' => '#808080',
+			'default' => '#d3d3d3',
 		]);
 		$table->addColumn('rotation', Types::SMALLINT, [
 			'notnull' => true,

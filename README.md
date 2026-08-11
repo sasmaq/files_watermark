@@ -25,7 +25,7 @@ document is whoever uploaded it rather than whoever walked out with it.
     the server is set to. The format is `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS`
 - **Image watermarks** - overlay a logo or image on files
 - **Combined** text + image watermarks
-- Diagonal tiled placement at 45° rotation, mid grey (`#808080`) and 40% opacity by default
+- Diagonal tiled placement at 45° rotation, light grey (`#d3d3d3`) and 40% opacity by default
 - Two trigger modes, deciding **which files are marked**: **on demand** (the file action
   menu) and **on upload** (every supported file, as it arrives). Under both, a marked file
   is watermarked on every download *and* every preview

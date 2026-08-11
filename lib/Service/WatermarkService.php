@@ -674,7 +674,7 @@ class WatermarkService {
 		// Faint enough to read the document through, dark enough to survive a screenshot.
 		$config->setOpacity(40);
 		$config->setFontSize(24);
-		$config->setColor('#808080');
+		$config->setColor('#d3d3d3');
 		$config->setRotation(45);
 		$config->setTrigger(self::TRIGGER_ON_DEMAND);
 		return $config;

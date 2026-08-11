@@ -455,7 +455,7 @@ const DEFAULTS = {
 	textTemplate: '{displayname} - {date}',
 	imagePath: '',
 	fontSize: 24,
-	color: '#808080',
+	color: '#d3d3d3',
 	opacity: 40,
 	rotation: 45,
 	trigger: 'on_demand',

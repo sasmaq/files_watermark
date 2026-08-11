@@ -77,7 +77,7 @@ Cypress.Commands.add('wmSetPolicy', (policy = {}) => {
 			trigger: 'on_demand',
 			opacity: 40,
 			fontSize: 24,
-			color: '#808080',
+			color: '#d3d3d3',
 			rotation: 45,
 			mimeTypes: null,
 			folderTag: null,
