@@ -148,6 +148,34 @@ describe('main-files', () => {
 		})
 	})
 
+	describe('the trash bin', () => {
+		/**
+		 * A deleted file keeps its id, so it keeps its mark - its download is watermarked
+		 * and its preview always was. What it does not keep is a path the API can act on,
+		 * so both actions would offer a button whose only outcome is an error.
+		 */
+		const trash = { id: 'trashbin' }
+
+		it('offers neither action, whatever the file\'s state', () => {
+			expect(isApplyActionEnabled([node({ watermarked: false })], trash)).toBe(false)
+			expect(isRemoveActionEnabled([node({ watermarked: true })], trash)).toBe(false)
+		})
+
+		it('leaves every other view alone', () => {
+			expect(isApplyActionEnabled([node({ watermarked: false })], { id: 'files' })).toBe(true)
+			expect(isRemoveActionEnabled([node({ watermarked: true })], { id: 'files' })).toBe(true)
+		})
+
+		/**
+		 * The Files app always passes a view; an action evaluated without one must not
+		 * vanish, or the ordinary case would depend on a caller detail.
+		 */
+		it('does not hide the actions when no view is given at all', () => {
+			expect(isApplyActionEnabled([node({ watermarked: false })])).toBe(true)
+			expect(isRemoveActionEnabled([node({ watermarked: true })])).toBe(true)
+		})
+	})
+
 	describe('isRemoveActionEnabled', () => {
 		it('is enabled only for a watermarked single supported file', () => {
 			expect(isRemoveActionEnabled([node({ watermarked: true })])).toBe(true)

@@ -2711,7 +2711,7 @@ still missing.
 
 ## Security
 
-**Position:** four real vulnerabilities were found and fixed here; three refinements remain.
+**Position:** five real vulnerabilities were found and fixed here; three refinements remain.
 
 ### Notes and open questions {#open-security}
 
@@ -2892,6 +2892,33 @@ still missing.
     rather than only marked ones - every member of a shared folder download, every upload -
     and the exposure is narrower: no durable mark is being contradicted, and uploading a PDF
     named `.txt` evades the *marking*, which is a different hole from evading delivery
+- **Fixed: deleting a marked file was a way to download it clean.** A trashed file keeps
+  its id - the trash moves a file, it does not copy it - so it keeps its mark, and the trash
+  view's *preview* was watermarked the whole time. The download was not, and the two
+  disagreeing in public is what surfaced it. `/remote.php/dav/trashbin/...` is served by the
+  **same** Sabre server `DownloadInterceptorPlugin` is registered on (`files_trashbin`
+  contributes its collection to the DAV root through `info.xml`), so the `method:GET` hook
+  had been running for every trash download all along and returning early: a trashed node is
+  an `OCA\Files_Trashbin\Sabre\ITrash`, never an `OCA\DAV\Connector\Sabre\File`, and that
+  type test was the whole of it
+  - the node is resolved to its file through `IRootFolder::getById()` rather than
+    `files_trashbin`'s own manager. A trashed file is an ordinary node at
+    `/{uid}/files_trashbin/files/...` and the root folder finds it by id like any other, so
+    the app owes that app no coupling beyond one `instanceof` - which is safe where it is
+    disabled, since the class then never matches. (`getTrashNodeById()` is what core's own
+    trash preview controller uses, but it is not on `ITrashManager`, only on the concrete
+    manager and the backends)
+  - **the trashbin names its own downloads.** `TrashbinPlugin` adds a Content-Disposition on
+    `afterMethod:GET` - which still runs after this plugin returns false - carrying the
+    file's original name rather than the `Frog.jpg.d1786407996` that storage gives it. It
+    adds unconditionally and Sabre's `addHeader` appends, so setting ours there would have
+    sent the header twice; core's `FilesPlugin` checks first, which is why the ordinary path
+    is still ours to set
+  - **the Apply / Remove file actions are hidden in the trash view.** A trashed node is
+    otherwise an ordinary file object - same mime, same id - so `enabled()` was offering both
+    buttons on a node whose path the API cannot resolve. The Files app hands `enabled()` the
+    `View` for exactly this, and `view.id === 'trashbin'` is the test. The *badge* is left
+    alone: "this file is marked" is still true there, and now demonstrably so
 - **Fixed: a logged-in visitor's preview of a public link went out clean.** With *"always
   watermark files opened through a public link"* on, the same file was watermarked on
   download and not on the share page's thumbnail. `ShareAccess` had two signals for "this

@@ -82,9 +82,13 @@ export function isOnDemandTrigger() {
  * Apply and Remove actions share). Each action layers its own watermarked check
  * on top: Apply requires the file be *not* watermarked, Remove requires it be.
  * @param {object[]} files - selected Files `Node` objects
+ * @param {object} [view] - the Files `View` the action is offered in; the trash bin offers neither
  * @return {boolean} true for a single file of a supported type in on_demand mode
  */
-export function isSingleSupportedFile(files) {
+export function isSingleSupportedFile(files, view) {
+	if (isReadOnlyView(view)) {
+		return false
+	}
 	if (!isOnDemandTrigger()) {
 		return false
 	}
@@ -92,6 +96,25 @@ export function isSingleSupportedFile(files) {
 		return false
 	}
 	return SUPPORTED_MIME.includes(files[0].mime)
+}
+
+/**
+ * Views where a file is not somewhere a watermark policy can be changed.
+ *
+ * The trash bin is the one that matters. A deleted file keeps its id, so it keeps its
+ * mark - the download of a trashed file is watermarked, and its preview always was - but
+ * "Apply watermark" and "Remove watermark" have nothing to act on there: the node is not
+ * at a path the API resolves, so both would offer a button whose only outcome is an error.
+ * Deleting a file is not the moment to be asked about watermark policy either.
+ *
+ * The view is what the Files app hands `enabled()` for exactly this kind of question, and
+ * it is the honest source: a trashed node is otherwise an ordinary file object, down to
+ * its mime and its id.
+ * @param {object} [view] - the Files `View` the action is being offered in
+ * @return {boolean} true when the actions must stay hidden
+ */
+export function isReadOnlyView(view) {
+	return view?.id === 'trashbin'
 }
 
 /**
@@ -105,10 +128,11 @@ export function isSingleSupportedFile(files) {
  * REST reconcile). So whenever a file shows the indicator, its Apply action is
  * hidden - even in the window where the node's DAV attribute is still stale.
  * @param {object[]} files - selected Files `Node` objects
+ * @param {object} [view] - the Files `View` the action is offered in; the trash bin offers neither
  * @return {boolean} true when the action should be shown
  */
-export function isApplyActionEnabled(files) {
-	if (!isSingleSupportedFile(files)) {
+export function isApplyActionEnabled(files, view) {
+	if (!isSingleSupportedFile(files, view)) {
 		return false
 	}
 	const node = files[0]
@@ -148,10 +172,11 @@ export function isOwnedByCurrentUser(node) {
  * to name nobody. The server refuses them either way; this stops the button being offered
  * so the refusal is not something a user has to discover.
  * @param {object[]} files - selected Files `Node` objects
+ * @param {object} [view] - the Files `View` the action is offered in; the trash bin offers neither
  * @return {boolean} true when the action should be shown
  */
-export function isRemoveActionEnabled(files) {
-	if (!isSingleSupportedFile(files)) {
+export function isRemoveActionEnabled(files, view) {
+	if (!isSingleSupportedFile(files, view)) {
 		return false
 	}
 	const node = files[0]

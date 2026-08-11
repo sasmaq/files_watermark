@@ -6,14 +6,18 @@ namespace OCA\FilesWatermark\Tests\Unit\Dav;
 
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
+use OCA\Files_Trashbin\Sabre\ITrash;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
+use OCP\Files\Folder;
+use OCP\Files\IRootFolder;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Sabre\DAV\Exception\Forbidden;
 use Sabre\DAV\Exception\NotFound;
+use Sabre\DAV\IFile;
 use Sabre\DAV\Server;
 use Sabre\DAV\Tree;
 use Sabre\HTTP\Request;
@@ -25,6 +29,7 @@ use Sabre\HTTP\Response;
 class DownloadInterceptorPluginTest extends TestCase {
 
 	private WatermarkService&MockObject $watermarkService;
+	private IRootFolder&MockObject $rootFolder;
 	private Tree&MockObject $tree;
 	private Server $server;
 
@@ -34,6 +39,7 @@ class DownloadInterceptorPluginTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->watermarkService = $this->createMock(WatermarkService::class);
+		$this->rootFolder = $this->createMock(IRootFolder::class);
 		$this->tree = $this->createMock(Tree::class);
 		$this->server = new Server();
 		$this->server->tree = $this->tree;
@@ -50,9 +56,38 @@ class DownloadInterceptorPluginTest extends TestCase {
 	}
 
 	private function plugin(): DownloadInterceptorPlugin {
-		$plugin = new DownloadInterceptorPlugin($this->watermarkService);
+		$plugin = new DownloadInterceptorPlugin($this->watermarkService, $this->rootFolder);
 		$plugin->initialize($this->server);
 		return $plugin;
+	}
+
+	/**
+	 * A trashbin DAV node, and the file the root folder resolves its id to.
+	 *
+	 * The two are separate objects on purpose, which is the whole shape of the trash case:
+	 * the node the request addresses is not a file node at all and cannot hand over its
+	 * content, so the file id is the only thing carrying across.
+	 */
+	private function trashNode(int $fileId = 42, string $mime = 'application/pdf'): ITrash&MockObject {
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn($mime);
+		$file->method('getName')->willReturn('report.pdf.d1700000000');
+		$this->rootFolder->method('getById')->with($fileId)->willReturn([$file]);
+
+		$node = $this->trashMock();
+		$node->method('getFileId')->willReturn($fileId);
+		return $node;
+	}
+
+	/**
+	 * `ITrash` does not extend `INode` - core's trash nodes get there by implementing both
+	 * (`AbstractTrashFile extends AbstractTrash implements IFile, ITrash`). The mock has to
+	 * do the same, or it is not a node the DAV tree could ever have returned.
+	 *
+	 * @return ITrash&MockObject
+	 */
+	private function trashMock(): ITrash&MockObject {
+		return $this->createMockForIntersectionOfInterfaces([ITrash::class, IFile::class]);
 	}
 
 	/** A DAV file node wrapping an OCP file with the given mime/name. */
@@ -205,6 +240,87 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
 		$this->assertTrue($this->plugin()->httpGet($this->request('files/alice/folder'), new Response()));
+	}
+
+	/**
+	 * Deleting a marked file used to be a way to download it clean.
+	 *
+	 * The trash is served by this same DAV server, so this hook always ran for it - and
+	 * always returned early, because a trashed node is an `ITrash` and never an
+	 * `OCA\DAV\Connector\Sabre\File`. The mark survives the delete (the trash moves a file,
+	 * it does not copy it, so the file id is the same row's), and the trash view's *preview*
+	 * was watermarked the whole time, which is what made the two disagree in public.
+	 */
+	public function testATrashedMarkedFileIsStillWatermarked(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->trashNode());
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->willReturn($this->renderedCopy());
+
+		$response = new Response();
+		$this->assertFalse(
+			$this->plugin()->httpGet($this->request('trashbin/alice/trash/report.pdf.d1700000000'), $response),
+		);
+		$this->assertSame(200, $response->getStatus());
+		$this->assertSame('WATERMARKED-BYTES', stream_get_contents($response->getBody()));
+	}
+
+	/**
+	 * `TrashbinPlugin` adds its own Content-Disposition on `afterMethod:GET`, carrying the
+	 * file's original name rather than the `.d<timestamp>` one storage gives it. Sabre's
+	 * `addHeader` appends, so ours would not replace that header - it would be a second one.
+	 */
+	public function testTheTrashbinIsLeftToNameItsOwnDownload(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->trashNode());
+		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
+
+		$response = new Response();
+		$this->plugin()->httpGet($this->request('trashbin/alice/trash/report.pdf.d1700000000'), $response);
+
+		$this->assertNull($response->getHeader('Content-Disposition'));
+		// The rest of the response is still ours.
+		$this->assertSame('application/pdf', $response->getHeader('Content-Type'));
+	}
+
+	/** An unmarked file in the trash is served as stored, exactly as anywhere else. */
+	public function testAnUnmarkedTrashedFileIsLeftToCore(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->trashNode());
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+
+		$this->assertTrue(
+			$this->plugin()->httpGet($this->request('trashbin/alice/trash/report.pdf.d1700000000'), new Response()),
+		);
+	}
+
+	/**
+	 * A trashed *folder* is an `ITrash` too, and resolves to a Folder rather than a File.
+	 * Archive downloads are `ZipInterceptorPlugin`'s business; this one must not claim them.
+	 */
+	public function testATrashedFolderIsLeftToCore(): void {
+		$node = $this->trashMock();
+		$node->method('getFileId')->willReturn(99);
+		$this->rootFolder->method('getById')->with(99)->willReturn([$this->createMock(Folder::class)]);
+		$this->tree->method('getNodeForPath')->willReturn($node);
+
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+
+		$this->assertTrue(
+			$this->plugin()->httpGet($this->request('trashbin/alice/trash/folder.d1700000000'), new Response()),
+		);
+	}
+
+	/** A trashed node whose id resolves to nothing at all - deleted from under us. */
+	public function testATrashedNodeThatResolvesToNothingIsLeftToCore(): void {
+		$node = $this->trashMock();
+		$node->method('getFileId')->willReturn(99);
+		$this->rootFolder->method('getById')->with(99)->willReturn([]);
+		$this->tree->method('getNodeForPath')->willReturn($node);
+
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+
+		$this->assertTrue(
+			$this->plugin()->httpGet($this->request('trashbin/alice/trash/gone.d1700000000'), new Response()),
+		);
 	}
 
 	public function testUnreadableTempCopyFallsBackToCore(): void {

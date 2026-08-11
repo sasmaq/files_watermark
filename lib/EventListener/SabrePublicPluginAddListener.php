@@ -13,6 +13,7 @@ use OCP\BeforeSabrePubliclyLoadedEvent;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventDispatcher;
 use OCP\EventDispatcher\IEventListener;
+use OCP\Files\IRootFolder;
 use OCP\IDateTimeZone;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
@@ -66,8 +67,13 @@ class SabrePublicPluginAddListener implements IEventListener {
 		// storage, so neither of ShareAccess's other signals sees anything unusual.
 		$this->container->get(ShareAccess::class)->notePublicRequest();
 
+		// The root folder is what resolves a *trashed* node to the file behind it. A public
+		// link never reaches the trash, so it is dead weight on this server - but the plugin
+		// is the same class, and giving it a second constructor for the sake of one unused
+		// dependency would be the more surprising arrangement.
 		$server->addPlugin(new DownloadInterceptorPlugin(
 			$this->container->get(WatermarkService::class),
+			$this->container->get(IRootFolder::class),
 		));
 
 		// Folder shares are downloaded as an archive, which the single-file interceptor

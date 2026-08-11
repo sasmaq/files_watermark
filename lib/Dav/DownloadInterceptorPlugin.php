@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Dav;
 
 use OCA\DAV\Connector\Sabre\File as DavFile;
+use OCA\Files_Trashbin\Sabre\ITrash;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
+use OCP\Files\IRootFolder;
 use Sabre\DAV\Exception\Forbidden;
 use Sabre\DAV\Exception\NotFound;
+use Sabre\DAV\INode;
 use Sabre\DAV\Server;
 use Sabre\DAV\ServerPlugin;
 use Sabre\HTTP\RequestInterface;
@@ -42,6 +45,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 
 	public function __construct(
 		private WatermarkService $watermarkService,
+		private IRootFolder $rootFolder,
 	) {
 	}
 
@@ -74,12 +78,8 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			return true;
 		}
 
-		if (!($node instanceof DavFile)) {
-			return true;
-		}
-
-		$file = $node->getNode();
-		if (!($file instanceof File)) {
+		$file = $this->fileFor($node);
+		if ($file === null) {
 			return true;
 		}
 
@@ -113,13 +113,71 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		$response->setStatus(200);
 		$response->setHeader('Content-Type', $file->getMimeType());
 		$response->setHeader('Content-Length', (string)filesize($tmpPath));
-		$response->setHeader(
-			'Content-Disposition',
-			'attachment; filename="' . addslashes($file->getName()) . '"',
-		);
+		if (!($node instanceof ITrash)) {
+			// **The trashbin names its own downloads.** `TrashbinPlugin` adds a
+			// Content-Disposition on `afterMethod:GET` - which still runs after we return
+			// false - carrying the file's *original* name rather than the
+			// `Frog.jpg.d1786407996` that storage gives it. It adds unconditionally, and
+			// `addHeader` appends rather than replaces, so setting ours here would not win
+			// the argument, it would send the header twice. Core's `FilesPlugin` does check
+			// first, which is why the ordinary path below is still ours to set.
+			$response->setHeader(
+				'Content-Disposition',
+				'attachment; filename="' . addslashes($file->getName()) . '"',
+			);
+		}
 		$response->setBody($stream);
 
 		return false;
+	}
+
+	/**
+	 * The stored file behind a DAV node, or null when this GET is not one to watermark.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * TWO NODE KINDS, BECAUSE A DELETED FILE IS STILL A MARKED FILE.
+	 *
+	 * `/remote.php/dav/trashbin/...` is served by the **same** Sabre server this plugin is
+	 * registered on - `files_trashbin` contributes its collection to the DAV root through
+	 * `info.xml` - so this `method:GET` hook already ran for every download out of the
+	 * trash. It simply returned early: a trashed node is an `ITrash`, never an
+	 * `OCA\DAV\Connector\Sabre\File`, and the type test was the only thing standing between
+	 * a marked file and its clean original. Deleting a file was a way to download it
+	 * unwatermarked - and the *preview* in the trash view was watermarked the whole time,
+	 * because that goes through `files_trashbin`'s own preview controller and the middleware
+	 * wrapping it, which is what made the hole visible.
+	 *
+	 * A mark is a row against a file id and the trash preserves file ids (it is a move, not
+	 * a copy), so the mark is still there and still applies. Nothing about the policy needed
+	 * to change; only this resolution did.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The trashed node is resolved through `IRootFolder::getById()` rather than through
+	 * `files_trashbin`'s own manager: a trashed file is an ordinary node at
+	 * `/{uid}/files_trashbin/files/...`, the root folder finds it by id like any other, and
+	 * this app then owes `files_trashbin` no coupling beyond the `instanceof` above -
+	 * which is safe even where that app is disabled, since the class simply never matches.
+	 */
+	private function fileFor(INode $node): ?File {
+		if ($node instanceof DavFile) {
+			$file = $node->getNode();
+
+			return $file instanceof File ? $file : null;
+		}
+
+		if (!($node instanceof ITrash)) {
+			return null;
+		}
+
+		foreach ($this->rootFolder->getById($node->getFileId()) as $candidate) {
+			// A trashed *folder* is an ITrash too and resolves to a Folder; it is not a
+			// download this plugin has anything to say about.
+			if ($candidate instanceof File) {
+				return $candidate;
+			}
+		}
+
+		return null;
 	}
 
 	/**

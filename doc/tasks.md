@@ -65,7 +65,8 @@ Things that produce a wrong file, or say something untrue about one.
   `isMarked()` is false for every revision. `files_versions`' preview controller previews
   the version node, and a version download resolves to it too, which makes this wider than
   a thumbnail: the last revision of a marked document is one click away in the sidebar,
-  unwatermarked. Trashbin is unaffected - a move preserves the file id. Needs a decision
+  unwatermarked. The trash is *not* this bug and is closed - a delete is a move, so the id
+  and the mark carry over - but it took its own fix on the download path. Needs a decision
   before it needs code: whether a mark reaches a file's history at all, or whether the
   answer is that versions of marked files are not offered. [notes](development.md#preview-watermarking)
 

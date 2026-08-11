@@ -79,6 +79,28 @@ namespace OCA\DAV\Connector\Sabre {
 	}
 }
 
+namespace OCA\Files_Trashbin\Sabre {
+
+	if (!interface_exists(ITrash::class)) {
+		/**
+		 * Mirrors `interface ITrash` (files_trashbin/lib/Sabre/ITrash.php:14).
+		 *
+		 * Only the two members `DownloadInterceptorPlugin` touches are reproduced - the node
+		 * is never constructed here, only recognised and asked for its file id. The rest of
+		 * the interface (restore, deletion time, deleted-by) belongs to the trash UI.
+		 *
+		 * Stubbed rather than depended on because `files_trashbin` is an app, not a library:
+		 * it can be disabled, in which case the `instanceof` in that plugin simply never
+		 * matches and the trash branch never runs.
+		 */
+		interface ITrash {
+			public function getFileId(): int;
+
+			public function getFilename(): string;
+		}
+	}
+}
+
 namespace OC {
 
 	use OCP\IDateTimeZone;
