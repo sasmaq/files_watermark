@@ -224,9 +224,58 @@ describe('WatermarkForm', () => {
 		expect(wrapper.text()).not.toContain('Where to apply')
 	})
 
-	it('shows admin scope section for admin users', () => {
-		const wrapper = mountForm({ isAdmin: true })
+	it('shows admin scope section for admin users once advanced options are open', async () => {
+		const wrapper = await mountAdvanced()
 		expect(wrapper.text()).toContain('Where to apply')
+	})
+
+	/**
+	 * Mount as an admin and open the advanced options, which is where the scope
+	 * controls live. Opening is a no-op when `modelValue` already narrows the policy,
+	 * since the switch starts on in that case.
+	 * @param {object} [modelValue] - the stored config the form starts from
+	 * @return {Promise<object>} the mounted wrapper, advanced options showing
+	 */
+	async function mountAdvanced(modelValue = {}) {
+		const wrapper = mountForm({ isAdmin: true, modelValue })
+		await wrapper.find('.wm-advanced input').setValue(true)
+		return wrapper
+	}
+
+	describe('advanced options switch', () => {
+		it('keeps the scope section off the page until it is switched on', async () => {
+			const wrapper = mountForm({ isAdmin: true })
+			expect(wrapper.text()).not.toContain('Where to apply')
+
+			await wrapper.find('.wm-advanced input').setValue(true)
+			expect(wrapper.text()).toContain('Where to apply')
+		})
+
+		it('is not offered to non-admins, who have no scope section to reveal', () => {
+			const wrapper = mountForm({ isAdmin: false })
+			expect(wrapper.find('.wm-advanced').exists()).toBe(false)
+		})
+
+		it('starts on when the stored policy is already narrowed', () => {
+			// Otherwise a policy that only marks PDFs would open with nothing on screen
+			// saying why - the filter would be invisible and still in force.
+			for (const modelValue of [{ mimeTypes: 'application/pdf' }, { folderTag: '42' }]) {
+				const wrapper = mountForm({ isAdmin: true, modelValue })
+				expect(wrapper.find('.wm-advanced input').element.checked).toBe(true)
+				expect(wrapper.text()).toContain('Where to apply')
+			}
+		})
+
+		it('leaves the stored filters alone when it is switched back off', async () => {
+			// Hiding a control is not clearing it: switching off must not quietly widen
+			// the policy to every file.
+			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: 'image/png', folderTag: '42' } })
+			await wrapper.find('.wm-advanced input').setValue(false)
+
+			expect(wrapper.text()).not.toContain('Where to apply')
+			expect(wrapper.vm.form.mimeTypes).toBe('image/png')
+			expect(wrapper.vm.form.folderTag).toBe('42')
+		})
 	})
 
 	describe('where to apply', () => {
@@ -239,10 +288,10 @@ describe('WatermarkForm', () => {
 			return wrapper.findAll('.wm-checks .checkbox-radio-switch input')
 		}
 
-		it('offers exactly the types the server supports', () => {
+		it('offers exactly the types the server supports', async () => {
 			// Free text here let an admin store a typo, which is a filter nothing can
 			// match - a policy that silently watermarks nothing.
-			const wrapper = mountForm({ isAdmin: true })
+			const wrapper = await mountAdvanced()
 			expect(mimeBoxes(wrapper)).toHaveLength(4)
 			const text = wrapper.text()
 			for (const label of ['PDF', 'JPEG image', 'PNG image', 'WEBP image']) {
@@ -250,19 +299,19 @@ describe('WatermarkForm', () => {
 			}
 		})
 
-		it('starts with nothing selected when the filter is blank', () => {
-			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: '' } })
+		it('starts with nothing selected when the filter is blank', async () => {
+			const wrapper = await mountAdvanced({ mimeTypes: '' })
 			expect(mimeBoxes(wrapper).every((b) => !b.element.checked)).toBe(true)
 		})
 
-		it('reflects a stored filter, whitespace and all', () => {
-			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: 'application/pdf, image/png' } })
+		it('reflects a stored filter, whitespace and all', async () => {
+			const wrapper = await mountAdvanced({ mimeTypes: 'application/pdf, image/png' })
 			const checked = mimeBoxes(wrapper).map((b) => b.element.checked)
 			expect(checked).toEqual([true, false, true, false])
 		})
 
 		it('writes the selection back as a comma-separated list in canonical order', async () => {
-			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: '' } })
+			const wrapper = await mountAdvanced({ mimeTypes: '' })
 			// Tick WEBP first, then PDF: the stored order must not follow the clicks.
 			await mimeBoxes(wrapper)[3].setValue(true)
 			await mimeBoxes(wrapper)[0].setValue(true)
@@ -271,27 +320,27 @@ describe('WatermarkForm', () => {
 		})
 
 		it('unticking the last type restores "every supported file"', async () => {
-			const wrapper = mountForm({ isAdmin: true, modelValue: { mimeTypes: 'image/png' } })
+			const wrapper = await mountAdvanced({ mimeTypes: 'image/png' })
 			await mimeBoxes(wrapper)[2].setValue(false)
 
 			expect(wrapper.vm.form.mimeTypes).toBe('')
 		})
 
-		it('picks the folder tag from the server rather than a typed id', () => {
+		it('picks the folder tag from the server rather than a typed id', async () => {
 			// A tag *name* typed into the old text field was accepted and then made
 			// every watermark request fail with "Tag id must be integer".
-			const wrapper = mountForm({ isAdmin: true })
+			const wrapper = await mountAdvanced()
 			expect(wrapper.findComponent({ name: 'NcSelectTags' }).exists()).toBe(true)
 			expect(wrapper.findComponent({ name: 'NcSelectTags' }).props('multiple')).toBe(false)
 		})
 
-		it('hands the picker the stored tag id as a number', () => {
-			const wrapper = mountForm({ isAdmin: true, modelValue: { folderTag: '42' } })
+		it('hands the picker the stored tag id as a number', async () => {
+			const wrapper = await mountAdvanced({ folderTag: '42' })
 			expect(wrapper.findComponent({ name: 'NcSelectTags' }).props('modelValue')).toBe(42)
 		})
 
 		it('stores the picked tag id, and blank when it is cleared', async () => {
-			const wrapper = mountForm({ isAdmin: true })
+			const wrapper = await mountAdvanced()
 			const picker = wrapper.findComponent({ name: 'NcSelectTags' })
 
 			await picker.vm.$emit('update:modelValue', 7)
@@ -302,16 +351,16 @@ describe('WatermarkForm', () => {
 		})
 
 		it('accepts a tag object from the picker as well as a bare id', async () => {
-			const wrapper = mountForm({ isAdmin: true })
+			const wrapper = await mountAdvanced()
 			await wrapper.findComponent({ name: 'NcSelectTags' })
 				.vm.$emit('update:modelValue', { id: 13, displayName: 'Confidential' })
 
 			expect(wrapper.vm.form.folderTag).toBe('13')
 		})
 
-		it('says the tag belongs on the folder, not on the files', () => {
+		it('says the tag belongs on the folder, not on the files', async () => {
 			// The old help text claimed the opposite of what the server checks.
-			const wrapper = mountForm({ isAdmin: true })
+			const wrapper = await mountAdvanced()
 			expect(wrapper.text()).toContain('containing folder carries this tag')
 		})
 	})

@@ -249,8 +249,25 @@
 					</p>
 				</section>
 
-				<!-- 6. Scope (admin only) -->
-				<section v-if="isAdmin" class="wm-card">
+				<!--
+					6. Scope (admin only), behind a switch.
+
+					Hidden by default because the policy is complete without it - leaving both
+					filters alone covers every supported file, which is what most installs
+					want - and an unexplained pair of narrowing controls is what makes the page
+					look like it needs more decisions than it does. The switch starts on when
+					either filter already holds a value, so a policy that *is* narrowed never
+					hides the reason it only marks some files.
+				-->
+				<div v-if="isAdmin" class="wm-advanced">
+					<NcCheckboxRadioSwitch :model-value="showAdvanced"
+						type="switch"
+						@update:model-value="showAdvanced = $event">
+						{{ t('files_watermark', 'Show advanced options') }}
+					</NcCheckboxRadioSwitch>
+				</div>
+
+				<section v-if="isAdmin && showAdvanced" class="wm-card">
 					<h4 class="wm-card__title">
 						{{ t('files_watermark', 'Where to apply') }}
 					</h4>
@@ -515,6 +532,12 @@ const selectedFolderTag = computed({
 		form.folderTag = id === null ? '' : String(id)
 	},
 })
+
+// Whether the narrowing filters above are on screen. A view preference, not a setting:
+// it is never sent to the server and it never changes what is stored, so switching it off
+// with a filter set hides the control, not the filter. Seeded from the stored config so a
+// narrowed policy arrives with its reason visible.
+const showAdvanced = ref(!!(form.mimeTypes || form.folderTag))
 
 watch(form, (val) => emit('update:modelValue', { ...val }))
 
@@ -953,6 +976,12 @@ const contentLines = [
 }
 .wm-field--stacked:last-child {
     margin-bottom: 0;
+}
+
+/* Advanced-options switch: a control over the page, so it sits between the cards
+   rather than inside one. */
+.wm-advanced {
+    padding: 0 2px;
 }
 
 /* Radio option list (trigger) */
