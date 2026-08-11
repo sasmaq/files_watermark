@@ -60,6 +60,14 @@ Things that produce a wrong file, or say something untrue about one.
   [notes](development.md#open-1)
 - [ ] **Public file-drop uploads** are watermarked by neither the inline path nor the job:
   there is no session to attribute the watermark to. [notes](development.md#open-3)
+- [ ] **A marked file's earlier versions are not marked, and go out clean.** A version is a
+  *copy* with its own file id, and a mark is a row against the live file's id - so
+  `isMarked()` is false for every revision. `files_versions`' preview controller previews
+  the version node, and a version download resolves to it too, which makes this wider than
+  a thumbnail: the last revision of a marked document is one click away in the sidebar,
+  unwatermarked. Trashbin is unaffected - a move preserves the file id. Needs a decision
+  before it needs code: whether a mark reaches a file's history at all, or whether the
+  answer is that versions of marked files are not offered. [notes](development.md#preview-watermarking)
 
 ## Features not built
 
@@ -94,6 +102,22 @@ them.
 - [ ] **Enforce the no-`exec()` rule mechanically** - a static-analysis rule or a CI grep.
   Nothing stops a future contributor reintroducing a shell-out.
   [notes](development.md#open-nobinary)
+- [ ] **Marking does not reach previews already in a browser's cache.** Confirmed on the
+  instance, and it is the first thing an admin reports - "I marked it and the preview has
+  no watermark", while every server route serves a watermarked one. Two facts meet:
+  core serves the clean preview with `Cache-Control: private, max-age=86400, immutable`,
+  and the cache-busting parameter the Viewer and the Files list put in the URL is the
+  **file's ETag** (`&etag=`, `&c=`). Marking writes one row in `oc_watermark_mark` and
+  deliberately touches nothing about the file, so the ETag does not move, the URL does not
+  change, and an `immutable` entry is never revalidated. A hard refresh ends it; so does
+  waiting a day.
+  - **a server-side preview-cache bust does not fix this** - the browser never asks. The
+    real options are bumping the file's ETag when it is marked (which is a filecache
+    write, not a content write, but makes every sync client re-fetch the file - arguably
+    right, since what they would re-fetch is the watermarked copy), or having the global
+    middleware downgrade `immutable` on *clean* previews of watermarkable types so marking
+    takes effect within minutes, at the cost of revalidation traffic on every thumbnail
+  [notes](development.md#preview-watermarking)
 - [ ] ~~**Hide the preserved-originals folder from search and the activity feed.**~~ Dropped
   with `OriginalStore`: the rework never writes a preserved original, so no folder appears
   to be hidden. The two core patches in [patch.md](patch.md) stay written down - they were

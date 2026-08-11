@@ -1061,6 +1061,20 @@ The obvious answer - a render cache keyed by file id + mtime + viewer uid - rein
 stored watermarked bytes, which is what this rework exists to delete, so it is not being
 built before the cost is measured.
 
+**Two things this does not reach**, both in [tasks.md](tasks.md) and neither closed by the
+interception design, because neither is a preview that escaped it:
+
+- **A version is a different file.** `files_versions`' preview controller previews the
+  *version* node, which is a copy with its own file id, and a mark is a row against the live
+  file's id - so no revision of a marked file is marked. It is not a preview problem: a
+  version *download* resolves to the same node and is clean for the same reason. Trashbin is
+  fine, because a move preserves the file id.
+- **The browser's own cache outlives the mark.** Core serves the clean preview with
+  `max-age=86400, immutable`, so a thumbnail fetched before a file was marked is reused for
+  a day without revalidating - and marking looks like it did nothing. Ours are `no-store`,
+  so the window is only ever "before the mark", and a hard refresh ends it. It leaks nothing
+  that was not already served to that browser, which is why it is a note rather than a fix.
+
 ### The audit trail, and why its default flipped {#log-delivery-default}
 
 `log_delivery` decides whether handing one watermarked copy to one reader writes a row. It
@@ -2697,7 +2711,7 @@ still missing.
 
 ## Security
 
-**Position:** three real vulnerabilities were found and fixed here; three refinements remain.
+**Position:** four real vulnerabilities were found and fixed here; three refinements remain.
 
 ### Notes and open questions {#open-security}
 
@@ -2878,6 +2892,29 @@ still missing.
     rather than only marked ones - every member of a shared folder download, every upload -
     and the exposure is narrower: no durable mark is being contradicted, and uploading a PDF
     named `.txt` evades the *marking*, which is a different hole from evading delivery
+- **Fixed: a logged-in visitor's preview of a public link went out clean.** With *"always
+  watermark files opened through a public link"* on, the same file was watermarked on
+  download and not on the share page's thumbnail. `ShareAccess` had two signals for "this
+  is a public link" and previews fell between them: the flag raised when the public-link
+  **DAV server** is built (which covers downloads, not previews - a thumbnail is served by
+  `/apps/files_sharing/publicpreview/{token}`, an ordinary app-framework route), and "no
+  session user at all" (which covers anonymous visitors, not signed-in ones). A logged-in
+  user opening somebody else's link was neither
+  - `PublicShareContextMiddleware`, registered global for the same reason the preview
+    middleware is, raises the flag in `beforeController` when the controller is an
+    `OCP\AppFramework\PublicShareController`. Before the controller, because core's preview
+    controller dispatches `BeforePreviewFetchedEvent` from inside its own method and this
+    app's listener answers it by asking `ShareAccess` what kind of fetch this is
+  - **the controller's type, not the request's path.** `PublicShareController` is the OCP
+    base class for "authenticated by a share token and nothing else", which
+    `files_sharing`'s preview and share-page controllers both extend. A list of preview URLs
+    would need keeping in step with core, and this is the same argument that put the preview
+    interception on an event rather than a route list
+  - **marked files were never affected** - a mark applies to every reader and needs no share
+    detection at all. This was only ever the two share switches, which decide per fetch and
+    therefore have to know what kind of fetch it is
+  - it also makes the owner opening their *own* link consistent between preview and
+    download: both watermark, which is what the DAV path already did
 - **Fixed: a mistyped folder tag turned every watermark request into an HTTP 500.** See
   the "Where to apply" notes under Goal 4. Validated at save time *and* made survivable at
   render time, because validation cannot reach configs that already exist

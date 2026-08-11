@@ -12,6 +12,7 @@ use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
+use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\PdfFontPath;
@@ -166,6 +167,11 @@ class Application extends App implements IBootstrap {
 		// none of which serves a preview, and every thumbnail on the server would go out
 		// clean with nothing to show for it.
 		$context->registerMiddleware(WatermarkPreviewMiddleware::class, true);
+		// Also global, and for the same reason: it has to see `files_sharing`'s controllers.
+		// It marks the request as a public-link fetch on the routes the public DAV server
+		// never serves - which is how a logged-in visitor's *preview* of somebody else's
+		// link used to come out clean while the download of the same file did not.
+		$context->registerMiddleware(PublicShareContextMiddleware::class, true);
 		// One instance per request, shared by both halves above: the middleware reads what
 		// the listener recorded, and two instances would leave it reading an empty one.
 		$context->registerService(PreviewRequestContext::class, static fn (
