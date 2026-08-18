@@ -7,9 +7,9 @@
         "php": "^8.2",
         "ext-bcmath": "*",
         "ext-gd": "*",
-        "tecnickcom/tc-lib-pdf": "8.67.2",
-        "tecnickcom/tc-lib-pdf-parser": "3.14.0",
-        "tecnickcom/tc-lib-unicode": "2.11.0"
+        "tecnickcom/tc-lib-pdf": "8.69.0",
+        "tecnickcom/tc-lib-pdf-parser": "3.14.3",
+        "tecnickcom/tc-lib-unicode": "3.0.3"
     },
     "require-dev": {
         "doctrine/dbal": "^3.9",
@@ -35,9 +35,6 @@
         "sort-packages": true
     },
     "scripts": {
-        "post-install-cmd": "@patch:vendor",
-        "post-update-cmd": "@patch:vendor",
-        "patch:vendor": "@php patches/apply.php",
         "lint": "find . -name '*.php' -not -path './vendor/*' -not -path './node_modules/*' -not -path './build/*' -print0 | xargs -0 -n1 php -l",
         "cs:check": "php-cs-fixer fix --dry-run --diff",
         "cs:fix": "php-cs-fixer fix",
@@ -45,7 +42,6 @@
         "test": "phpunit"
     },
     "scripts-descriptions": {
-        "patch:vendor": "Apply the tc-lib-unicode Arabic/Bidi fixes in patches/ to vendor/",
         "lint": "Check every PHP file for syntax errors",
         "cs:check": "Report coding-standard violations without changing anything",
         "cs:fix": "Apply the Nextcloud coding standard in place",

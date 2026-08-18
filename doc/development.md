@@ -33,7 +33,6 @@ files_watermark/
 ├── resources/
 │   └── fonts/        # The bundled watermark font (see the README there)
 ├── migration/        # Database schema migration
-├── patches/          # The tc-lib-unicode fixes, applied by composer
 ├── src/              # Vue 3 frontend source
 │   ├── components/   # AdminSettings.vue, WatermarkModal.vue
 │   ├── adminSettings.js
@@ -1724,7 +1723,7 @@ ruling them out is what left the real one visible:
   14 glyphs / 435px / 8479. It draws the code points it is handed and can neither join nor
   disconnect them, so **disconnected output means the string arrived unshaped**
 - **not the shaper.** Same host: `ShapedText::shape()` returns the seven expected
-  presentation forms with the lam-alef ligature, and `patches/` applies cleanly
+  presentation forms with the lam-alef ligature
 
 What actually happened is in the guard, not the shaper:
 
@@ -2074,25 +2073,25 @@ the two Latin words were bumped above it, and L2 reversed each word as its own r
 - The browser got it right, so **the preview and the output disagreed** for this one shape. That
   was by design of the pinning: the preview is the contract, and a disagreement is a renderer bug
   rather than something to paper over by making the preview wrong too. They agree again now
-- Fixed by testing membership of the NI class instead of equality to `'NI'`, in
-  `patches/patch-tc-lib-unicode-bidi-n1.php`. N2 comes back to life with the same change, which
-  is intended and is a no-op in effect - it assigns the embedding direction, leaving the level
-  unchanged under I1/I2 - but it is what makes the remaining neutrals strongly typed as the rules
-  require
+- Fixed by testing membership of the NI class instead of equality to `'NI'`. N2 comes back to
+  life with the same change, which is intended and is a no-op in effect - it assigns the
+  embedding direction, leaving the level unchanged under I1/I2 - but it is what makes the
+  remaining neutrals strongly typed as the rules require. **Carried as a local patch against
+  2.11.0 until `tc-lib-unicode` 3.0 fixed it upstream** - see [Both fixes landed
+  upstream](#vendor-patches)
 - **Cross-checked against `python-bidi`** on thirteen mixed Arabic/Latin strings: twelve agree
   exactly. The thirteenth, `سري - John Doe (Acme)`, differs only because that reference implements
   no bracket pairs at all (no N0) - tc-lib's own N0 is right there and the reference is wrong
 - Guarded by `ShapedTextTest::testLatinRunsAreNotReorderedInsideRtl()`, seven cases, five of which
-  fail with the patch reverted. The other two are controls that were correct before and after
-- Still worth an upstream report; both this and the lam-alef fix below are small enough to be
-  clean PRs against 2.11.0
+  failed with the patch reverted. The other two are controls that were correct before and after.
+  They are what verified the upstream fix on the 3.0.3 upgrade
 
 ### Found while fixing a watermark report: lam-alef eats the first letter {#open-lamalef}
 
 Reported as "Arabic text looks disconnected and separated" in a watermarked image. It was not
-a shaping or font problem - both were working. `tc-lib-unicode` **2.11.0** (current; nothing
-newer to upgrade to) drops the **first character of any string containing a lam + alef pair**
-and leaves behind the lam that the ligature should have consumed.
+a shaping or font problem - both were working. `tc-lib-unicode` **2.11.0** drops the **first
+character of any string containing a lam + alef pair** and leaves behind the lam that the
+ligature should have consumed.
 
 `Bidi\Shaping\Arabic::processAlChar()` locates the redundant lam with
 `getNewCharIndexBySourceIndex($laaChar['i'])`, which matches on `$item['i']`. Nothing ever
@@ -2120,7 +2119,8 @@ Two things made this survive a suite that asserts on code points:
   `tc-lib-pdf`'s `Text.php` builds its own inside `getTextCell()`. One fix in the shared library
   covers PDFs and images alike
 
-Fixed by matching on `'pos'`, in `patches/patch-tc-lib-unicode-lam-alef.php`.
+Fixed by matching on `'pos'`. **Carried as a local patch against 2.11.0 until `tc-lib-unicode`
+3.0 fixed it upstream** - see [Both fixes landed upstream](#vendor-patches).
 
 ### Reported from a RHEL instance: a Windows-typed name drew backwards {#open-double-shaping}
 
@@ -2180,47 +2180,65 @@ strictly stronger discriminator and does not rest on a bug. Worth remembering th
 test needs an identity to lean on: an identity that only holds because something is broken will
 hold right up until it is fixed.
 
-### How the vendor patches are applied {#vendor-patches}
+### Both fixes landed upstream, and the patch machinery is gone {#vendor-patches}
 
-`vendor/` is gitignored, so a hand-edit would be erased by the next `composer install` and would
-never reach a release. Both fixes above therefore live in `patches/`:
+Both defects above were carried as local patches against `tc-lib-unicode` **2.11.0**. `vendor/`
+is gitignored, so a hand-edit would have been erased by the next `composer install`; they lived
+in a `patches/` directory as `from`/`to` source anchors, applied by a runner that composer
+invoked from `post-install-cmd` and `post-update-cmd`, and that failed loudly rather than
+silently mis-applying when an anchor moved.
 
-| File | What it fixes |
+**`tc-lib-unicode` 3.0 fixed both, and the patches and the runner have been deleted.** The
+runner is what reported it: the 3.0.3 upgrade aborted `composer update` because neither the
+original nor the patched form of the N1 anchor was in `StepN.php` any more - which is exactly
+the case it existed to catch. Reading the new source:
+
+| Defect | 2.11.0 | 3.0.3 |
+| --- | --- | --- |
+| [Latin words reversing in an RTL line](#open-bidi) | three paths gated on `type === 'NI'`, a type nothing assigns | `StepN::isNI()` tests membership of `UniType::NEUTRAL` plus the isolate formatting types |
+| [lam-alef eating the first letter](#open-lamalef) | `getNewCharIndexBySourceIndex($laaChar['i'])`, and `'i'` is always `-1` | that lookup is gone; `setJoiningContext()` builds a `seqindex` map keyed by `'pos'`, the field that holds the real source index |
+
+Verified rather than assumed: the guarding tests -
+`ShapedTextTest::testShapedSequenceIsExact()` and `testLatinRunsAreNotReorderedInsideRtl()`,
+which are the ones that fail on a reverted patch - pass against an **unpatched** 3.0.3 tree.
+Cross-checked through the PDF path too, by decoding what the file draws back through its own
+`/ToUnicode` CMap: `الاختبار` draws the seven expected presentation forms in reordered order,
+and `سري - John Doe` draws the name forwards.
+
+**The three tc-lib packages stay pinned to exact versions in `composer.json`**
+(`tc-lib-pdf` 8.69.0, `tc-lib-pdf-parser` 3.14.3, `tc-lib-unicode` 3.0.3). `tc-lib-unicode` is
+a *transitive* dependency - `tc-lib-pdf` asks for `^3.0` - so without a root requirement of its
+own it would move on any unrelated `composer update`. There are no patch anchors left to break,
+but the reason to pin outlives them: this app's Arabic output depends on Bidi and shaping
+behaviour that these releases were measured against, and the assertions that would catch a
+regression are glyph-exact. Raising a pin means re-running them and looking at the result.
+
+`tc-lib-unicode-data` (3.0.3) is deliberately *not* pinned - it carries the Unicode tables,
+which move for Unicode's reasons and not this app's.
+
+### The same upgrade changed how a subset is numbered {#subset-glyph-ids}
+
+`tc-lib-pdf` 8.69.0 pulls **`tc-lib-pdf-font` 4.0**, and the major bump is visible in the
+bytes: a subset is now numbered from zero, where 3.x had used the **code point itself** as the
+glyph id. `Confidential` was `\0C\0o\0n…`; it is now `\0#\0\x15\0\x14…`.
+
+Nothing about the app changed and nothing about the output is worse - the PDF draws the same
+glyphs, `/ToUnicode` still maps them back, and text extraction and copy-paste are unaffected.
+What it broke was **four assertions that had been reading the text straight out of the content
+stream**, which 3.x let them do by accident. Both readers now decode through the font's own
+`/ToUnicode` CMap:
+
+| Reader | Used by |
 | --- | --- |
-| `patches/apply.php` | the runner - machinery, not a patch |
-| `patches/patch-tc-lib-unicode-bidi-n1.php` | [Latin words reversing in an RTL line](#open-bidi) |
-| `patches/patch-tc-lib-unicode-lam-alef.php` | [lam-alef eating the first letter](#open-lamalef) |
+| `PdfWatermarkerTest::firstTextRunCodepoints()` / `drawnText()` | the unit suite |
+| `cypress/tasks/pdf.js` `textRuns()` | the E2E suite, and every field derived from it |
 
-`apply.php` globs `patch-*.php`, each of which returns a target file and a list of exact
-`from`/`to` source strings and documents its defect in its own docblock. Composer runs it from
-`post-install-cmd` and `post-update-cmd`, so patches are re-applied on every install - in CI, in
-the E2E stage that bind-mounts this workspace into a Nextcloud container, and at packaging time.
-
-Two rules, both on the reasoning in [`patch.md`](patch.md#what-these-patches-cost):
-
-- **idempotent** - an anchor already in its patched form is the normal steady state, reported and
-  skipped rather than failed
-- **loud, never silent** - a missing anchor, a non-unique anchor, or a half-applied file exits
-  non-zero and takes `composer install` down with it. A patch that applied to shifted context
-  would be worse than one that refused, and a silent no-op would ship the bug it was written for
-
-Both patches also have tests that fail if they did not run, so a skipped patch cannot reach a
-release through a green suite either. Neither is a substitute for an upstream fix: 2.11.0 is the
-current release, so there is nothing to upgrade to today, but these should be dropped the moment
-there is.
-
-**`tecnickcom/tc-lib-unicode` is pinned to exactly `2.11.0` in `composer.json`.** It is a
-*transitive* dependency - `tc-lib-pdf` asks for `^2.11` - so without a root requirement of its
-own, a `composer update` for any other reason would take a 2.12 and carry the patch anchors
-with it. The runner would refuse loudly rather than mis-apply, which is the design working, but
-it fails at `composer install` time in CI or at packaging, on a change nobody made deliberately.
-The pin turns that into a decision: **raising it means re-reading both defects against the new
-source before trusting Arabic output**, and dropping the patch outright if the fix landed
-upstream. The same reasoning already pins `tc-lib-pdf` and `tc-lib-pdf-parser`.
-
-`tc-lib-unicode-data` (2.7.1) is deliberately *not* pinned - the patches are in
-`tc-lib-unicode`'s own source, and the data package carries the Unicode tables, which move for
-Unicode's reasons and not this app's.
+That is a **stronger** assertion than the one it replaces, and worth keeping for that reason
+rather than treating as a workaround: it no longer just says the right bytes are somewhere in
+the stream, it says a reader handed the file would extract the expected characters. A glyph
+with no `/ToUnicode` entry is dropped rather than passed through as its raw id - a small glyph
+id looks exactly like a Latin code point, so passing it on would turn a font that lost its
+CMap into a run of plausible-looking letters.
 
 ---
 
@@ -3357,9 +3375,9 @@ cannot make (the Arabic UI at `dir="rtl"`).
 
 ### Integration / E2E (Cypress)
 
-**62 tests across 11 specs**, run against a real Nextcloud 31 from `docker-compose.yml`, plus
-one pending test that records the [bidi bug](#open-bidi). `npm run test:e2e`; the whole run is
-about **80 seconds**. Setup, layout and the reasoning behind each probe are in
+**63 tests across 11 specs**, run against a real Nextcloud 31 from `docker-compose.yml`.
+`npm run test:e2e`; the whole run is about **80 seconds**. The [bidi bug](#open-bidi) test in
+`07-arabic.cy.js` was pending for as long as the bug was open and is now live. Setup, layout and the reasoning behind each probe are in
 [`cypress/README.md`](../cypress/README.md).
 
 **The test instance needs its rate limiter turned off**, which is a setup step rather than a

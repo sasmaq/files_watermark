@@ -59,8 +59,10 @@ class ShapedTextTest extends TestCase {
 	 *
 	 * **Counting glyphs is not enough, and this suite learned that the hard way.** Every
 	 * other test in this file passed while `tc-lib-unicode` was silently eating the first
-	 * character of any string containing a lam-alef pair (see
-	 * `patches/tc-lib-unicode-lam-alef.php` for the defect). The probe word hid it perfectly:
+	 * character of any string containing a lam-alef pair - it looked the redundant lam up by
+	 * a field the library never populated, so it always deleted index 0 instead. Carried as a
+	 * local patch against 2.11.0 until `tc-lib-unicode` 3.0 rewrote that lookup around a real
+	 * source-position map. The probe word hid it perfectly:
 	 * its first letter *is* an alef, so losing it still left seven code points, still all in
 	 * Presentation Forms-B, still starting at reh - every assertion above is satisfied by
 	 * output that reads `الاختبار` minus a letter, with a stray lam where the alef should be.
@@ -113,8 +115,9 @@ class ShapedTextTest extends TestCase {
 	 * so the space inside `John Doe` is `L` and the name is **one** left-to-right run.
 	 * `tc-lib-unicode` never ran N1 at all - it gated the rule on a character type that the
 	 * library never assigns - so each Latin word became its own run and a two-word name came
-	 * out backwards: `سري - John Doe` drew as `Doe John - سري`. See
-	 * `patches/patch-tc-lib-unicode-bidi-n1.php`.
+	 * out backwards: `سري - John Doe` drew as `Doe John - سري`. Carried as a local patch
+	 * against 2.11.0 until `tc-lib-unicode` 3.0 replaced that equality check with a real
+	 * membership test for the NI class.
 	 *
 	 * That is the default template shape (`سري - {displayname}`) for an Arabic deployment,
 	 * and a watermark naming the wrong person is the one thing it exists not to do.

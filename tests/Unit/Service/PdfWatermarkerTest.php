@@ -132,10 +132,11 @@ class PdfWatermarkerTest extends TestCase {
 	 *
 	 * Asserted on the PDF's own bytes rather than trusted to follow from the image path,
 	 * because **this renderer does its own Bidi**: `getTextCell()` builds a `Bidi` internally
-	 * from the logical string, so it reaches the rule N1 defect
-	 * (`patches/patch-tc-lib-unicode-bidi-n1.php`) by a different route than
-	 * {@see ShapedText::shape()} does. Unpatched, this drew `Doe John - سري` - the watermark
-	 * naming the wrong person, in the format most likely to be handed to a court.
+	 * from the logical string, so it reaches the rule N1 defect described in
+	 * {@see ShapedTextTest::testLatinRunsAreNotReorderedInsideRtl()} by a different route
+	 * than {@see ShapedText::shape()} does. Before `tc-lib-unicode` 3.0 fixed it, this drew
+	 * `Doe John - سري` - the watermark naming the wrong person, in the format most likely to
+	 * be handed to a court.
 	 */
 	/**
 	 * A placeholder value that is not valid UTF-8 must not reach the page, and must not
@@ -257,13 +258,23 @@ class PdfWatermarkerTest extends TestCase {
 	/**
 	 * The code points of the first text-showing run in the file.
 	 *
-	 * The embedded face is written with two-byte code units, so the operand of `Tj` is the
-	 * shaped text verbatim - which is what makes this assertable at all.
+	 * The embedded face is written with two-byte code units, so the operand of `Tj` is one
+	 * code unit per drawn glyph, in drawing order - which is what makes this assertable at
+	 * all. Those units are *subset glyph ids*, not code points: `tc-lib-pdf-font` 4.0 began
+	 * numbering the subset from zero, where 3.x had used the code point as the id and let
+	 * this read the shaped text out of the stream directly. So each unit is mapped back
+	 * through the font's own `/ToUnicode` CMap - the same table a reader uses to extract or
+	 * copy the text, which makes a passing assertion the stronger statement that the
+	 * watermark is both drawn and *extractable* as the expected characters.
 	 *
 	 * @return list<int>
 	 */
 	private function firstTextRunCodepoints(string $path): array {
-		foreach ($this->inflatedStreams((string)file_get_contents($path)) as $stream) {
+		$pdf = (string)file_get_contents($path);
+		$streams = $this->inflatedStreams($pdf);
+		$toUnicode = $this->toUnicodeMap($streams);
+
+		foreach ($streams as $stream) {
 			if (preg_match('/\((.+?)\)\s*Tj/s', $stream, $m) !== 1) {
 				continue;
 			}
@@ -273,7 +284,13 @@ class PdfWatermarkerTest extends TestCase {
 			}
 			$codepoints = [];
 			foreach (str_split($bytes, 2) as $pair) {
-				$codepoints[] = (ord($pair[0]) << 8) | ord($pair[1]);
+				$glyph = (ord($pair[0]) << 8) | ord($pair[1]);
+				$this->assertArrayHasKey(
+					$glyph,
+					$toUnicode,
+					sprintf('glyph %d is drawn but absent from /ToUnicode, so the text cannot be extracted', $glyph),
+				);
+				$codepoints[] = $toUnicode[$glyph];
 			}
 			return $codepoints;
 		}
@@ -281,13 +298,72 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * `$text` as the embedded face writes it: two bytes per code unit.
+	 * Everything the text-showing runs of `$content` actually draw, as characters.
 	 *
-	 * Every watermark now draws through an embedded Unicode font, so even pure ASCII no
-	 * longer appears as ASCII in the content stream - `Alice` is `\0A\0l\0i\0c\0e`.
+	 * The counterpart of {@see firstTextRunCodepoints()} for callers that already hold one
+	 * content stream and want to ask the plain question "does this draw the watermark?".
+	 * `$path` is still needed because the `/ToUnicode` CMap that decodes the glyph ids
+	 * lives in the font object, not in the page stream.
 	 */
-	private function utf16be(string $text): string {
-		return (string)mb_convert_encoding($text, 'UTF-16BE', 'UTF-8');
+	private function drawnText(string $path, string $content): string {
+		$map = $this->toUnicodeMap($this->inflatedStreams((string)file_get_contents($path)));
+
+		$text = '';
+		preg_match_all('/\((.+?)\)\s*Tj/s', $content, $runs);
+		foreach ($runs[1] as $run) {
+			// `(`, `)` and `\` are escaped inside a PDF string literal; a glyph id whose
+			// high or low byte is one of those arrives with a backslash in front of it.
+			$bytes = str_replace(['\\(', '\\)', '\\\\'], ['(', ')', '\\'], $run);
+			if (strlen($bytes) < 2 || strlen($bytes) % 2 !== 0) {
+				continue;
+			}
+			foreach (str_split($bytes, 2) as $pair) {
+				$glyph = (ord($pair[0]) << 8) | ord($pair[1]);
+				if (isset($map[$glyph])) {
+					$text .= mb_chr($map[$glyph], 'UTF-8');
+				}
+			}
+		}
+		return $text;
+	}
+
+	/**
+	 * The `/ToUnicode` CMap of the embedded face: subset glyph id -> code point.
+	 *
+	 * Only the first code point of a multi-character destination is kept; the watermark
+	 * face maps one glyph to one character, and a `bfchar` that did not would be a
+	 * different bug than the ones the callers assert.
+	 *
+	 * @param list<string> $streams every inflated stream in the file
+	 * @return array<int, int>
+	 */
+	private function toUnicodeMap(array $streams): array {
+		$map = [];
+		foreach ($streams as $stream) {
+			// `<glyph> <unicode>` pairs.
+			preg_match_all('/beginbfchar(.*?)endbfchar/s', $stream, $charBlocks);
+			foreach ($charBlocks[1] as $block) {
+				preg_match_all('/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/', $block, $pairs, PREG_SET_ORDER);
+				foreach ($pairs as $pair) {
+					$map[(int)hexdec($pair[1])] = (int)hexdec(substr($pair[2], 0, 4));
+				}
+			}
+
+			// `<first> <last> <unicode of first>` triples.
+			preg_match_all('/beginbfrange(.*?)endbfrange/s', $stream, $rangeBlocks);
+			foreach ($rangeBlocks[1] as $block) {
+				preg_match_all('/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/', $block, $ranges, PREG_SET_ORDER);
+				foreach ($ranges as $range) {
+					$low = (int)hexdec($range[1]);
+					$high = (int)hexdec($range[2]);
+					$start = (int)hexdec(substr($range[3], 0, 4));
+					for ($glyph = $low; $glyph <= $high; $glyph++) {
+						$map[$glyph] = $start + ($glyph - $low);
+					}
+				}
+			}
+		}
+		return $map;
 	}
 
 	/** @return list<int> */
@@ -478,7 +554,7 @@ class PdfWatermarkerTest extends TestCase {
 		$this->watermarker->apply($source, $dest, $config, []);
 
 		$content = $this->pageContent($dest);
-		$this->assertStringContainsString($this->utf16be('Confidential'), $content, 'watermark text missing from the page');
+		$this->assertStringContainsString('Confidential', $this->drawnText($dest, $content), 'watermark text missing from the page');
 
 		// Six-operand `cm` matrices: [a b c d tx ty].
 		preg_match_all(
@@ -624,8 +700,8 @@ class PdfWatermarkerTest extends TestCase {
 		$this->assertFileExists($dest);
 		$this->assertStringStartsWith('%PDF', (string)file_get_contents($dest));
 		$this->assertStringContainsString(
-			$this->utf16be('Alice'),
-			$this->pageContent($dest),
+			'Alice',
+			$this->drawnText($dest, $this->pageContent($dest)),
 			'the watermark text never reached the page',
 		);
 

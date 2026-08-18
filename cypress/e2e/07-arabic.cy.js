@@ -79,17 +79,17 @@ describe('Arabic watermarks', () => {
 	})
 
 	/**
-	 * The open bidi bug, recorded rather than asserted.
+	 * The bidi bug, now asserted end to end.
 	 *
-	 * `سري - John Doe` is drawn `Doe John - سري`: the Latin word order is reversed
-	 * inside an RTL run, which is a UAX #9 rule N1 violation in `tc-lib-unicode`. It
-	 * names the wrong person, which is the one thing a watermark exists not to do.
+	 * `سري - John Doe` was drawn `Doe John - سري`: the Latin word order reversed
+	 * inside an RTL run, a UAX #9 rule N1 violation in `tc-lib-unicode`. It named the
+	 * wrong person, which is the one thing a watermark exists not to do.
 	 *
-	 * Asserting the *current* output would cement the bug into the suite, so this
-	 * stays pending until the shaper is fixed - at which point deleting `.skip` is
-	 * the whole change.
+	 * Asserting the *current* output would have cemented the bug into the suite, so
+	 * this stayed pending while the fix was carried as a local patch. `tc-lib-unicode`
+	 * 3.0 fixed it upstream and the patch is gone, so the test is live.
 	 */
-	it.skip('keeps Latin words in reading order inside an RTL watermark', () => {
+	it('keeps Latin words in reading order inside an RTL watermark', () => {
 		const file = `${folder}/bidi.pdf`
 
 		cy.wmSetPolicy({ trigger: 'on_demand', textTemplate: `${CONFIDENTIAL} - John Doe` })

@@ -113,6 +113,3 @@ in a hundred ways that have nothing to do with a watermark being drawn.
 - **Office documents** - no renderer exists yet.
 - **S3 primary storage** - needs `docker-compose.s3.yml`; the suite is storage-agnostic
   and would run against it unchanged, but nothing wires that up in CI.
-- **The bidi bug** - `07-arabic.cy.js` carries a pending test for Latin word order
-  inside an RTL watermark. Asserting today's output would cement the bug; deleting
-  `.skip` is the whole change once the shaper is fixed.
