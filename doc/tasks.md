@@ -12,10 +12,15 @@ learn, is recorded in `development.md`; everything below is genuinely still open
 Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. PHPUnit (**784**) and Jest
 (**116**) are green, along with Psalm at level 3, php-cs-fixer and ESLint.
 
-**The Cypress suite has not been run since the trigger rework.** Every spec was rewritten
-for the new model and none of them has met an instance - the rework changed what the app
-does at the level the e2e suite measures, so the specs are currently a statement of intent
-rather than a result. Running them is the first thing to do.
+**The Cypress suite has not been run since the trigger rework**, and there are now two
+reasons it is the first thing to do. Every spec was rewritten for the new model and none of
+them has met an instance - the rework changed what the app does at the level the e2e suite
+measures, so the specs are a statement of intent rather than a result. On top of that, the
+`tc-lib-pdf-font` 4.0 bump changed how a font subset is numbered, so
+[`cypress/tasks/pdf.js`](../cypress/tasks/pdf.js) had to be rewritten to decode drawn glyphs
+through `/ToUnicode`. That probe backs every Arabic and text assertion in the suite. It was
+verified against a real watermarked PDF from the same renderer, but not against an instance.
+[notes](development.md#subset-glyph-ids)
 
 The **trigger rework** below has landed, and it deleted or superseded a good deal of what
 follows it. **Office support** and **release packaging** are what stand between this and a
@@ -150,6 +155,13 @@ them.
 
 ### End-to-end gaps
 
+- [ ] **The rewritten PDF probe, against an instance.** `cypress/tasks/pdf.js` now decodes
+  drawn glyphs through the font's `/ToUnicode` CMap, because `tc-lib-pdf-font` 4.0 numbers a
+  subset from zero instead of by code point. Every text and Arabic assertion in the suite -
+  `textRuns`, `shapedArabicGlyphs`, `unshapedArabicCodepoints` - is derived from it, so a
+  mistake there fails or passes twelve specs at once. Verified against a real watermarked
+  PDF from the same renderer; not yet against Nextcloud.
+  [notes](development.md#subset-glyph-ids)
 - [ ] ~~**A real Team folder, on an instance with `groupfolders` installed.**~~ Dropped with
   `TeamFolder` - it exists to make `on_share` honest in a folder with no owner to exempt,
   and the new model exempts nobody, so there is nothing left to verify.
@@ -208,12 +220,12 @@ them.
 | [Admin UI and file actions](development.md#4-admin-ui-and-file-actions-goal-4) | **Complete** | - |
 | [Storage backends](development.md#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | - |
 | [Team folders](development.md#team-folders) | Built: `on_share` no longer exempts the whole team, originals stay in the folder. No dependency on `groupfolders` | **Deleted by the rework** - nothing is exempt, so there is nothing to detect |
-| [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** - watermark shaped and reordered, UI translated and RTL-clean. Two `tc-lib-unicode` bugs found and [patched](development.md#vendor-patches) | `{date}` localisation, a real Arabic instance, upstream PRs for both patches |
+| [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** - watermark shaped and reordered, UI translated and RTL-clean. The two `tc-lib-unicode` bugs found here are [fixed upstream in 3.0](development.md#vendor-patches); the local patches are gone | `{date}` localisation, a real Arabic instance |
 | [No external binaries](development.md#no-external-binaries) | **Done.** No `exec()` anywhere | A rule that keeps it that way |
 | [PDF stack migration](development.md#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone | - |
 | [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | **Deleted by the rework** - no burn, so no copy to preserve, hide or give back |
 | [Data model](development.md#data-model) | Schema carries every implemented feature; the whole migration chain is squashed into one step at app version 1.2.0 | `metadata` type, cross-DB run |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
 | [Security](development.md#security) | Two real vulnerabilities found and fixed. On-demand applies bounded by rate limit + size cap; images by a pixel ceiling on every trigger | - |
-| [Testing](development.md#testing) | 784 PHPUnit + 116 Jest + 80 Cypress (one skipped), no host-conditional skips | Psalm level 3 |
+| [Testing](development.md#testing) | 784 PHPUnit + 116 Jest + 80 Cypress, **nothing skipped** - the last pending spec was the bidi bug, now fixed upstream | Psalm level 3, and Cypress against an instance |
 | [Docs and release](development.md#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |

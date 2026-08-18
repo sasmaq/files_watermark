@@ -3375,9 +3375,10 @@ cannot make (the Arabic UI at `dir="rtl"`).
 
 ### Integration / E2E (Cypress)
 
-**63 tests across 11 specs**, run against a real Nextcloud 31 from `docker-compose.yml`.
-`npm run test:e2e`; the whole run is about **80 seconds**. The [bidi bug](#open-bidi) test in
-`07-arabic.cy.js` was pending for as long as the bug was open and is now live. Setup, layout and the reasoning behind each probe are in
+**80 tests across 12 specs, none skipped**, run against a real Nextcloud 31 from
+`docker-compose.yml`. `npm run test:e2e`; the whole run is about **80 seconds**. The last
+pending test was the [bidi bug](#open-bidi) one in `07-arabic.cy.js`, which stayed skipped for
+as long as the bug was open and is now live. Setup, layout and the reasoning behind each probe are in
 [`cypress/README.md`](../cypress/README.md).
 
 **The test instance needs its rate limiter turned off**, which is a setup step rather than a
