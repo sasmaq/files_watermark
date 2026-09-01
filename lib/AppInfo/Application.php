@@ -10,6 +10,7 @@ use OCA\Files\Event\LoadAdditionalScriptsEvent;
 use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
+use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
 use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
@@ -155,6 +156,14 @@ class Application extends App implements IBootstrap {
 		// Public links are served by a *separate* Sabre server that never fires
 		// SabrePluginAddEvent - it needs its own registration to be watermarked.
 		$context->registerEventListener(BeforeSabrePubliclyLoadedEvent::class, SabrePublicPluginAddListener::class);
+		// The badge on the public share page. Registered by class-string rather than by
+		// `::class`: the event belongs to `files_sharing`, and naming it as a constant here
+		// would make this file's own loading depend on that app being enabled - on a server
+		// with public links switched off, the event simply never fires and this is inert.
+		$context->registerEventListener(
+			'OCA\Files_Sharing\Event\BeforeTemplateRenderedEvent',
+			PublicShareScriptsListener::class,
+		);
 		$context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
 
 		// The preview pair. The listener notes *which* file a preview request is for - it
@@ -213,8 +222,18 @@ class Application extends App implements IBootstrap {
 			return;
 		}
 
-		if (FilesPageScript::wantedFor($pathInfo === false ? null : $pathInfo)) {
+		$path = $pathInfo === false ? null : $pathInfo;
+
+		if (FilesPageScript::wantedFor($path)) {
 			Util::addScript(self::APP_ID, FilesPageScript::SCRIPT);
+		}
+
+		// The public share page has the same ordering problem and no second listing to
+		// recover on - see FilesPageScript::wantedForPublicShare(). The listener still asks
+		// for this script as well; core drops the duplicate, and it is what covers a public
+		// page reached by a route this rule does not recognise.
+		if (FilesPageScript::wantedForPublicShare($path)) {
+			Util::addScript(self::APP_ID, FilesPageScript::PUBLIC_SCRIPT);
 		}
 	}
 }

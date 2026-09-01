@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\EventListener;
 
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
+use OCA\FilesWatermark\Dav\PropFindPlugin;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
+use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCA\FilesWatermark\Service\ArchiveLimits;
 use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -38,8 +40,11 @@ use Psr\Log\LoggerInterface;
  * request has come back with the "watermark external shares" policy, but it is recorded
  * once on {@see ShareAccess} rather than threaded through two constructors.
  *
- * PropFindPlugin is deliberately not registered here - the `is-watermarked` property
- * only feeds the logged-in Files list, which no public visitor sees.
+ * PropFindPlugin *is* registered here, in its delivery mode: the public share page draws
+ * the same badge the Files list does, and this server is where its listing comes from.
+ * The mode matters - on this server the request being served is itself the share, so the
+ * property has to report the public-link switch as well as the mark. See
+ * {@see \OCA\FilesWatermark\Dav\PropFindPlugin::willBeWatermarked()}.
  *
  * @template-implements IEventListener<BeforeSabrePubliclyLoadedEvent>
  */
@@ -74,6 +79,14 @@ class SabrePublicPluginAddListener implements IEventListener {
 		$server->addPlugin(new DownloadInterceptorPlugin(
 			$this->container->get(WatermarkService::class),
 			$this->container->get(IRootFolder::class),
+		));
+
+		// The badge on the public share page. Handed the service as well as the mapper so
+		// the property answers "will this download be watermarked" rather than only "is it
+		// marked" - the two differ here whenever the public-link switch is on.
+		$server->addPlugin(new PropFindPlugin(
+			$this->container->get(WatermarkMarkMapper::class),
+			$this->container->get(WatermarkService::class),
 		));
 
 		// Folder shares are downloaded as an archive, which the single-file interceptor

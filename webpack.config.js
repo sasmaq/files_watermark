@@ -12,6 +12,9 @@ module.exports = {
     entry: {
         'admin-settings': path.resolve(__dirname, 'src/main-admin.js'),
         'files':          path.resolve(__dirname, 'src/main-files.js'),
+        // The public share page. Deliberately a separate bundle rather than reusing
+        // `files`: see the note at the top of src/main-public.js.
+        'public':         path.resolve(__dirname, 'src/main-public.js'),
     },
     output: {
         path: path.resolve(__dirname, 'js'),

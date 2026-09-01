@@ -1423,6 +1423,46 @@ and that a reloaded page still badges the file and offers Remove.
 - Only supported MIME types are decorated, and the property is scoped server-side too
 - Absent property is treated as "not watermarked" and never blocks the file list
 
+#### On the public share page {#indicator-public}
+
+**Built 2026-09-01.** A link visitor now sees the same badge on the same rows. Three pieces
+were missing and none of them was the badge itself:
+
+- **The bundle never loaded there.** `LoadAdditionalScriptsListener` hooks the *Files app's*
+  event; the public page is `files_sharing`'s and fires its own.
+  `PublicShareScriptsListener` answers that one
+- **Neither status source worked without a session.** `PropFindPlugin` was deliberately not
+  registered on the public DAV server, and `GET /api/v1/watermarked` answers 401 to an
+  anonymous caller and scopes its reply to the caller's own folder. The plugin is now
+  registered there, and the REST fallback is simply absent from the public bundle - there
+  is nothing for it to cover, because the property arrives with the listing or not at all
+- **The question is wider on that page.** With the public-link switch on, every file behind
+  the link is watermarked whether or not anybody marked it, so a property reporting only
+  marks would leave the whole listing unbadged on exactly the installs that watermark all
+  of it. `PropFindPlugin::willBeWatermarked()` therefore ORs the mark with
+  `isForcedByShare()` **on the public instance only** - answering that widely on the
+  authenticated server would badge every file in an owner's home the moment they ticked the
+  switch. Both directions are pinned in `PropFindPluginTest`
+
+**A separate bundle, `main-public.js`.** Everything a visitor can do there needs no account,
+so handing them `files.js` would ship two Vue modals and two file actions gated on a session
+they do not have, to every visitor of every public link. The badge moved into
+`src/indicator.js`, which both entries import; `main-files.js` re-exports it so the
+authenticated side and its tests saw no change. 231 KB against 502 KB, and the public bundle
+*cannot* offer an authenticated action rather than merely declining to.
+
+**This is the only thing the app tells an unauthenticated visitor.** Deliberate: a watermark
+deters best when the holder knows it is there, and on a public link it names the file's
+*owner*, so it identifies nobody who was not already accountable for publishing the link.
+Nothing about the policy is disclosed - only whether this file, on its way out, carries a
+watermark.
+
+- **Open: the DOM half is unverified against a running instance.** The public page renders
+  the same file-list markup, so `decorateRows()` should find `.files-list__row-name-link` on
+  the same `[data-cy-files-list-row-fileid]` rows - and it degrades to drawing nothing if it
+  does not. Both that and which event `files_sharing` fires on NC 31 need one look at a real
+  public link; the Cypress suite covers the public *DAV* path only
+
 ### Skip already-watermarked files
 
 - `watermarkInPlace()` returns `false` when `isAlreadyWatermarked()` matches, and

@@ -112,6 +112,12 @@ them.
   "no `exec(` outside `lib/Service/PdfFlattener.php`". Nothing stops a future contributor
   adding a second shell-out.
   [notes](development.md#open-nobinary)
+- [ ] **Verify the public share page badge against a running instance.** The server half is
+  tested (`PropFindPluginTest`, public mode) and the client half degrades to drawing
+  nothing, but two things were reasoned about rather than observed on NC 31: that
+  `files_sharing` fires `BeforeTemplateRenderedEvent` for that page, and that its file list
+  renders the same `[data-cy-files-list-row-fileid]` rows the badge looks for.
+  [notes](development.md#indicator-public)
 - [ ] **Marking does not reach previews already in a browser's cache.** Confirmed on the
   instance, and it is the first thing an admin reports - "I marked it and the preview has
   no watermark", while every server route serves a watermarked one. Two facts meet:

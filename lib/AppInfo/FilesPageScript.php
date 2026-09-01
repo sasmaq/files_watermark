@@ -55,7 +55,8 @@ final class FilesPageScript {
 	 * `/apps/files`), which is what keeps this app's *own* API out - the eleven
 	 * characters of `/apps/files_watermark/api/v1/...` start the same way and render no
 	 * HTML at all. `/apps/files_sharing/...` is excluded on the same rule and rightly so:
-	 * a public link page never loads these bundles.
+	 * a public link page loads a *different* bundle, and by a different rule -
+	 * {@see wantedForPublicShare()}.
 	 *
 	 * Everything else - the dashboard, settings, DAV, OCS, cron - gets nothing. Loading a
 	 * bundle ahead of a page's own code is worth doing where it fixes what the page
@@ -75,5 +76,52 @@ final class FilesPageScript {
 		$path = '/' . ltrim($pathInfo, '/');
 
 		return $path === '/apps/files' || str_starts_with($path, '/apps/files/');
+	}
+
+	/** The public share page's bundle - the badge and nothing else. */
+	public const PUBLIC_SCRIPT = 'public';
+
+	/**
+	 * Whether the request at $pathInfo renders a **public share page**, which needs the
+	 * badge bundle in place before the file list starts fetching.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE SAME RACE AS ABOVE, ON A PAGE WHERE IT NEVER RECOVERS.
+	 *
+	 * `PublicShareScriptsListener` asks for this bundle from `files_sharing`'s own
+	 * template event, which - exactly like the Files app's - fires *after* the page has
+	 * added `files-main.js`. Nextcloud emits scripts grouped by app in the order each app
+	 * first asks for one, so the bundle landed behind the file list's, `registerDavProperty`
+	 * ran after the PROPFIND had been built, and no node in the listing carried
+	 * `is-watermarked`.
+	 *
+	 * On a folder page that is the familiar "first listing is wrong" symptom: navigate into
+	 * a subfolder and the badges appear. **On a single-file share there is no second
+	 * listing** - the view fetches its one node once - so the badge simply never appeared
+	 * at all. That is the bug this method fixes, and it is why the fix is an ordering
+	 * change rather than anything to do with single-file pages specifically: NC 31 renders
+	 * a single-file share through the same file list, as the `public-file-share` view.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **Only the page itself.** `/s/{token}/download` and the public DAV and preview
+	 * endpoints serve bytes, not HTML, and adding a script to them is work that produces
+	 * nothing. One segment after `/s/` is the page; anything deeper is not.
+	 *
+	 * @param string|null $pathInfo `IRequest::getPathInfo()`, or null when there is none
+	 */
+	public static function wantedForPublicShare(?string $pathInfo): bool {
+		if ($pathInfo === null || $pathInfo === '') {
+			return false;
+		}
+
+		$path = '/' . ltrim($pathInfo, '/');
+		// A trailing slash is the same page; anything else after the token is not.
+		$path = rtrim($path, '/');
+
+		if (!str_starts_with($path, '/s/')) {
+			return false;
+		}
+
+		return !str_contains(substr($path, 3), '/') && substr($path, 3) !== '';
 	}
 }

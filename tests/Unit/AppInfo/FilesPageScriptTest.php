@@ -52,4 +52,41 @@ class FilesPageScriptTest extends TestCase {
 			'no path at all' => [null, false, 'CLI and unparseable URIs have no page to load into'],
 		];
 	}
+
+	/**
+	 * The public share page's own rule.
+	 *
+	 * Same reason as above and one difference that matters: a public *file* share fetches
+	 * its single node exactly once, so a bundle that arrives late is a badge that never
+	 * appears at all, rather than one that appears after the next navigation.
+	 *
+	 * @dataProvider publicPathProvider
+	 */
+	public function testWantedForPublicShare(?string $pathInfo, bool $expected, string $why): void {
+		$this->assertSame($expected, FilesPageScript::wantedForPublicShare($pathInfo), $why);
+	}
+
+	/** @return array<string, array{string|null, bool, string}> */
+	public static function publicPathProvider(): array {
+		return [
+			'a share page' => ['/s/RWY9iz2wR4xN3ZJ', true, 'the page a link visitor lands on'],
+			'with a trailing slash' => ['/s/abc123/', true, 'a trailing slash is the same page'],
+			'no leading slash' => ['s/abc123', true, 'a path info without its leading slash still matches'],
+
+			// Everything below the page serves bytes, not HTML: adding a script there is
+			// work that produces nothing, and on the download route it would run on every
+			// file a visitor fetches.
+			'the download route' => ['/s/abc123/download', false, 'serves the file, not a page'],
+			'a file inside a shared folder' => ['/s/abc123/download/sub/report.pdf', false, 'serves bytes'],
+			'the public DAV endpoint' => ['/public.php/dav/files/abc123', false, 'the listing itself, not the page'],
+			'a public preview' => ['/apps/files_sharing/publicpreview/abc123', false, 'an image, not a page'],
+
+			'the token is missing' => ['/s/', false, 'no token, no share page'],
+			'the token is missing entirely' => ['/s', false, 'not a share URL'],
+			'an unrelated path that starts the same' => ['/settings/user', false, 'not a share URL'],
+			'the Files app' => ['/apps/files/files', false, 'that is the other rule'],
+			'no path at all' => [null, false, 'CLI or an unparseable URI'],
+			'an empty path' => ['', false, 'nothing to classify'],
+		];
+	}
 }

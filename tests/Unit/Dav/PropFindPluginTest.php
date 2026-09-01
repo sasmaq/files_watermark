@@ -8,6 +8,7 @@ use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\FilesWatermark\Dav\PropFindPlugin;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
+use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -35,6 +36,11 @@ class PropFindPluginTest extends TestCase {
 	private function davFile(int $id): DavFile {
 		$davFile = $this->createMock(DavFile::class);
 		$davFile->method('getId')->willReturn($id);
+		// The public instance asks the node for the `OCP\Files` node behind it to put the
+		// scope question to the service. An unstubbed mock answers null there, which would
+		// make every delivery-mode assertion below pass through the plugin's catch instead
+		// of its logic - and so pass for the wrong reason.
+		$davFile->method('getNode')->willReturn($this->createMock(File::class));
 		return $davFile;
 	}
 
@@ -171,5 +177,86 @@ class PropFindPluginTest extends TestCase {
 			$this->plugin->propFind($propFind, $this->davFile(7));
 			$this->assertSame('1', $propFind->get(self::PROP));
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Public (delivery) mode - the instance the public share page's listing goes through
+	// -----------------------------------------------------------------------
+
+	/**
+	 * On the public DAV server the request being served *is* the share, so a file behind a
+	 * link the policy watermarks has to report itself watermarked even though nobody has
+	 * marked it. Reporting only marks would leave a visitor's whole listing unbadged on
+	 * exactly the installs that watermark all of it.
+	 */
+	public function testPublicModeReportsAFileTheShareSwitchWatermarks(): void {
+		$this->markMapper->method('markedFileIds')->willReturn([]);
+		$service = $this->createMock(WatermarkService::class);
+		$service->method('isForcedByShare')->willReturn(true);
+		$plugin = new PropFindPlugin($this->markMapper, $service);
+
+		$propFind = $this->propFind();
+		$plugin->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('1', $propFind->get(self::PROP));
+	}
+
+	public function testPublicModeStillReportsACleanFileAsClean(): void {
+		// The switch being off must leave the answer exactly where the mark left it -
+		// otherwise every public listing would badge every file.
+		$this->markMapper->method('markedFileIds')->willReturn([]);
+		$service = $this->createMock(WatermarkService::class);
+		$service->method('isForcedByShare')->willReturn(false);
+		$plugin = new PropFindPlugin($this->markMapper, $service);
+
+		$propFind = $this->propFind();
+		$plugin->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('0', $propFind->get(self::PROP));
+	}
+
+	public function testAMarkedFileIsNeverAskedAboutTheShareSwitch(): void {
+		// The batched mark lookup answers most rows on its own; the service is the second
+		// question, not the first, and asking it anyway would cost a scope check per row.
+		$this->markMapper->method('markedFileIds')->willReturn([7]);
+		$service = $this->createMock(WatermarkService::class);
+		$service->expects($this->never())->method('isForcedByShare');
+		$plugin = new PropFindPlugin($this->markMapper, $service);
+
+		$propFind = $this->propFind();
+		$plugin->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('1', $propFind->get(self::PROP));
+	}
+
+	/**
+	 * The badge is an indicator; the download path decides the real answer for itself a
+	 * moment later. A scope check that throws must not take the whole listing with it.
+	 */
+	public function testAFailingScopeCheckLeavesTheListingRenderable(): void {
+		$this->markMapper->method('markedFileIds')->willReturn([]);
+		$service = $this->createMock(WatermarkService::class);
+		$service->method('isForcedByShare')->willThrowException(new \RuntimeException('tag lookup failed'));
+		$plugin = new PropFindPlugin($this->markMapper, $service);
+
+		$propFind = $this->propFind();
+		$plugin->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('0', $propFind->get(self::PROP));
+	}
+
+	/**
+	 * The authenticated server passes no service, and must not start reporting the share
+	 * switches: they watermark a *recipient's* fetch, and an owner browsing their own files
+	 * is not that recipient. Answering wider there would badge every file in the owner's
+	 * home the moment they ticked "watermark public links".
+	 */
+	public function testTheAuthenticatedInstanceReportsMarksAlone(): void {
+		$this->markMapper->method('markedFileIds')->willReturn([]);
+
+		$propFind = $this->propFind();
+		$this->plugin->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('0', $propFind->get(self::PROP));
 	}
 }

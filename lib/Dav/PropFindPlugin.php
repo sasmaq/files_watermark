@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Dav;
 use OCA\DAV\Connector\Sabre\Directory;
 use OCA\DAV\Connector\Sabre\Node;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
+use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\Folder;
 use Sabre\DAV\INode;
 use Sabre\DAV\PropFind;
@@ -37,8 +38,15 @@ class PropFindPlugin extends ServerPlugin {
 	 */
 	private array $cache = [];
 
+	/**
+	 * @param ?WatermarkService $watermarkService when given, the property answers the wider
+	 *                                            question this plugin's *public* instance has to answer - see
+	 *                                            {@see willBeWatermarked}. Null on the authenticated server, where a mark is
+	 *                                            the whole answer.
+	 */
 	public function __construct(
 		private WatermarkMarkMapper $markMapper,
+		private ?WatermarkService $watermarkService = null,
 	) {
 	}
 
@@ -61,8 +69,53 @@ class PropFindPlugin extends ServerPlugin {
 		}
 
 		$propFind->handle(self::WATERMARKED_PROPERTY, function () use ($node): string {
-			return $this->isMarked($node->getId()) ? '1' : '0';
+			return $this->willBeWatermarked($node) ? '1' : '0';
 		});
+	}
+
+	/**
+	 * Whether fetching `$node` produces a watermarked copy.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE ANSWER IS NOT THE SAME ON BOTH DAV SERVERS.
+	 *
+	 * On the authenticated server a mark is the whole story: the two share switches
+	 * watermark a *recipient's* fetch, and the owner browsing their own files is not that
+	 * recipient. Answering anything wider there would badge every file in the owner's home
+	 * the moment they ticked "watermark public links".
+	 *
+	 * On the **public** server the request being served *is* the share, so the switch is
+	 * live for every file behind the link, marked or not. A property that reported only
+	 * marks would leave a visitor's whole listing unbadged on exactly the installs that
+	 * watermark all of it - the case the setting exists for.
+	 *
+	 * `isDeliveryCandidate()` is the same question delivery itself asks, with the policy's
+	 * own scope (type filter, folder tag) applied, so the badge and the file that arrives
+	 * cannot disagree.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The batched mark lookup is still consulted first, and answers most rows without
+	 * touching the service at all.
+	 */
+	private function willBeWatermarked(Node $node): bool {
+		if ($this->isMarked($node->getId())) {
+			return true;
+		}
+
+		if ($this->watermarkService === null) {
+			return false;
+		}
+
+		try {
+			// `getNode()` rather than `getFileInfo()`: an `OCP\Files\Node` *is* a `FileInfo`,
+			// it is what every other caller of this method hands it, and it is the one of
+			// the two that this plugin's own folder batching already uses.
+			return $this->watermarkService->isForcedByShare($node->getNode());
+		} catch (\Throwable) {
+			// A listing must render whatever this says. The badge is an indicator, and the
+			// download path decides the real answer for itself a moment later.
+			return false;
+		}
 	}
 
 	private function cacheFolder(Folder $folder): void {
