@@ -308,6 +308,57 @@ class PdfFlattenerTest extends TestCase {
 		$this->assertSame($before, glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);
 	}
 
+	/**
+	 * **The source is never written, on any path.**
+	 *
+	 * The caller's fallback depends on it entirely: when a flatten fails, what it serves is
+	 * the very file it passed in here. A flattener that truncated or replaced its source on
+	 * the way to failing would take the overlay-watermarked copy down with it and turn a
+	 * recoverable failure into a refused download.
+	 *
+	 * @dataProvider sourcePreservationProvider
+	 */
+	public function testTheSourceIsLeftByteIdentical(int $exitStatus): void {
+		$this->fakeRenderer(exitStatus: $exitStatus);
+		$source = $this->sourcePdf(['One', 'Two']);
+		$before = (string)file_get_contents($source);
+
+		try {
+			$this->flattener()->flatten($source, $this->tmpDir . '/out.pdf', 72);
+		} catch (\RuntimeException) {
+			// Both outcomes are under test; only the source matters here.
+		}
+
+		$this->assertSame($before, (string)file_get_contents($source));
+	}
+
+	/** @return array<string, array{int}> */
+	public static function sourcePreservationProvider(): array {
+		return [
+			'a successful rebuild' => [0],
+			'a failed render' => [1],
+		];
+	}
+
+	/**
+	 * The renderer is asked to read the source and write somewhere else - never to write
+	 * over what it is reading. Asserted on the command line because that is where the
+	 * mistake would be made, and where it would be invisible to every other test until a
+	 * host had the real binary.
+	 */
+	public function testTheRendererIsNeverPointedAtItsOwnSource(): void {
+		$this->fakeRenderer();
+		$source = $this->sourcePdf(['One']);
+
+		$this->flattener()->flatten($source, $this->tmpDir . '/out.pdf', 72);
+
+		$call = $this->rendererCalls()[0];
+		$prefix = trim((string)strrchr($call, ' '));
+		$this->assertNotSame($source, $prefix);
+		$this->assertNotSame($source, $prefix . '.png');
+		$this->assertStringContainsString($source, $call, 'the source is still the input');
+	}
+
 	public function testNoPageBitmapsAreLeftBehind(): void {
 		$this->fakeRenderer();
 		$before = count(glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);

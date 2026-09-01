@@ -690,6 +690,67 @@ class WatermarkServiceTest extends TestCase {
 		@rmdir(dirname($tmpPath));
 	}
 
+	/**
+	 * A file nobody marked, going out through a public link the policy watermarks, is
+	 * flattened too.
+	 *
+	 * The two features meet here and neither knows about the other: the share switch decides
+	 * *that* this fetch is watermarked, and the policy's `flattenPdf` decides *how*. A
+	 * flatten that only ran for marked files would leave every blanket-watermarked public
+	 * download with the strippable overlay the setting exists to avoid.
+	 */
+	public function testAShareForcedDeliveryIsFlattenedToo(): void {
+		$config = $this->flattenConfig(true);
+		$config->setWatermarkExternalShares(true);
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->markMapper->method('isMarked')->willReturn(false);
+		$this->shareAccess->method('isExternalShareAccess')->willReturn(true);
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->expects($this->once())
+			->method('flatten')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-flattened');
+			});
+
+		$tmpPath = $this->service->watermarkForDownload($this->file('application/pdf'));
+
+		$this->assertNotNull($tmpPath, 'the public-link switch should have produced a copy');
+		$this->assertSame('%PDF-flattened', (string)file_get_contents($tmpPath));
+		$this->cleanup($tmpPath);
+	}
+
+	/**
+	 * The DPI travels from the stored policy to the flattener unchanged.
+	 *
+	 * It is the one flattening value that is not a boolean, and the path it takes - column,
+	 * entity, service, renderer argument - has three places to drop it and end up rendering
+	 * at the default while the settings page shows something else.
+	 *
+	 * @testWith [72]
+	 *           [150]
+	 *           [600]
+	 */
+	public function testTheConfiguredResolutionReachesTheFlattener(int $dpi): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true, $dpi));
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->expects($this->once())
+			->method('flatten')
+			->with($this->anything(), $this->anything(), $dpi)
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-flattened');
+			});
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile('application/pdf')));
+	}
+
 	/** A PDF policy, optionally asking for flattening. */
 	private function flattenConfig(bool $flatten, int $dpi = 150): WatermarkConfig {
 		$config = $this->config();

@@ -82,6 +82,59 @@ describe('AuditLog', () => {
 			expect(paths[0]).not.toBe(paths[1])
 		})
 
+		/**
+		 * Every kind of row gets its own hue *and* its own glyph. The pair matters: hue alone
+		 * is gone in a printed or screenshotted log and to a reader who cannot tell the
+		 * colours apart, and this is the table an auditor scans for "watermark removed".
+		 */
+		it('gives all four kinds their own class and their own glyph', async () => {
+			const triggers = ['on_demand', 'on_upload', 'delivered', 'unmarked']
+			axios.get.mockResolvedValue({
+				data: triggers.map((trigger, i) => ({
+					id: i + 1,
+					createdAt: '2026-06-29 10:00:00',
+					userId: 'alice',
+					filePath: `/f${i}.pdf`,
+					trigger,
+				})),
+			})
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			const badges = wrapper.findAll('.trigger-badge')
+			expect(badges).toHaveLength(4)
+			triggers.forEach((trigger, i) => {
+				expect(badges[i].classes()).toContain(`trigger-badge--${trigger}`)
+			})
+
+			const paths = wrapper.findAll('.trigger-icon path').map((p) => p.attributes('d'))
+			expect(new Set(paths).size).toBe(4)
+		})
+
+		/**
+		 * The two rows that are *about protection* share the app's document silhouette and
+		 * differ only in what it carries - droplet for a mark placed, a bar for one taken
+		 * off. That pairing is the point of the design, so it is asserted rather than left to
+		 * whoever next edits the glyph table.
+		 */
+		it('draws marked and unmarked as the same document in two states', async () => {
+			axios.get.mockResolvedValue({
+				data: [
+					{ id: 1, createdAt: '2026-06-29 10:00:00', userId: 'a', filePath: '/a.pdf', trigger: 'on_demand' },
+					{ id: 2, createdAt: '2026-06-29 10:00:00', userId: 'a', filePath: '/a.pdf', trigger: 'unmarked' },
+				],
+			})
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			const [marked, unmarked] = wrapper.findAll('.trigger-icon path').map((p) => p.attributes('d'))
+			// The shared outline, and two different things inside it.
+			const document = 'M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z'
+			expect(marked.startsWith(document)).toBe(true)
+			expect(unmarked.startsWith(document)).toBe(true)
+			expect(marked).not.toBe(unmarked)
+		})
+
 		it('renders a row whose trigger this version does not know', async () => {
 			// An older or newer release writing a value we have no label or glyph for must
 			// not blank the row: the log is evidence, and an unexplained row still happened.

@@ -88,4 +88,32 @@ class WatermarkConfigTest extends TestCase {
 
 		$this->assertSame([], $config->getAllowedMimeTypes());
 	}
+
+	/**
+	 * The flattening pair has to be *in* the payload, defaults included.
+	 *
+	 * A field the entity omits reads as `undefined` in the form. For the switch that is the
+	 * right answer by accident; for the DPI it is not - `undefined` binds to a range input
+	 * as an empty value, and the slider renders at its minimum rather than at the 150 the
+	 * server would actually use.
+	 */
+	public function testJsonSerializeCarriesTheFlatteningDefaults(): void {
+		$data = (new WatermarkConfig())->jsonSerialize();
+
+		$this->assertArrayHasKey('flattenPdf', $data);
+		$this->assertArrayHasKey('flattenDpi', $data);
+		$this->assertFalse($data['flattenPdf'], 'flattening must be off until an admin asks');
+		$this->assertSame(150, $data['flattenDpi']);
+	}
+
+	public function testJsonSerializeCarriesTheFlatteningPairAsSet(): void {
+		$config = new WatermarkConfig();
+		$config->setFlattenPdf(true);
+		$config->setFlattenDpi(300);
+
+		$data = $config->jsonSerialize();
+
+		$this->assertTrue($data['flattenPdf']);
+		$this->assertSame(300, $data['flattenDpi']);
+	}
 }

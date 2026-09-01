@@ -347,6 +347,30 @@ class ApiControllerConfigTest extends TestCase {
 		$this->assertSame($expected, $response->getData()['flattenDpi']);
 	}
 
+	/**
+	 * The resolution is stored whether or not flattening is on.
+	 *
+	 * A host that loses `poppler-utils` hides the whole block, so the form keeps posting
+	 * back what it was given and the column keeps its value - which is what lets the setting
+	 * come back intact if the package does. Clearing it here would silently reset every such
+	 * install to 150 on the next unrelated save.
+	 */
+	public function testTheResolutionIsStoredEvenWithFlatteningOff(): void {
+		$this->pdfFlattener->method('isAvailable')->willReturn(false);
+
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			flattenPdf: false,
+			flattenDpi: 300,
+		);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertFalse($response->getData()['flattenPdf']);
+		$this->assertSame(300, $response->getData()['flattenDpi']);
+	}
+
 	/** Off unless asked for, so an upgrade watermarks nothing it did not watermark before. */
 	public function testTheShareSwitchesDefaultToOff(): void {
 		$response = $this->controller->saveConfig(
