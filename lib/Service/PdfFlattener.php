@@ -14,11 +14,11 @@ use Psr\Log\LoggerInterface;
  * ---------------------------------------------------------------------------
  * THIS IS THE ONE EXCEPTION TO "NO EXTERNAL BINARIES".
  *
- * Everything else in this app is pure PHP and spawns no processes - see
- * `doc/development.md`. Rasterising a page is the one thing with no pure-PHP substitute
- * worth having, because doing it in-process means bundling a PDF *interpreter*, which is a
- * far larger surface than the watermarking this app exists to do. So this class shells out
- * to `pdftoppm` (poppler-utils) and **nothing else in the app does**.
+ * Everything else in this app is pure PHP and spawns no processes. Rasterising a page is the
+ * one thing with no pure-PHP substitute worth having, because doing it in-process means
+ * bundling a PDF *interpreter*, which is a far larger surface than the watermarking this app
+ * exists to do. So this class shells out to `pdftoppm` (poppler-utils) and **nothing else in
+ * the app does**.
  *
  * The exception is contained by three rules, and they are what make it affordable:
  *

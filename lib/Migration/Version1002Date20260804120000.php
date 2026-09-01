@@ -297,7 +297,7 @@ class Version1002Date20260804120000 extends SimpleMigrationStep {
 	 * extra, and the argument for off was unbounded growth: a row per member of every
 	 * archive, every time anyone downloaded it, forever.
 	 *
-	 * The [trigger rework](../../doc/development.md) removed that asymmetry. **Every** marked
+	 * The trigger rework removed that asymmetry. **Every** marked
 	 * file now renders on every fetch, whichever trigger marked it, so *"who received a copy
 	 * of this document"* is a question every install can answer and the default decides
 	 * whether it does. A watermark exists to trace a leaked document back to the person who

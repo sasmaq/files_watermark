@@ -203,8 +203,7 @@ Or via the web UI: **Admin → Apps → search "files_watermark" → Enable**.
 
 > The Docker development stacks (`docker-compose.yml` and `docker-compose.s3.yml`) run this
 > step for you on every container start, via `tools/enable-app.sh` mounted into the image's
-> `before-starting` hook. It is a convenience for local work only - see
-> [the development guide](doc/development.md#docker-dev-instance).
+> `before-starting` hook. It is a convenience for local work only.
 
 ## Watermarking shared files
 
@@ -487,8 +486,8 @@ Three things to know:
 Nothing here is storage-specific. The app reads and writes content through the Nextcloud
 Files API and touches the local filesystem only for short-lived temp copies, so watermarking
 works unchanged on local disk, on S3 as primary object storage, and on an S3 external mount.
-All three are verified rather than assumed - the stacks that do it are in
-[doc/development.md](doc/development.md#docker-s3-instance).
+All three are verified rather than assumed - the stacks that do it are
+`docker-compose.yml` and `docker-compose.s3.yml`.
 
 ## License
 

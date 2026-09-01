@@ -4,9 +4,9 @@ The engineering record: how each piece was built, what it cost, which bugs force
 design, and what was measured rather than assumed. Derived from [sdd.md](sdd.md) and
 reorganised around the shape of the code rather than the SDD's chapter order.
 
-**What is still outstanding lives in [tasks.md](tasks.md), not here.** This file explains
-*why*; that one tracks *what next*. Notes are kept for finished work too - most of the
-value is in the failures behind a feature, which no diff records.
+**What is still outstanding lives in the checklist beside this file, not here.** This file
+explains *why*; that one tracks *what next*. Notes are kept for finished work too - most of
+the value is in the failures behind a feature, which no diff records.
 
 Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3.
 
@@ -47,7 +47,6 @@ files_watermark/
 │   └── tasks/        # Node side: binary-safe HTTP, PDF/image/zip probes
 └── doc/
     ├── sdd.md          # Software Development Document
-    ├── tasks.md        # what is left to do - the checklist
     ├── development.md  # this file - the engineering record
     └── patch.md        # optional Nextcloud core patches, and what they cost
 ```
@@ -358,7 +357,7 @@ particular came through unchanged.
     that a valid *n*-page PDF came out. Rendering a page to an image and **looking at it** is
     now the minimum bar for believing anything about output geometry
 
-### Flattened (rasterised) PDFs - removed, then reinstated {#flattened-rasterised-pdfs---removed}
+### Flattened (rasterised) PDFs - removed, then reinstated {#flattened-rasterised-pdfs-removed}
 
 Built, shipped, **deleted**, and - on 2026-09-01 - **brought back as an optional feature**
 behind the advanced options. It rebuilds every watermarked page as a bitmap so the overlay
@@ -915,7 +914,7 @@ it added:
 The cost of the new model is stated plainly because it is real: **every fetch renders**. The
 burn paid once per file; this pays once per fetch per reader, on the delivery path. That
 trade is what buys a watermark that names the reader, and measuring it on a real folder is
-the open item in [tasks.md](tasks.md).
+still open.
 
 ### What a mark is {#trigger-rework-mark}
 
@@ -964,7 +963,7 @@ Each was settled up front and each is now the behaviour:
    warning naming it, and marks nothing until an admin re-picks. Choosing a trigger *for* an
    admin would have been a silent policy change on upgrade day; the price is that such an
    instance protects nothing in the meantime, and has no bulk way to mark what it already
-   has ([tasks.md](tasks.md)).
+   has.
 4. **Apply and Remove are not offered under `on_upload`.** The app marks every supported
    upload itself, so Apply is a no-op on anything the policy covers, and Remove would be
    undone by the next write to the file. Offering either would be the UI promising something
@@ -1080,8 +1079,8 @@ The obvious answer - a render cache keyed by file id + mtime + viewer uid - rein
 stored watermarked bytes, which is what this rework exists to delete, so it is not being
 built before the cost is measured.
 
-**Two things this does not reach**, both in [tasks.md](tasks.md) and neither closed by the
-interception design, because neither is a preview that escaped it:
+**Two things this does not reach**, both still open and neither closed by the interception
+design, because neither is a preview that escaped it:
 
 - **A version is a different file.** `files_versions`' preview controller previews the
   *version* node, which is a copy with its own file id, and a mark is a row against the live
@@ -1242,8 +1241,8 @@ Not covered, and knowingly. A Team folder is not an `ISharedStorage` and not a p
 so neither switch claims it - the same hole `TeamFolder::contains()` was written to close for
 the old `on_share`, and that class went with the rework. It is not reintroduced here because
 nothing in this feature needs it and the class was never verified against a running Team
-folder. Recorded as an open item in [tasks.md](tasks.md); an admin who needs Team folder
-reads watermarked today marks the files.
+folder. Recorded as an open item; an admin who needs Team folder reads watermarked today
+marks the files.
 
 ---
 
@@ -2403,7 +2402,7 @@ count used to depend on the developer's laptop.
 
 | Removed | Was used for | Consequence |
 | --- | --- | --- |
-| ~~`PdfFlattener` + `pdftoppm`~~ | Rasterising pages so the watermark could not be stripped | **Back as of 2026-09-01**, optional and probed. See [Flattened PDFs](#flattened-rasterised-pdfs---removed) |
+| ~~`PdfFlattener` + `pdftoppm`~~ | Rasterising pages so the watermark could not be stripped | **Back as of 2026-09-01**, optional and probed. See [Flattened PDFs](#flattened-rasterised-pdfs-removed) |
 | `PdfNormalizer` + `qpdf` | `--decrypt` on files locked with an empty password | **Empty-password encrypted PDFs are now skipped** rather than watermarked |
 | `BinaryLocator` | Probing `PATH` for both of the above | Nothing left to probe |
 

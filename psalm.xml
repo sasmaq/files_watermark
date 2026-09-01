@@ -27,7 +27,7 @@
 		directly: FakeImageStack extends ImageWatermarker to simulate a host without GD, and
 		PdfWatermarker and WatermarkLogMapper are mocked - with 4 redundant casts, 3 truthy comparisons on
 		possibly-empty strings, 3 PropertyNotSetInConstructor and one docblock contradiction
-		behind it. Tracked in doc/tasks.md rather than frozen into a baseline.
+		behind it. Tracked as an open item rather than frozen into a baseline.
 	-->
 
 	<!--
