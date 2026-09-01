@@ -133,7 +133,10 @@ class ApiController extends Controller {
 		// server that could honour it at the moment it was saved.
 		if ($flattenPdf && !$this->pdfFlattener->isAvailable()) {
 			return new DataResponse(
-				['error' => $this->l->t('Flattened PDFs need %s on the server (package poppler-utils). Install it, or leave flattening off.', [PdfFlattener::RENDERER])],
+				// The package, not the binary inside it: `poppler-utils` is what an admin
+				// types into a package manager, and naming `pdftoppm` as well only invites
+				// the question of which of the two to install.
+				['error' => $this->l->t('Flattened PDFs need the poppler-utils package on the server. Install it, or leave flattening off.')],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}

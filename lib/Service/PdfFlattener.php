@@ -152,11 +152,18 @@ class PdfFlattener {
 		}
 		unset($reader);
 
-		$out = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath)]);
+		// Page bitmaps are written into a directory of our own at 0700, never into the
+		// shared temp directory. `pdftoppm` creates its output file itself, and a name we
+		// have already unlinked, in a world-writable directory, is a file another local
+		// account can win the race for - by planting a symlink the renderer then follows,
+		// or an existing file it truncates. A private directory removes the race outright:
+		// nothing else can create a name inside it.
+		$workDir = $this->createWorkDir();
+		$out = new Tcpdf('pt', fileOptions: ['allowedPaths' => $this->allowedPaths($sourcePath, $workDir)]);
 
 		try {
 			foreach ($sizes as $page => $size) {
-				$rendered = $this->renderPage($binary, $sourcePath, $page, $dpi);
+				$rendered = $this->renderPage($binary, $sourcePath, $page, $dpi, $workDir);
 
 				try {
 					$out->addPage([
@@ -192,7 +199,34 @@ class PdfFlattener {
 				unlink($destPath);
 			}
 			throw $e;
+		} finally {
+			$this->discardWorkDir($workDir);
 		}
+	}
+
+	/**
+	 * A private directory for this flatten's page bitmaps.
+	 *
+	 * 0700 and a random name, the same shape {@see WatermarkService} uses for its render
+	 * temps. The mode is what matters: the renderer is a separate process writing files we
+	 * then read back, and every other local account has to be unable to reach or replace
+	 * them in between.
+	 */
+	private function createWorkDir(): string {
+		$dir = sys_get_temp_dir() . '/wm_flat_' . bin2hex(random_bytes(8));
+		if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
+			throw new \RuntimeException('Cannot flatten PDF: no temp directory available for the page renders.');
+		}
+
+		return $dir;
+	}
+
+	/** Remove the work directory and anything a failed render left in it. */
+	private function discardWorkDir(string $workDir): void {
+		foreach (glob($workDir . '/*') ?: [] as $path) {
+			@unlink($path);
+		}
+		@rmdir($workDir);
 	}
 
 	/** The render resolution actually used for `$dpi`, clamped to the supported range. */
@@ -207,8 +241,11 @@ class PdfFlattener {
 	 *
 	 * @return list<string>
 	 */
-	private function allowedPaths(string $sourcePath): array {
+	private function allowedPaths(string $sourcePath, ?string $workDir = null): array {
 		$paths = [PdfFontPath::directory(), sys_get_temp_dir(), dirname($sourcePath)];
+		if ($workDir !== null) {
+			$paths[] = $workDir;
+		}
 
 		$resolved = [];
 		foreach ($paths as $path) {
@@ -242,23 +279,29 @@ class PdfFlattener {
 	 * format every renderer handles without argument - the same reasoning that ruled SVG
 	 * out of the logo upload.
 	 *
-	 * **The only command line in this application.** Both operands are paths this app
-	 * created in its own temp directory and both are escaped; `$dpi` and `$page` are ints
-	 * that have already been clamped or counted. Nothing a user supplies - filename, watermark
-	 * text, display name - reaches it.
+	 * **The only command line in this application**, and it is built entirely from values
+	 * this app controls:
+	 *
+	 * - `$binary` is an absolute path this class found on `PATH`, quoted rather than merely
+	 *   `escapeshellcmd`-ed, so a directory with a space in it is passed as one argument
+	 *   instead of being split into two;
+	 * - both paths are absolute and inside temp directories this app created, so neither can
+	 *   begin with `-` and be read as an option, and both are quoted;
+	 * - `$dpi` and `$page` are ints, already clamped and counted respectively, and are
+	 *   formatted with `%d`.
+	 *
+	 * Nothing a user supplies - filename, watermark text, display name - reaches this string.
+	 * The *file* the renderer opens is of course user content; see the class docblock.
 	 */
-	private function renderPage(string $binary, string $sourcePath, int $page, int $dpi): string {
-		$prefix = tempnam(sys_get_temp_dir(), 'wm_flat_');
-		if ($prefix === false) {
-			throw new \RuntimeException('Cannot flatten PDF: no temp file available for the page render.');
-		}
-		// pdftoppm appends its own extension, so the prefix must not be the target.
-		unlink($prefix);
+	private function renderPage(string $binary, string $sourcePath, int $page, int $dpi, string $workDir): string {
+		// Inside this flatten's own 0700 directory, so no other local account can create,
+		// replace or symlink the name the renderer is about to write.
+		$prefix = $workDir . '/page-' . $page;
 		$expected = $prefix . '.png';
 
 		$command = sprintf(
 			'%s -png -r %d -f %d -l %d -singlefile %s %s 2>&1',
-			escapeshellcmd($binary),
+			escapeshellarg($binary),
 			$dpi,
 			$page,
 			$page,

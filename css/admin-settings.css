@@ -1108,28 +1108,28 @@ body {
   color: var(--color-border-success, var(--color-success));
 }
 
-.watermark-form[data-v-7ddcc584] {
+.watermark-form[data-v-03148faf] {
     max-width: 980px;
 }
-.wm-title[data-v-7ddcc584] {
+.wm-title[data-v-03148faf] {
     margin: 0 0 16px;
     font-size: 20px;
     font-weight: 700;
 }
 
 /* Two-column layout: settings + sticky preview */
-.wm-grid[data-v-7ddcc584] {
+.wm-grid[data-v-03148faf] {
     display: grid;
     grid-template-columns: 1fr;
     gap: 20px;
 }
 @media (min-width: 880px) {
-.wm-grid[data-v-7ddcc584] {
+.wm-grid[data-v-03148faf] {
         grid-template-columns: minmax(0, 1fr) 300px;
         align-items: start;
 }
 }
-.wm-main[data-v-7ddcc584] {
+.wm-main[data-v-03148faf] {
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -1137,30 +1137,30 @@ body {
 }
 
 /* Grouped setting cards */
-.wm-card[data-v-7ddcc584] {
+.wm-card[data-v-03148faf] {
     border: 1px solid var(--color-border);
     border-radius: var(--border-radius-large, 12px);
     padding: 16px 18px;
     background: var(--color-main-background);
 }
-.wm-card__title[data-v-7ddcc584] {
+.wm-card__title[data-v-03148faf] {
     margin: 0 0 2px;
     font-size: 15px;
     font-weight: 700;
 }
-.wm-card__desc[data-v-7ddcc584] {
+.wm-card__desc[data-v-03148faf] {
     margin: 0 0 14px;
     font-size: 13px;
     color: var(--color-text-maxcontrast);
 }
 
 /* Type picker cards */
-.wm-type-options[data-v-7ddcc584] {
+.wm-type-options[data-v-03148faf] {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 10px;
 }
-.wm-type-card[data-v-7ddcc584] {
+.wm-type-card[data-v-03148faf] {
     position: relative;
     display: flex;
     flex-direction: column;
@@ -1173,48 +1173,48 @@ body {
     cursor: pointer;
     transition: border-color 0.1s ease, background-color 0.1s ease;
 }
-.wm-type-card[data-v-7ddcc584]:hover {
+.wm-type-card[data-v-03148faf]:hover {
     background: var(--color-background-hover);
 }
-.wm-type-card.is-active[data-v-7ddcc584] {
+.wm-type-card.is-active[data-v-03148faf] {
     border-color: var(--color-primary-element);
     background: color-mix(in srgb, var(--color-primary-element) 8%, transparent);
 }
-.wm-type-card[data-v-7ddcc584]:focus-within {
+.wm-type-card[data-v-03148faf]:focus-within {
     outline: 2px solid var(--color-primary-element);
     outline-offset: 2px;
 }
-.wm-type-card__icon[data-v-7ddcc584] {
+.wm-type-card__icon[data-v-03148faf] {
     width: 28px;
     height: 28px;
     fill: var(--color-text-maxcontrast);
 }
-.wm-type-card.is-active .wm-type-card__icon[data-v-7ddcc584] {
+.wm-type-card.is-active .wm-type-card__icon[data-v-03148faf] {
     fill: var(--color-primary-element);
 }
-.wm-type-card__label[data-v-7ddcc584] {
+.wm-type-card__label[data-v-03148faf] {
     font-size: 13px;
     font-weight: 700;
 }
-.wm-type-card__desc[data-v-7ddcc584] {
+.wm-type-card__desc[data-v-03148faf] {
     font-size: 11px;
     line-height: 1.3;
     color: var(--color-text-maxcontrast);
 }
 
 /* Placeholder chips */
-.wm-chips[data-v-7ddcc584] {
+.wm-chips[data-v-03148faf] {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     margin-top: 12px;
 }
-.wm-chips__hint[data-v-7ddcc584] {
+.wm-chips__hint[data-v-03148faf] {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
-.wm-chip[data-v-7ddcc584] {
+.wm-chip[data-v-03148faf] {
     padding: 3px 10px;
     border: 1px solid var(--color-border);
     border-radius: var(--border-radius-pill, 16px);
@@ -1225,47 +1225,47 @@ body {
     cursor: pointer;
     transition: border-color 0.1s ease, background-color 0.1s ease;
 }
-.wm-chip[data-v-7ddcc584]:hover {
+.wm-chip[data-v-03148faf]:hover {
     border-color: var(--color-primary-element);
     background: color-mix(in srgb, var(--color-primary-element) 10%, transparent);
 }
 
 /* Appearance fields */
-.wm-fields[data-v-7ddcc584] {
+.wm-fields[data-v-03148faf] {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 16px;
 }
-.wm-field[data-v-7ddcc584] {
+.wm-field[data-v-03148faf] {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
-.wm-field > label[data-v-7ddcc584] {
+.wm-field > label[data-v-03148faf] {
     font-size: 13px;
     font-weight: 600;
 }
-.wm-inline[data-v-7ddcc584] {
+.wm-inline[data-v-03148faf] {
     display: flex;
     align-items: center;
     gap: 10px;
 }
-.wm-inline__val[data-v-7ddcc584] {
+.wm-inline__val[data-v-03148faf] {
     min-width: 46px;
     font-size: 13px;
     font-variant-numeric: tabular-nums;
     color: var(--color-text-maxcontrast);
 }
-.wm-inline__val--mono[data-v-7ddcc584] {
+.wm-inline__val--mono[data-v-03148faf] {
     font-family: var(--font-face-monospace, monospace);
     text-transform: uppercase;
 }
-.wm-range[data-v-7ddcc584] {
+.wm-range[data-v-03148faf] {
     flex: 1;
     min-width: 0;
     accent-color: var(--color-primary-element);
 }
-.wm-color[data-v-7ddcc584] {
+.wm-color[data-v-03148faf] {
     width: 44px;
     height: 34px;
     padding: 2px;
@@ -1275,36 +1275,36 @@ body {
     cursor: pointer;
 }
 /* Stands in for the <label for> the picker/checkbox group has no single input for. */
-.wm-field__label[data-v-7ddcc584] {
+.wm-field__label[data-v-03148faf] {
     font-size: 13px;
     font-weight: 600;
 }
-.wm-checks[data-v-7ddcc584] {
+.wm-checks[data-v-03148faf] {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 18px;
 }
-.wm-field--stacked[data-v-7ddcc584] {
+.wm-field--stacked[data-v-03148faf] {
     margin-bottom: 14px;
     margin-top: 14px;
 }
-.wm-field--stacked[data-v-7ddcc584]:last-child {
+.wm-field--stacked[data-v-03148faf]:last-child {
     margin-bottom: 0;
 }
 
 /* Advanced-options switch: a control over the page, so it sits between the cards
    rather than inside one. */
-.wm-advanced[data-v-7ddcc584] {
+.wm-advanced[data-v-03148faf] {
     padding: 0 2px;
 }
 
 /* Radio option list (trigger) */
-.wm-option-list[data-v-7ddcc584] {
+.wm-option-list[data-v-03148faf] {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
-.wm-option[data-v-7ddcc584] {
+.wm-option[data-v-03148faf] {
     display: flex;
     align-items: flex-start;
     gap: 12px;
@@ -1314,14 +1314,14 @@ body {
     cursor: pointer;
     transition: border-color 0.1s ease, background-color 0.1s ease;
 }
-.wm-option[data-v-7ddcc584]:hover {
+.wm-option[data-v-03148faf]:hover {
     background: var(--color-background-hover);
 }
-.wm-option.is-active[data-v-7ddcc584] {
+.wm-option.is-active[data-v-03148faf] {
     border-color: var(--color-primary-element);
     background: color-mix(in srgb, var(--color-primary-element) 8%, transparent);
 }
-.wm-option__radio[data-v-7ddcc584] {
+.wm-option__radio[data-v-03148faf] {
     flex: none;
     width: 16px;
     height: 16px;
@@ -1335,35 +1335,35 @@ body {
     box-shadow: none !important;
     background-color: transparent !important;
 }
-.wm-option__radio[data-v-7ddcc584]:focus-visible {
+.wm-option__radio[data-v-03148faf]:focus-visible {
     outline: 2px solid var(--color-primary-element);
     outline-offset: 1px;
 }
-.wm-option__body[data-v-7ddcc584] {
+.wm-option__body[data-v-03148faf] {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
-.wm-option__label[data-v-7ddcc584] {
+.wm-option__label[data-v-03148faf] {
     font-size: 13px;
     font-weight: 600;
 }
-.wm-option__desc[data-v-7ddcc584] {
+.wm-option__desc[data-v-03148faf] {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
-.wm-help[data-v-7ddcc584] {
+.wm-help[data-v-03148faf] {
     margin: 4px 0 0;
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
 /* The flattening trade-offs are a genuine warning, not incidental help text. */
-.wm-help--warn[data-v-7ddcc584] {
+.wm-help--warn[data-v-03148faf] {
     color: var(--color-warning-text, var(--color-text-maxcontrast));
 }
 /* The real input is driven by the buttons above it; hidden rather than removed so it
    stays focusable and keeps native file-picker behaviour. */
-.wm-file-input[data-v-7ddcc584] {
+.wm-file-input[data-v-03148faf] {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1374,13 +1374,13 @@ body {
     white-space: nowrap;
     border: 0;
 }
-.wm-upload[data-v-7ddcc584] {
+.wm-upload[data-v-03148faf] {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
 }
-.wm-upload__thumb[data-v-7ddcc584] {
+.wm-upload__thumb[data-v-03148faf] {
     max-width: 64px;
     max-height: 40px;
     object-fit: contain;
@@ -1389,30 +1389,30 @@ body {
     background: var(--color-background-dark);
     padding: 2px;
 }
-.wm-upload__name[data-v-7ddcc584] {
+.wm-upload__name[data-v-03148faf] {
     font-size: 12px;
     color: var(--color-text-maxcontrast);
 }
-.wm-field-error[data-v-7ddcc584] {
+.wm-field-error[data-v-03148faf] {
     margin: 8px 0 0;
     font-size: 13px;
     color: var(--color-error, #e9322d);
 }
 
 /* Live preview */
-.wm-preview__sticky[data-v-7ddcc584] {
+.wm-preview__sticky[data-v-03148faf] {
     position: static;
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 @media (min-width: 880px) {
-.wm-preview__sticky[data-v-7ddcc584] {
+.wm-preview__sticky[data-v-03148faf] {
         position: sticky;
         top: 16px;
 }
 }
-.wm-preview__label[data-v-7ddcc584] {
+.wm-preview__label[data-v-03148faf] {
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -1422,11 +1422,11 @@ body {
 /* Arabic letters join, and letter-spacing pulls the joins apart - the word comes out as
    disconnected characters. Neither does uppercasing mean anything in a script with no
    case, so both are dropped rather than kept and ignored. */
-[dir="rtl"] .wm-preview__label[data-v-7ddcc584] {
+[dir="rtl"] .wm-preview__label[data-v-03148faf] {
     text-transform: none;
     letter-spacing: normal;
 }
-.wm-preview__page[data-v-7ddcc584] {
+.wm-preview__page[data-v-03148faf] {
     aspect-ratio: 3 / 4;
     width: 100%;
     max-width: 300px;
@@ -1434,12 +1434,12 @@ body {
     overflow: hidden;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
 }
-.wm-preview__svg[data-v-7ddcc584] {
+.wm-preview__svg[data-v-03148faf] {
     display: block;
     width: 100%;
     height: 100%;
 }
-.wm-preview__note[data-v-7ddcc584] {
+.wm-preview__note[data-v-03148faf] {
     margin: 0;
     max-width: 300px;
     font-size: 12px;
@@ -1447,56 +1447,56 @@ body {
 }
 
 /* Actions */
-.wm-actions[data-v-7ddcc584] {
+.wm-actions[data-v-03148faf] {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 10px 12px;
     margin-top: 24px;
 }
-.wm-status[data-v-7ddcc584] {
+.wm-status[data-v-03148faf] {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: 13px;
     font-weight: 600;
-    animation: wm-status-in-7ddcc584 0.18s ease-out;
+    animation: wm-status-in-03148faf 0.18s ease-out;
 }
-.wm-status svg[data-v-7ddcc584] {
+.wm-status svg[data-v-03148faf] {
     width: 18px;
     height: 18px;
     flex: none;
     fill: currentColor;
 }
-.wm-status--success[data-v-7ddcc584] {
+.wm-status--success[data-v-03148faf] {
     color: var(--color-success, #2d7b41);
 }
-.wm-status--error[data-v-7ddcc584] {
+.wm-status--error[data-v-03148faf] {
     color: var(--color-error, #c7361f);
 }
 /* The status slides in from the side the text starts on, so it reads as arriving rather
    than as being pushed backwards. That side is mirrored under RTL - a keyframe cannot
    take a logical property, so the direction is chosen by a second animation. */
-@keyframes wm-status-in-7ddcc584 {
+@keyframes wm-status-in-03148faf {
 from { opacity: 0; transform: translateX(-4px);
 }
 to { opacity: 1; transform: none;
 }
 }
-@keyframes wm-status-in-rtl-7ddcc584 {
+@keyframes wm-status-in-rtl-03148faf {
 from { opacity: 0; transform: translateX(4px);
 }
 to { opacity: 1; transform: none;
 }
 }
-[dir="rtl"] .wm-status[data-v-7ddcc584] {
-    animation-name: wm-status-in-rtl-7ddcc584;
+[dir="rtl"] .wm-status[data-v-03148faf] {
+    animation-name: wm-status-in-rtl-03148faf;
 }
 @media (prefers-reduced-motion: reduce) {
-.wm-status[data-v-7ddcc584] { animation: none;
+.wm-status[data-v-03148faf] { animation: none;
 }
 }
-.wm-sr-only[data-v-7ddcc584] {
+.wm-sr-only[data-v-03148faf] {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1548,27 +1548,27 @@ to { opacity: 1; transform: none;
 }
 
 
-.loading-wrapper[data-v-ebce8782] {
+.loading-wrapper[data-v-4e134bb6] {
 	display: flex;
 	justify-content: center;
 	padding: 32px;
 }
-.log-card[data-v-ebce8782] {
+.log-card[data-v-4e134bb6] {
 	border: 1px solid var(--color-border);
 	border-radius: var(--border-radius-large, 12px);
 	overflow: hidden;
 	background: var(--color-main-background);
 }
-.log-scroll[data-v-ebce8782] {
+.log-scroll[data-v-4e134bb6] {
 	overflow-x: auto;
 }
-.log-table[data-v-ebce8782] {
+.log-table[data-v-4e134bb6] {
 	width: 100%;
 	min-width: 560px;
 	border-collapse: collapse;
 	font-size: 14px;
 }
-.log-table thead th[data-v-ebce8782] {
+.log-table thead th[data-v-4e134bb6] {
 	/* `start`, not `left`: the header has to follow the reading direction, otherwise an
 	   RTL table has every heading pinned to the wrong end of its own column. */
 	text-align: start;
@@ -1584,104 +1584,109 @@ to { opacity: 1; transform: none;
 }
 /* Arabic is a joined script: letter-spacing breaks the joins apart, and there is no case
    for text-transform to change. Both are undone rather than left to apply harmlessly. */
-[dir="rtl"] .log-table thead th[data-v-ebce8782] {
+[dir="rtl"] .log-table thead th[data-v-4e134bb6] {
 	text-transform: none;
 	letter-spacing: normal;
 }
-.log-table tbody td[data-v-ebce8782] {
+.log-table tbody td[data-v-4e134bb6] {
 	padding: 12px 16px;
 	border-bottom: 1px solid var(--color-border);
 	vertical-align: middle;
 }
-.log-table tbody tr:last-child td[data-v-ebce8782] {
+.log-table tbody tr:last-child td[data-v-4e134bb6] {
 	border-bottom: none;
 }
-.log-table tbody tr:hover td[data-v-ebce8782] {
+.log-table tbody tr:hover td[data-v-4e134bb6] {
 	background: var(--color-background-hover);
 }
-.col-date[data-v-ebce8782] {
+.col-date[data-v-4e134bb6] {
 	white-space: nowrap;
 }
-.date-main[data-v-ebce8782] {
+.date-main[data-v-4e134bb6] {
 	font-variant-numeric: tabular-nums;
 }
-.date-time[data-v-ebce8782] {
+.date-time[data-v-4e134bb6] {
 	margin-inline-start: 6px;
 	font-size: 13px;
 	font-variant-numeric: tabular-nums;
 	color: var(--color-text-maxcontrast);
 }
-.log-timezone[data-v-ebce8782] {
+.log-timezone[data-v-4e134bb6] {
 	margin: 8px 2px 0;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.user-cell[data-v-ebce8782] {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-}
-.avatar[data-v-ebce8782] {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 26px;
-	height: 26px;
-	border-radius: 50%;
-	background: color-mix(in srgb, var(--color-primary-element) 15%, transparent);
-	color: var(--color-primary-element);
-	font-size: 12px;
-	font-weight: 700;
-}
-.user-name[data-v-ebce8782] {
+.user-name[data-v-4e134bb6] {
 	font-weight: 500;
 }
-.file-cell[data-v-ebce8782] {
+.file-cell[data-v-4e134bb6] {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
 	max-width: 340px;
 }
-.file-icon[data-v-ebce8782] {
+.file-icon[data-v-4e134bb6] {
 	flex: none;
 	width: 18px;
 	height: 18px;
 	fill: var(--color-text-maxcontrast);
 }
-.file-path[data-v-ebce8782] {
+.file-path[data-v-4e134bb6] {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-family: var(--font-face-monospace, monospace);
 	font-size: 13px;
 }
-.trigger-badge[data-v-ebce8782] {
+
+/*
+   One hue per kind, carried by the whole badge rather than by a 7px dot, so a page of
+   rows groups at a glance instead of having to be read line by line. The hue lives in a
+   custom property and every other rule reads it from there - a new trigger needs one
+   modifier and nothing else.
+
+   The tint is `color-mix` against `transparent`, not a second hard-coded colour, so the
+   same four declarations sit correctly on the light and the dark background.
+*/
+.trigger-badge[data-v-4e134bb6] {
+	--trigger-color: var(--color-text-maxcontrast);
 	display: inline-flex;
 	align-items: center;
-	gap: 7px;
-	padding: 3px 10px;
-	border: 1px solid var(--color-border);
+	gap: 6px;
+	padding: 3px 10px 3px 8px;
+	border: 1px solid color-mix(in srgb, var(--trigger-color) 30%, transparent);
 	border-radius: var(--border-radius-pill, 16px);
-	background: var(--color-main-background);
+	background: color-mix(in srgb, var(--trigger-color) 13%, transparent);
+	color: var(--trigger-color);
 	font-size: 12px;
-	font-weight: 500;
+	font-weight: 600;
+	line-height: 18px;
 	white-space: nowrap;
 }
-.trigger-dot[data-v-ebce8782] {
+.trigger-icon[data-v-4e134bb6] {
 	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--color-text-maxcontrast);
+	width: 14px;
+	height: 14px;
+	fill: currentColor;
 }
-.trigger-badge--delivered .trigger-dot[data-v-ebce8782] { background: #4a90d9;
+
+/* Marked on purpose by a person. */
+.trigger-badge--on_demand[data-v-4e134bb6] { --trigger-color: #6d5bd0;
 }
-.trigger-badge--unmarked .trigger-dot[data-v-ebce8782] { background: #a05fd6;
+/* Marked by the policy, without anybody deciding. */
+.trigger-badge--on_upload[data-v-4e134bb6] { --trigger-color: #2f9e5a;
 }
-.trigger-badge--on_upload .trigger-dot[data-v-ebce8782] { background: #45ad66;
+/* One copy handed to one reader - the routine row, and by far the most common. */
+.trigger-badge--delivered[data-v-4e134bb6] { --trigger-color: #3d7fd6;
 }
-.empty-state[data-v-ebce8782] {
+/*
+   Protection taken off. Amber rather than the violet it used to share with everything
+   else: this is the row an auditor is scanning for, and it is the only one here that
+   makes a file *less* protected than it was.
+*/
+.trigger-badge--unmarked[data-v-4e134bb6] { --trigger-color: #b8770f;
+}
+.empty-state[data-v-4e134bb6] {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -1689,24 +1694,24 @@ to { opacity: 1; transform: none;
 	gap: 6px;
 	padding: 48px 24px;
 }
-.empty-icon[data-v-ebce8782] {
+.empty-icon[data-v-4e134bb6] {
 	width: 40px;
 	height: 40px;
 	margin-bottom: 2px;
 	fill: var(--color-text-maxcontrast);
 	opacity: 0.6;
 }
-.empty-title[data-v-ebce8782] {
+.empty-title[data-v-4e134bb6] {
 	margin: 0;
 	font-weight: 600;
 }
-.empty-sub[data-v-ebce8782] {
+.empty-sub[data-v-4e134bb6] {
 	margin: 0;
 	max-width: 320px;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.pagination-bar[data-v-ebce8782] {
+.pagination-bar[data-v-4e134bb6] {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -1714,14 +1719,14 @@ to { opacity: 1; transform: none;
 	flex-wrap: wrap;
 	margin-top: 14px;
 }
-.page-size[data-v-ebce8782] {
+.page-size[data-v-4e134bb6] {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.page-size-select[data-v-ebce8782] {
+.page-size-select[data-v-4e134bb6] {
 	height: 36px;
 	padding: 0 8px;
 	border: 1px solid var(--color-border-maxcontrast, #949494);
@@ -1731,12 +1736,12 @@ to { opacity: 1; transform: none;
 	font-size: 13px;
 	cursor: pointer;
 }
-.page-nav[data-v-ebce8782] {
+.page-nav[data-v-4e134bb6] {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 }
-.page-range[data-v-ebce8782] {
+.page-range[data-v-4e134bb6] {
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 	font-variant-numeric: tabular-nums;

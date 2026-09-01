@@ -327,8 +327,18 @@
 						<small class="wm-help">
 							{{ t('files_watermark', 'A watermark is normally its own layer, and ordinary PDF tools can delete it. Flattening replaces every page with a picture of itself, so there is no layer left to delete. It raises the effort rather than making removal impossible - a page can still be cropped or retyped.') }}
 						</small>
+						<!--
+							The one thing an admin cannot discover from the interface: switching
+							this on changes what the *server* does, not just what the file looks
+							like. Everything else in this app is pure PHP; this spawns a process
+							and feeds it a document derived from user content, which is a
+							patching obligation the admin is taking on by ticking the box.
+						-->
 						<small class="wm-help wm-help--warn">
-							{{ t('files_watermark', 'Costs: the text layer is destroyed, so no selection, copy, search or screen-reader access remains - check this against your accessibility obligations. Files also grow several times larger, and every download takes longer to prepare.') }}
+							{{ t('files_watermark', 'Security note: this is the only feature that runs an external program. It also costs noticeably more CPU, memory and temporary disk per download.') }}
+						</small>
+						<small class="wm-help wm-help--warn">
+							{{ t('files_watermark', 'Costs: the text layer is destroyed, so no selection, copy, search or screen-reader access remains. Files also grow several times larger, and every download takes longer to prepare.') }}
 						</small>
 						<small class="wm-help">
 							{{ t('files_watermark', 'If a page cannot be rebuilt, the ordinary watermarked PDF is delivered instead and the reason is written to the server log - a download is never refused for this.') }}

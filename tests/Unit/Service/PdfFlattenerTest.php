@@ -262,6 +262,52 @@ class PdfFlattenerTest extends TestCase {
 		$this->flattener()->flatten($this->tmpDir . '/absent.pdf', $this->tmpDir . '/out.pdf');
 	}
 
+	/**
+	 * **The renderer writes into a directory only this process can reach.**
+	 *
+	 * `pdftoppm` creates its own output file, so the name it is given is a name something
+	 * else could get to first in a world-writable `/tmp` - by planting a symlink the
+	 * renderer then follows, or a file it truncates. A 0700 directory with a random name
+	 * removes the race rather than narrowing it: no other account can create that name.
+	 */
+	public function testPageBitmapsAreWrittenIntoAPrivateDirectory(): void {
+		$this->fakeRenderer();
+		$source = $this->sourcePdf(['One', 'Two']);
+
+		$this->flattener()->flatten($source, $this->tmpDir . '/private.pdf', 72);
+
+		$modes = $this->outputDirModes();
+		$this->assertCount(2, $modes, 'both pages should have been rendered');
+		foreach ($modes as $mode) {
+			$this->assertSame('drwx------', $mode, 'the render directory was reachable by other accounts');
+		}
+
+		// And it is not the shared temp directory itself, whatever its mode happens to be.
+		foreach ($this->rendererCalls() as $call) {
+			$prefix = trim((string)strrchr($call, ' '));
+			$this->assertNotSame(
+				realpath(sys_get_temp_dir()),
+				realpath(dirname($prefix)),
+				'page bitmaps must not be written straight into the shared temp directory',
+			);
+		}
+	}
+
+	public function testTheWorkDirectoryIsRemovedAfterAFailedRender(): void {
+		// Not just the bitmaps - the directory holding them goes too, so a server that
+		// flattens on every download does not accumulate empty directories in /tmp.
+		$this->fakeRenderer(exitStatus: 1);
+		$before = glob(sys_get_temp_dir() . '/wm_flat_*') ?: [];
+
+		try {
+			$this->flattener()->flatten($this->sourcePdf(['One']), $this->tmpDir . '/x.pdf', 72);
+		} catch (\RuntimeException) {
+			// The subject of this test is what is left on disk, not the message.
+		}
+
+		$this->assertSame($before, glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);
+	}
+
 	public function testNoPageBitmapsAreLeftBehind(): void {
 		$this->fakeRenderer();
 		$before = count(glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);
@@ -342,6 +388,10 @@ class PdfFlattenerTest extends TestCase {
 			. "PATH=/usr/bin:/bin\n"
 			. 'printf \'%s\n\' "$*" >> ' . escapeshellarg($this->rendererLog()) . "\n"
 			. "for last; do :; done\n"
+			// The permissions of the directory the renderer is told to write into, as they
+			// stand at the moment it runs. `ls -ld` reads the same on Linux and macOS, which
+			// `stat` does not.
+			. 'ls -ld "$(dirname "$last")" | cut -c1-10 >> ' . escapeshellarg($this->dirModeLog()) . "\n"
 			. ($exitStatus === 0 ? 'cp ' . escapeshellarg($png) . " \"\$last.png\"\n" : '')
 			. "exit $exitStatus\n";
 
@@ -352,6 +402,19 @@ class PdfFlattenerTest extends TestCase {
 
 	private function rendererLog(): string {
 		return $this->tmpDir . '/renderer.log';
+	}
+
+	private function dirModeLog(): string {
+		return $this->tmpDir . '/dirmode.log';
+	}
+
+	/** @return list<string> the `ls -ld` mode string of each render's output directory */
+	private function outputDirModes(): array {
+		if (!file_exists($this->dirModeLog())) {
+			return [];
+		}
+
+		return array_values(array_filter(explode("\n", (string)file_get_contents($this->dirModeLog()))));
 	}
 
 	/** @return list<string> one entry per invocation of the fake renderer */

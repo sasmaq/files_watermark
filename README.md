@@ -117,6 +117,15 @@ Install `poppler-utils` to make the setting appear (`dnf install poppler-utils` 
 you). Where the package is absent the block is not rendered at all, rather than offering a
 setting the server could not honour.
 
+**Security note.** This is the only feature in the app that runs an external program. Every
+flattened download starts `pdftoppm` and hands it a PDF built from a user's file, so
+poppler parses user-supplied content on your server - **keep `poppler-utils` patched**, the
+same way you would for any other component that reads untrusted input. The command line
+itself carries nothing a user controls (two app-generated absolute paths and two integers,
+all escaped), page bitmaps are written into a `0700` directory rather than shared `/tmp`,
+and a PHP with `exec` disabled reports the feature unavailable instead of failing. Leave
+flattening off if system packages are not patched on a schedule.
+
 What it costs, stated plainly:
 
 - **The text layer is destroyed** - no selection, copy, search or screen-reader access.

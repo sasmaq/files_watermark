@@ -454,6 +454,17 @@ describe('WatermarkForm', () => {
 			expect(text).toContain('screen-reader access')
 		})
 
+		it('warns that switching this on runs an external program on the server', async () => {
+			// The one consequence an admin cannot see from the interface: this is the only
+			// setting in the app that spawns a process, and it feeds that process a document
+			// derived from user content - a patching obligation, taken on by ticking a box.
+			const wrapper = await mountFlatten()
+			expect(wrapper.text()).toContain('runs an external program')
+			// Carried as a warning, not as incidental help text.
+			const warnings = wrapper.findAll('.wm-help--warn').map((w) => w.text())
+			expect(warnings.some((w) => w.includes('Security note'))).toBe(true)
+		})
+
 		it('says a failed rebuild falls back rather than refusing the download', async () => {
 			expect((await mountFlatten()).text()).toContain('the ordinary watermarked PDF is delivered instead')
 		})

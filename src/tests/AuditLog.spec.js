@@ -64,6 +64,37 @@ describe('AuditLog', () => {
 		expect(wrapper.text()).toContain('/b.png')
 	})
 
+	describe('trigger badge', () => {
+		it('gives each kind of row its own badge and its own glyph', async () => {
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			const badges = wrapper.findAll('.trigger-badge')
+			expect(badges).toHaveLength(2)
+			expect(badges[0].classes()).toContain('trigger-badge--on_demand')
+			expect(badges[1].classes()).toContain('trigger-badge--on_upload')
+			expect(badges[0].text()).toBe('On demand')
+
+			// The distinction must survive losing colour - a printed or screenshotted log,
+			// or a reader who cannot tell the hues apart - so the glyphs have to differ too.
+			const paths = wrapper.findAll('.trigger-icon path').map((p) => p.attributes('d'))
+			expect(paths).toHaveLength(2)
+			expect(paths[0]).not.toBe(paths[1])
+		})
+
+		it('renders a row whose trigger this version does not know', async () => {
+			// An older or newer release writing a value we have no label or glyph for must
+			// not blank the row: the log is evidence, and an unexplained row still happened.
+			axios.get.mockResolvedValue({ data: [{ ...SAMPLE[0], trigger: 'from_the_future' }] })
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			const badge = wrapper.find('.trigger-badge')
+			expect(badge.text()).toBe('from_the_future')
+			expect(badge.find('.trigger-icon path').attributes('d')).toBeTruthy()
+		})
+	})
+
 	it('renders file paths left to right whatever the interface direction', async () => {
 		// A path is structurally LTR. Left to inherit an RTL document direction, its
 		// leading slash is a neutral at the start of the paragraph and is rendered at the

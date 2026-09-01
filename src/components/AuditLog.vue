@@ -27,10 +27,7 @@
 									<span v-if="row.time" class="date-time">{{ row.time }}</span>
 								</td>
 								<td>
-									<span class="user-cell">
-										<span class="avatar" aria-hidden="true">{{ row.initial }}</span>
-										<span class="user-name">{{ row.userId }}</span>
-									</span>
+									<span class="user-name">{{ row.userId }}</span>
 								</td>
 								<td>
 									<span class="file-cell" :title="row.filePath">
@@ -49,8 +46,19 @@
 									</span>
 								</td>
 								<td>
+									<!--
+										Icon *and* colour, never colour alone: an audit log gets
+										screenshotted, printed and read by people who cannot tell
+										the hues apart, and "watermark removed" must not be one
+										shade away from "downloaded" in any of those.
+									-->
 									<span class="trigger-badge" :class="'trigger-badge--' + row.trigger">
-										<span class="trigger-dot" aria-hidden="true" />
+										<svg class="trigger-icon"
+											viewBox="0 0 24 24"
+											fill-rule="evenodd"
+											aria-hidden="true">
+											<path :d="row.icon" />
+										</svg>
 										{{ row.label }}
 									</span>
 								</td>
@@ -147,16 +155,41 @@ const TRIGGER_LABELS = {
 	delivered: t('files_watermark', 'Downloaded'),
 }
 
+/**
+ * One 24x24 glyph per kind of row, drawn with `fill-rule="evenodd"` so the cut-outs knock
+ * through whichever way their subpaths wind.
+ *
+ * The two shields are deliberately the same silhouette as the badge the Files list puts on
+ * a marked file, so "this file was protected" and "that protection was taken off" read as
+ * the same object in two states rather than as two unrelated symbols. The arrows point the
+ * way the file was moving: in on upload, out on delivery.
+ */
+const SHIELD = 'M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z'
+const TRIGGER_ICONS = {
+	// Shield + check: someone deliberately marked this file.
+	on_demand: SHIELD + 'M10.8 15.2 7.5 11.9l1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z',
+	// Arrow into a tray: marked by policy as the file arrived.
+	on_upload: 'M12 3 6 9h4v6h4V9h4L12 3ZM5 18h14v2H5Z',
+	// Arrow out of a tray: one watermarked copy handed to one reader.
+	delivered: 'M12 16 6 10h4V4h4v6h4l-6 6ZM5 18h14v2H5Z',
+	// The same shield with the check struck out: protection removed.
+	unmarked: SHIELD + 'M8 11h8v2H8v-2Z',
+}
+
+// A row whose trigger this version does not know - written by an older or newer release -
+// still has to render. A plain dot says "an event" and claims nothing about which.
+const UNKNOWN_TRIGGER_ICON = 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z'
+
 // Precompute display-friendly fields so the template stays declarative.
 const rows = computed(() => entries.value.map((e) => ({
 	id: e.id,
 	userId: e.userId,
 	filePath: e.filePath,
 	trigger: e.trigger,
-	initial: (e.userId || '?').charAt(0).toUpperCase(),
 	date: (e.createdAt || '').split(' ')[0] || (e.createdAt || ''),
 	time: (e.createdAt || '').split(' ')[1] || '',
 	label: TRIGGER_LABELS[e.trigger] ?? e.trigger,
+	icon: TRIGGER_ICONS[e.trigger] ?? UNKNOWN_TRIGGER_ICON,
 })))
 
 const showPagination = computed(() => entries.value.length > 0 || offset.value > 0)
@@ -280,24 +313,6 @@ onMounted(fetchLog)
 	color: var(--color-text-maxcontrast);
 }
 
-.user-cell {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-}
-.avatar {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 26px;
-	height: 26px;
-	border-radius: 50%;
-	background: color-mix(in srgb, var(--color-primary-element) 15%, transparent);
-	color: var(--color-primary-element);
-	font-size: 12px;
-	font-weight: 700;
-}
 .user-name {
 	font-weight: 500;
 }
@@ -322,28 +337,49 @@ onMounted(fetchLog)
 	font-size: 13px;
 }
 
+/*
+   One hue per kind, carried by the whole badge rather than by a 7px dot, so a page of
+   rows groups at a glance instead of having to be read line by line. The hue lives in a
+   custom property and every other rule reads it from there - a new trigger needs one
+   modifier and nothing else.
+
+   The tint is `color-mix` against `transparent`, not a second hard-coded colour, so the
+   same four declarations sit correctly on the light and the dark background.
+*/
 .trigger-badge {
+	--trigger-color: var(--color-text-maxcontrast);
 	display: inline-flex;
 	align-items: center;
-	gap: 7px;
-	padding: 3px 10px;
-	border: 1px solid var(--color-border);
+	gap: 6px;
+	padding: 3px 10px 3px 8px;
+	border: 1px solid color-mix(in srgb, var(--trigger-color) 30%, transparent);
 	border-radius: var(--border-radius-pill, 16px);
-	background: var(--color-main-background);
+	background: color-mix(in srgb, var(--trigger-color) 13%, transparent);
+	color: var(--trigger-color);
 	font-size: 12px;
-	font-weight: 500;
+	font-weight: 600;
+	line-height: 18px;
 	white-space: nowrap;
 }
-.trigger-dot {
+.trigger-icon {
 	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--color-text-maxcontrast);
+	width: 14px;
+	height: 14px;
+	fill: currentColor;
 }
-.trigger-badge--delivered .trigger-dot { background: #4a90d9; }
-.trigger-badge--unmarked .trigger-dot { background: #a05fd6; }
-.trigger-badge--on_upload .trigger-dot { background: #45ad66; }
+
+/* Marked on purpose by a person. */
+.trigger-badge--on_demand { --trigger-color: #6d5bd0; }
+/* Marked by the policy, without anybody deciding. */
+.trigger-badge--on_upload { --trigger-color: #2f9e5a; }
+/* One copy handed to one reader - the routine row, and by far the most common. */
+.trigger-badge--delivered { --trigger-color: #3d7fd6; }
+/*
+   Protection taken off. Amber rather than the violet it used to share with everything
+   else: this is the row an auditor is scanning for, and it is the only one here that
+   makes a file *less* protected than it was.
+*/
+.trigger-badge--unmarked { --trigger-color: #b8770f; }
 
 .empty-state {
 	display: flex;
