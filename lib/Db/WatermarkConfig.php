@@ -35,6 +35,10 @@ use OCP\AppFramework\Db\Entity;
  * @method void setWatermarkInternalShares(bool $watermarkInternalShares)
  * @method bool getWatermarkExternalShares()
  * @method void setWatermarkExternalShares(bool $watermarkExternalShares)
+ * @method bool getFlattenPdf()
+ * @method void setFlattenPdf(bool $flattenPdf)
+ * @method int getFlattenDpi()
+ * @method void setFlattenDpi(int $flattenDpi)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -92,6 +96,19 @@ class WatermarkConfig extends Entity {
 	 */
 	protected bool $watermarkInternalShares = false;
 	protected bool $watermarkExternalShares = false;
+	/**
+	 * Rebuild every watermarked PDF page as a bitmap, fusing the overlay into the pixels so
+	 * there is no separate layer left for `qpdf` or an editor to strip.
+	 *
+	 * **Off unless asked for, and only honoured where the host can do it.** It needs
+	 * `pdftoppm` ({@see \OCA\FilesWatermark\Service\PdfFlattener}), which is the app's one
+	 * external binary and is not required to be installed - a host without it delivers the
+	 * ordinary overlay watermark and says so in the log. It also destroys the text layer,
+	 * and with it selection, search and screen-reader access.
+	 */
+	protected bool $flattenPdf = false;
+	/** Render resolution for {@see $flattenPdf}, in dots per inch. */
+	protected int $flattenDpi = 150;
 	protected string $createdAt = '';
 	protected string $updatedAt = '';
 
@@ -102,6 +119,8 @@ class WatermarkConfig extends Entity {
 		$this->addType('logDelivery', 'boolean');
 		$this->addType('watermarkInternalShares', 'boolean');
 		$this->addType('watermarkExternalShares', 'boolean');
+		$this->addType('flattenPdf', 'boolean');
+		$this->addType('flattenDpi', 'integer');
 	}
 
 	/** Returns the allowed MIME types as an array, or all supported types if not set. */
@@ -128,6 +147,8 @@ class WatermarkConfig extends Entity {
 			'logDelivery' => $this->logDelivery,
 			'watermarkInternalShares' => $this->watermarkInternalShares,
 			'watermarkExternalShares' => $this->watermarkExternalShares,
+			'flattenPdf' => $this->flattenPdf,
+			'flattenDpi' => $this->flattenDpi,
 			'createdAt' => $this->createdAt,
 			'updatedAt' => $this->updatedAt,
 		];

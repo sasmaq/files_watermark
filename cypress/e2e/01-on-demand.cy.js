@@ -45,8 +45,8 @@ describe('On-demand watermarking', () => {
 			cy.task('probe:pdf', { base64 }).then((pdf) => {
 				expect(pdf.watermarked, 'the bundled face was not embedded').to.be.true
 				expect(pdf.hasEmbeddedFontFile, 'no /FontFile2, so no glyphs travelled').to.be.true
-				// The overlay is a content stream, not a raster: flattening was removed
-				// and every watermarked PDF is supposed to keep its text extractable.
+				// The overlay is a content stream, not a raster: flattening is off in the
+				// default policy, so a watermarked PDF keeps its text extractable.
 				expect(pdf.hasToUnicode, 'no /ToUnicode, so the watermark is unextractable').to.be.true
 				expect(pdf.pages, 'the page count changed').to.eq(2)
 			})

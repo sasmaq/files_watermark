@@ -37,6 +37,8 @@ document is whoever uploaded it rather than whoever walked out with it.
 - Supports PDF, JPEG, PNG, and WEBP files
 - PDF rendering via tc-lib-pdf, which reads PDF 1.5+ documents natively; image rendering
   via GD by default, with Imagick used for anything GD cannot decode
+- Optional tamper resistance: watermarked PDFs can be rebuilt as page images so the
+  watermark cannot be stripped (needs `poppler-utils`; falls back without it)
 
 ## Requirements
 
@@ -46,6 +48,7 @@ document is whoever uploaded it rather than whoever walked out with it.
 | PHP | 8.2 or 8.3 |
 | PHP extension | `gd` (required; the image renderer - `imagick` optional, see below) |
 | PHP extension | `bcmath` (required by the PDF renderer) |
+| System package | `poppler-utils` (**optional**; supplies `pdftoppm` for PDF flattening) |
 | Composer | 2.x |
 | Node.js | >= 20 |
 | npm | >= 10 |
@@ -67,12 +70,19 @@ it meant the output depended on how the host happened to be packaged.
 so a minimal container renders exactly what a full one does. This used to walk a list of
 system fonts and fall back to GD's built-in bitmap font when it found none.
 
-### No external binaries
+### One optional external binary, and nothing else
 
-The app runs entirely inside PHP. It spawns no processes - no `exec()`, no shelling out
-to `qpdf`, `pdftoppm`, Ghostscript or anything else - so there is nothing to install
-beyond the PHP extensions above, and nothing that behaves differently because a host is
-missing a package.
+The app runs inside PHP. It spawns no processes at all except for one optional feature:
+**PDF flattening** shells out to `pdftoppm` (poppler-utils) to rasterise a watermarked
+page. Nothing else does - no `qpdf`, no Ghostscript, no `exec()` anywhere else in the
+codebase - so a host that installs nothing beyond the PHP extensions above watermarks
+every supported file exactly as a fully equipped one does.
+
+Flattening is off by default and additive at every step: the setting is hidden when the
+server has no `pdftoppm` (or when PHP may not spawn it), the API refuses to store it in
+that state, and a rasterise that fails at download time delivers the ordinary watermarked
+PDF and logs why. A download is never refused because of it. See
+[Tamper resistance](#tamper-resistance-flattened-pdfs) below.
 
 Two consequences worth knowing:
 
@@ -94,6 +104,33 @@ A marked file whose watermark cannot be generated is **not served at all** - the
 answers 403 rather than handing back the stored bytes. That is the point of a mark: the
 alternative gives the clean file to precisely the reader the watermark exists to name, and
 does it silently.
+
+### Tamper resistance (flattened PDFs)
+
+An overlay watermark is a separate content stream, which is what keeps the text layer
+usable - and also what lets someone strip it with `qpdf`, `mutool` or an editor. Turning on
+**Settings → Watermark → Show advanced options → Tamper resistance (PDF)** rebuilds every
+watermarked page as a bitmap, so there is no layer left to remove.
+
+Install `poppler-utils` to make the setting appear (`dnf install poppler-utils` on RHEL 9,
+`apt install poppler-utils` on Debian/Ubuntu; the development compose file installs it for
+you). Where the package is absent the block is not rendered at all, rather than offering a
+setting the server could not honour.
+
+What it costs, stated plainly:
+
+- **The text layer is destroyed** - no selection, copy, search or screen-reader access.
+  Check this against your accessibility obligations before switching it on; it is off by
+  default for that reason.
+- **Files grow several times larger**, and every download takes longer to prepare, because
+  the rebuild happens per fetch like the watermark itself.
+- **It is not absolute.** Removal becomes impractical, not impossible - cropping,
+  inpainting and OCR-and-retypeset all still work. This app deters and traces.
+
+If a rebuild fails - a page the renderer chokes on, a host that lost the package - the
+ordinary watermarked PDF is delivered and a warning naming the file is written to the
+Nextcloud log. The download is never refused for this: the file still carries a watermark
+naming its reader, just a strippable one.
 
 ### Fonts and Arabic text
 

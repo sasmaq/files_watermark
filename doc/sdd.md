@@ -225,10 +225,17 @@ Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component libra
 | `ext-bcmath` (PHP) | Required by `tc-lib-pdf`; the app will not enable without it |
 | `ext-gd` (PHP) | The image renderer (JPEG/PNG/WEBP); the app will not enable without it |
 
-No external binaries. The app spawns no processes - no `exec()` and no shelling out to
-`qpdf`, `pdftoppm` or Ghostscript - so a host needs nothing beyond PHP and the extensions
-above. The PDF flattening feature, which rasterised each page through an external
-renderer, was removed for this reason.
+| `pdftoppm` (poppler-utils) | **Optional.** Rasterises watermarked PDF pages for the tamper-resistance setting |
+
+One external binary, and it is optional. Every watermark this app draws is pure PHP; the
+single exception is **PDF flattening**, which shells out to `pdftoppm` to rebuild a
+watermarked page as a bitmap so the overlay cannot be stripped. There is no `qpdf` and no
+Ghostscript, and no other `exec()` in the codebase.
+
+A host without `poppler-utils` - or a PHP that may not spawn processes - is fully
+supported: the setting is hidden, the API refuses to store it, and every other feature is
+unaffected. A rasterise that fails at delivery falls back to the ordinary
+overlay-watermarked PDF rather than refusing the download.
 | PHP `GD` extension | Image watermarking - the default engine |
 | PHP `Imagick` extension | Optional; used for formats GD cannot decode (WebP without libwebp) |
 | LibreOffice / Collabora (headless) | Office document conversion/rendering for watermarking |

@@ -14,6 +14,7 @@ use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\InstanceTimeZone;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
@@ -49,6 +50,7 @@ class WatermarkServiceTest extends TestCase {
 	private WatermarkLogMapper&MockObject $logMapper;
 	private WatermarkMarkMapper&MockObject $markMapper;
 	private PdfWatermarker&MockObject $pdfWatermarker;
+	private PdfFlattener&MockObject $pdfFlattener;
 	private ImageWatermarker&MockObject $imageWatermarker;
 	private IUserSession&MockObject $userSession;
 	private ISystemTagObjectMapper&MockObject $tagObjectMapper;
@@ -67,6 +69,9 @@ class WatermarkServiceTest extends TestCase {
 		$this->logMapper = $this->createMock(WatermarkLogMapper::class);
 		$this->markMapper = $this->createMock(WatermarkMarkMapper::class);
 		$this->pdfWatermarker = $this->createMock(PdfWatermarker::class);
+		// Available unless a test says otherwise, so the flatten leg is reachable; the
+		// config's own `flattenPdf` is off by default, which is what keeps it unused.
+		$this->pdfFlattener = $this->createMock(PdfFlattener::class);
 		$this->imageWatermarker = $this->createMock(ImageWatermarker::class);
 		$this->userSession = $this->createMock(IUserSession::class);
 		$this->tagObjectMapper = $this->createMock(ISystemTagObjectMapper::class);
@@ -91,6 +96,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->logMapper,
 			$this->markMapper,
 			$this->pdfWatermarker,
+			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
 			$this->tagObjectMapper,
@@ -328,6 +334,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->logMapper,
 			$this->markMapper,
 			$this->pdfWatermarker,
+			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
 			$this->tagObjectMapper,
@@ -548,6 +555,149 @@ class WatermarkServiceTest extends TestCase {
 		$this->cleanup($tmpPath);
 	}
 
+	// -----------------------------------------------------------------------
+	// Flattening - the one leg that shells out, and the one that may fail without
+	// costing the reader their download
+	// -----------------------------------------------------------------------
+
+	public function testFlatteningRunsAfterTheOverlayWhenThePolicyAsksForIt(): void {
+		// Order matters: rasterising before the overlay would capture a clean page and
+		// leave the watermark as a removable layer on top of it.
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true, 200));
+		$calls = [];
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest) use (&$calls): void {
+				$calls[] = 'overlay';
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->expects($this->once())
+			->method('flatten')
+			->with($this->anything(), $this->anything(), 200)
+			->willReturnCallback(static function (string $src, string $dest) use (&$calls): void {
+				$calls[] = 'flatten';
+				file_put_contents($dest, '%PDF-flattened');
+			});
+
+		$tmpPath = $this->service->watermarkForDownload($this->markedFile('application/pdf'));
+
+		$this->assertSame(['overlay', 'flatten'], $calls);
+		// The rebuild is what the reader gets, not the overlay-only file.
+		$this->assertSame('%PDF-flattened', (string)file_get_contents($tmpPath));
+		$this->assertFileDoesNotExist($tmpPath . '_flat');
+		$this->cleanup($tmpPath);
+	}
+
+	public function testFlatteningIsSkippedWhenThePolicyDoesNotAskForIt(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(false));
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->pdfFlattener->expects($this->never())->method('flatten');
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile('application/pdf')));
+	}
+
+	public function testAnImageIsNeverFlattenedHoweverThePolicyIsSet(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true));
+		$this->pdfFlattener->expects($this->never())->method('flatten');
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile('image/png')));
+	}
+
+	public function testAStrandedFlattenSettingFallsBackToTheOverlayAndIsLogged(): void {
+		// The policy asks for flattening but this host has no renderer - a restore, a host
+		// migration, or someone removing the package. The UI hides the control in that
+		// state, so the server treats the setting as off and says why in the log.
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true));
+		$this->pdfWatermarker->expects($this->once())
+			->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(false);
+		$this->pdfFlattener->expects($this->never())->method('flatten');
+		$this->logger->expects($this->once())
+			->method('warning')
+			->with($this->stringContains('pdftoppm'), $this->anything());
+
+		$tmpPath = $this->service->watermarkForDownload($this->markedFile('application/pdf'));
+
+		$this->assertSame('%PDF-overlaid', (string)file_get_contents($tmpPath));
+		$this->cleanup($tmpPath);
+	}
+
+	/**
+	 * **The fallback the feature is built around, and the reversal of how this behaved
+	 * when flattening last existed.**
+	 *
+	 * A failed rasterise used to refuse the download outright, on the grounds that the
+	 * overlay-only PDF is the strippable version the setting exists to avoid handing out.
+	 * It now delivers that file: flattening is hardening on top of a watermark that is
+	 * already present and already names its reader, and one document the renderer chokes on
+	 * is not a reason to make a marked file undownloadable.
+	 */
+	public function testAFailedFlattenFallsBackToTheOverlayWatermark(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true));
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->method('flatten')
+			->willThrowException(new \RuntimeException('Cannot flatten PDF: rendering page 1 failed'));
+		// Loud, because "some downloads are flattened and some are not" is otherwise
+		// invisible to an admin looking at a setting that is switched on.
+		$this->logger->expects($this->once())
+			->method('warning')
+			->with($this->stringContains('could not flatten'), $this->anything());
+
+		$tmpPath = $this->service->watermarkForDownload($this->markedFile('application/pdf'));
+
+		$this->assertNotNull($tmpPath, 'the download must not be refused for a failed flatten');
+		$this->assertSame('%PDF-overlaid', (string)file_get_contents($tmpPath));
+		$this->assertFileDoesNotExist($tmpPath . '_flat');
+		$this->assertFileDoesNotExist($tmpPath . '_src');
+		$this->cleanup($tmpPath);
+	}
+
+	public function testARebuildThatCannotReplaceTheOverlayIsDiscarded(): void {
+		// The one failure that can leave a finished rebuild on disk: `flatten` succeeded and
+		// the rename over it did not. The reader still gets the overlay, and the orphan goes.
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true));
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+		$this->pdfFlattener->method('flatten')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-flattened');
+				// Turn the rename's *target* into a non-empty directory, which no platform
+				// lets a file be moved over. Contrived, and the only way to reach the branch
+				// without a filesystem that fails on demand.
+				unlink($src);
+				mkdir($src);
+				file_put_contents($src . '/occupied', 'x');
+			});
+		$this->logger->expects($this->once())->method('warning');
+
+		$tmpPath = $this->service->watermarkForDownload($this->markedFile('application/pdf'));
+
+		$this->assertNotNull($tmpPath);
+		$this->assertFileDoesNotExist($tmpPath . '_flat', 'the orphaned rebuild must be discarded');
+		@unlink($tmpPath . '/occupied');
+		@rmdir($tmpPath);
+		@rmdir($tmpPath . '_flat_blocker');
+		@rmdir(dirname($tmpPath));
+	}
+
+	/** A PDF policy, optionally asking for flattening. */
+	private function flattenConfig(bool $flatten, int $dpi = 150): WatermarkConfig {
+		$config = $this->config();
+		$config->setFlattenPdf($flatten);
+		$config->setFlattenDpi($dpi);
+		return $config;
+	}
+
 	public function testAMarkedImageIsRenderedThroughTheImageWatermarker(): void {
 		$this->configMapper->method('findGlobal')->willReturn($this->config());
 		$file = $this->markedFile('image/png');
@@ -660,6 +810,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->logMapper,
 			$this->markMapper,
 			$this->pdfWatermarker,
+			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
 			$this->tagObjectMapper,
@@ -1036,6 +1187,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->logMapper,
 			$this->markMapper,
 			$this->pdfWatermarker,
+			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
 			$this->tagObjectMapper,

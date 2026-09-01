@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
@@ -61,6 +62,7 @@ class ApiControllerScopeTest extends TestCase {
 			$this->tagManager,
 			$this->l10n(),
 			$this->timeZone(),
+			$this->createMock(PdfFlattener::class),
 		);
 
 		$this->configMapper->method('insert')->willReturnCallback(

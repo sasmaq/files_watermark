@@ -365,6 +365,123 @@ describe('WatermarkForm', () => {
 		})
 	})
 
+	describe('tamper resistance (PDF flattening)', () => {
+		/**
+		 * Mount as an admin with the advanced options open and the server reporting a
+		 * rasteriser, which is the only state where the flattening block renders.
+		 * @param {object} [props] - prop overrides, typically modelValue or flattenAvailable
+		 * @return {Promise<object>} the mounted wrapper
+		 */
+		async function mountFlatten(props = {}) {
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true, ...props })
+			const advanced = wrapper.find('.wm-advanced input')
+			if (!advanced.element.checked) {
+				await advanced.setValue(true)
+			}
+			return wrapper
+		}
+
+		it('is offered when the server has a rasteriser', async () => {
+			const wrapper = await mountFlatten()
+			expect(wrapper.text()).toContain('Tamper resistance')
+			expect(wrapper.find('.wm-flatten-toggle').exists()).toBe(true)
+		})
+
+		it('is absent - not disabled - when the server has none', async () => {
+			// A control this host cannot honour is worse than no control: switching it on
+			// would be a setting that silently does nothing on every download.
+			const wrapper = await mountFlatten({ flattenAvailable: false })
+			expect(wrapper.text()).not.toContain('Tamper resistance')
+			expect(wrapper.find('.wm-flatten-toggle').exists()).toBe(false)
+		})
+
+		it('lives behind the advanced switch, like the rest of the narrowing controls', () => {
+			const wrapper = mountForm({ isAdmin: true, flattenAvailable: true })
+			expect(wrapper.text()).not.toContain('Tamper resistance')
+		})
+
+		it('is admin-only, like the rest of the server-wide policy', () => {
+			expect(mountForm({ isAdmin: false, flattenAvailable: true }).text())
+				.not.toContain('Tamper resistance')
+		})
+
+		it('disappears when the type filter excludes PDFs', async () => {
+			// Nothing this policy can match is a PDF, so a PDF-only setting is noise.
+			const wrapper = await mountFlatten({ modelValue: { mimeTypes: 'image/png' } })
+			expect(wrapper.text()).not.toContain('Tamper resistance')
+		})
+
+		it('stays when the type filter names PDFs explicitly', async () => {
+			const wrapper = await mountFlatten({ modelValue: { mimeTypes: 'application/pdf,image/png' } })
+			expect(wrapper.text()).toContain('Tamper resistance')
+		})
+
+		it('defaults to off, with no resolution slider until it is on', async () => {
+			const wrapper = await mountFlatten()
+			expect(wrapper.vm.form.flattenPdf).toBe(false)
+			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(false)
+
+			await wrapper.find('.wm-flatten-toggle input').setValue(true)
+			expect(wrapper.vm.form.flattenPdf).toBe(true)
+			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(true)
+		})
+
+		it('bounds the resolution slider by the range the server reports', async () => {
+			const wrapper = await mountFlatten({
+				modelValue: { flattenPdf: true },
+				flattenDpiRange: { min: 100, max: 400 },
+			})
+			const slider = wrapper.find('#wm-flatten-dpi')
+			expect(slider.attributes('min')).toBe('100')
+			expect(slider.attributes('max')).toBe('400')
+		})
+
+		it('opens the advanced options when the stored policy already flattens', () => {
+			// Same reason the filters do it: a policy that is rasterising every PDF download
+			// must not hide the only control that says so.
+			const wrapper = mountForm({
+				isAdmin: true,
+				flattenAvailable: true,
+				modelValue: { flattenPdf: true },
+			})
+			expect(wrapper.find('.wm-advanced input').element.checked).toBe(true)
+			expect(wrapper.text()).toContain('Tamper resistance')
+		})
+
+		it('states both the benefit and the accessibility cost', async () => {
+			const text = (await mountFlatten()).text()
+			expect(text).toContain('no layer left to delete')
+			expect(text).toContain('screen-reader access')
+		})
+
+		it('says a failed rebuild falls back rather than refusing the download', async () => {
+			expect((await mountFlatten()).text()).toContain('the ordinary watermarked PDF is delivered instead')
+		})
+
+		it('sends both fields on save', async () => {
+			const wrapper = await mountFlatten({ modelValue: { flattenPdf: true, flattenDpi: 300 } })
+			await wrapper.find('.wm-save').trigger('click')
+
+			const [payload] = wrapper.emitted('save')[0]
+			expect(payload.flattenPdf).toBe(true)
+			expect(payload.flattenDpi).toBe(300)
+		})
+
+		it('leaves the stored setting alone when the block is hidden', async () => {
+			// Hiding is not clearing: a host that loses the package keeps the value, so the
+			// setting comes back intact if the package does.
+			const wrapper = await mountFlatten({
+				flattenAvailable: false,
+				modelValue: { flattenPdf: true, flattenDpi: 300 },
+			})
+			await wrapper.find('.wm-save').trigger('click')
+
+			const [payload] = wrapper.emitted('save')[0]
+			expect(payload.flattenPdf).toBe(true)
+			expect(payload.flattenDpi).toBe(300)
+		})
+	})
+
 	describe('share switches', () => {
 		/**
 		 * One of the two share checkboxes, or null when it is not offered.

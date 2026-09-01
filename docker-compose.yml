@@ -43,12 +43,19 @@ services:
     # and why only bcmath is installable here at all. Guarded so a restart is not a
     # rebuild.
     #
-    # No external binaries are installed, because the app spawns no processes.
+    # poppler-utils supplies `pdftoppm`, the app's one external binary: it rasterises
+    # watermarked PDF pages for the optional "Tamper resistance" setting. It is genuinely
+    # optional - without it the app hides the setting and delivers the ordinary overlay
+    # watermark - and it is installed here so the setting is reachable in dev. This image
+    # is Debian while production is RHEL 9 (`dnf install poppler-utils`), which is exactly
+    # why the app probes PATH at runtime instead of assuming a distro. Guarded so a restart
+    # is not a re-download.
     entrypoint:
       - /bin/sh
       - -c
       - >
         chown www-data:www-data /var/www/html/custom_apps;
+        command -v pdftoppm >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends poppler-utils; };
         php -m | grep -qx bcmath || docker-php-ext-install bcmath;
         exec /entrypoint.sh apache2-foreground
     environment:

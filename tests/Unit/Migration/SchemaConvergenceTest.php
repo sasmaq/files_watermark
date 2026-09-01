@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Migration;
 use OCA\FilesWatermark\Migration\Version1002Date20260804120000;
 use OCA\FilesWatermark\Migration\Version1003Date20260806120000;
 use OCA\FilesWatermark\Migration\Version1004Date20260806140000;
+use OCA\FilesWatermark\Migration\Version1005Date20260901120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -69,6 +70,12 @@ class SchemaConvergenceTest extends TestCase {
 		// earlier step has already built.
 		'watermark_internal_shares',
 		'watermark_external_shares',
+		// 1005. These two are the interesting pair: an instance old enough to have run 1001
+		// arrives *carrying* them, 1002 drops them, and 1005 adds them back - so the column
+		// order only matches a fresh install because the drop happens first. An added-then-
+		// dropped column that survived would show up here as an ordering difference.
+		'flatten_pdf',
+		'flatten_dpi',
 	];
 
 	/**
@@ -159,16 +166,32 @@ class SchemaConvergenceTest extends TestCase {
 		);
 	}
 
-	/** The flattening columns must be gone whichever state we started from. */
-	public function testFlatteningColumnsAreDroppedOnUpgrade(): void {
+	/**
+	 * The flattening columns end up present whichever state we started from - including
+	 * the one state that already had them.
+	 *
+	 * That state is the whole reason this case is kept rather than deleted with the drop it
+	 * used to assert. An instance that ran 1001 carries `flatten_pdf` from a version where
+	 * the feature meant something else and was removed under it; 1002 drops it and 1005 adds
+	 * it back at its default, so the column such an instance ends with is a fresh one. A
+	 * migration chain that skipped the drop would leave the *old* value in place and quietly
+	 * re-enable rasterised downloads on an instance whose admin never saw the control.
+	 */
+	public function testFlatteningColumnsAreReinstatedOnUpgrade(): void {
 		$schema = new FakeSchema();
 		$this->preCreateTables($schema, ['flatten_pdf', 'flatten_dpi']);
 
 		$this->runMigration($schema);
 
-		$columns = $schema->getTable('watermark_config')->columnNames();
-		$this->assertNotContains('flatten_pdf', $columns);
-		$this->assertNotContains('flatten_dpi', $columns);
+		$table = $schema->getTable('watermark_config');
+		$this->assertContains('flatten_pdf', $table->columnNames());
+		$this->assertContains('flatten_dpi', $table->columnNames());
+		// Appended by 1005, not the columns the instance arrived with: a surviving pair
+		// would still sit where the pre-1007 seed put them, ahead of `log_delivery`.
+		$this->assertSame(
+			['flatten_pdf', 'flatten_dpi'],
+			array_slice($table->columnNames(), -2),
+		);
 	}
 
 	/**
@@ -300,11 +323,12 @@ class SchemaConvergenceTest extends TestCase {
 		$migration->preSchemaChange($output, $closure, []);
 		$migration->changeSchema($output, $closure, []);
 
-		// 1003 and 1004 ride along rather than getting their own runners: every state above
+		// 1003 onwards ride along rather than getting their own runners: every state above
 		// reaches them too, and the property under test is that the whole chain converges -
 		// not that each file converges on its own.
 		(new Version1003Date20260806120000())->changeSchema($output, $closure, []);
 		(new Version1004Date20260806140000())->changeSchema($output, $closure, []);
+		(new Version1005Date20260901120000())->changeSchema($output, $closure, []);
 	}
 
 	/**

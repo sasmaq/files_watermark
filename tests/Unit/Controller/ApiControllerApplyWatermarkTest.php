@@ -9,6 +9,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
@@ -62,6 +63,7 @@ class ApiControllerApplyWatermarkTest extends TestCase {
 			$this->createMock(ISystemTagManager::class),
 			$this->l10n(),
 			$this->timeZone(),
+			$this->createMock(PdfFlattener::class),
 		);
 	}
 

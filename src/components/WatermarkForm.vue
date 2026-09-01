@@ -304,6 +304,51 @@
 						<small class="wm-help">{{ t('files_watermark', 'Only files whose containing folder carries this tag are watermarked. The tag goes on the folder, not on the files.') }}</small>
 					</div>
 				</section>
+
+				<!--
+					7. Flattening, also behind the advanced switch. Absent entirely - not
+					disabled, not a placeholder - when the server has no rasteriser, so an
+					admin never sees a setting this host cannot honour.
+				-->
+				<section v-if="isAdmin && showAdvanced && flattenAvailable && pdfCapable" class="wm-card">
+					<h4 class="wm-card__title">
+						{{ t('files_watermark', 'Tamper resistance (PDF)') }}
+					</h4>
+					<p class="wm-card__desc">
+						{{ t('files_watermark', 'Fuse the watermark into the page pixels instead of layering it on top.') }}
+					</p>
+					<div class="wm-field wm-field--stacked">
+						<NcCheckboxRadioSwitch :model-value="!!form.flattenPdf"
+							class="wm-flatten-toggle"
+							type="switch"
+							@update:model-value="form.flattenPdf = $event">
+							{{ t('files_watermark', 'Flatten watermarked PDFs') }}
+						</NcCheckboxRadioSwitch>
+						<small class="wm-help">
+							{{ t('files_watermark', 'A watermark is normally its own layer, and ordinary PDF tools can delete it. Flattening replaces every page with a picture of itself, so there is no layer left to delete. It raises the effort rather than making removal impossible - a page can still be cropped or retyped.') }}
+						</small>
+						<small class="wm-help wm-help--warn">
+							{{ t('files_watermark', 'Costs: the text layer is destroyed, so no selection, copy, search or screen-reader access remains - check this against your accessibility obligations. Files also grow several times larger, and every download takes longer to prepare.') }}
+						</small>
+						<small class="wm-help">
+							{{ t('files_watermark', 'If a page cannot be rebuilt, the ordinary watermarked PDF is delivered instead and the reason is written to the server log - a download is never refused for this.') }}
+						</small>
+					</div>
+					<div v-if="form.flattenPdf" class="wm-field">
+						<label for="wm-flatten-dpi">{{ t('files_watermark', 'Render resolution') }}</label>
+						<div class="wm-inline">
+							<input id="wm-flatten-dpi"
+								v-model.number="form.flattenDpi"
+								type="range"
+								:min="flattenDpiRange.min"
+								:max="flattenDpiRange.max"
+								step="6"
+								class="wm-range">
+							<span class="wm-inline__val">{{ form.flattenDpi }} DPI</span>
+						</div>
+						<small class="wm-help">{{ t('files_watermark', 'Higher is sharper and bigger. 150 suits text documents; raise it for detailed scans.') }}</small>
+					</div>
+				</section>
 			</div>
 
 			<!-- Live preview -->
@@ -461,6 +506,13 @@ const props = defineProps({
 	saving: { type: Boolean, default: false },
 	saved: { type: Boolean, default: false },
 	saveError: { type: String, default: null },
+	/**
+	 * Whether this server can rasterise a PDF at all - it needs `pdftoppm`, the app's one
+	 * external binary. False hides the flattening block outright rather than disabling it:
+	 * a control that cannot be honoured is worse than no control.
+	 */
+	flattenAvailable: { type: Boolean, default: false },
+	flattenDpiRange: { type: Object, default: () => ({ min: 72, max: 600 }) },
 })
 
 const emit = defineEmits(['save', 'update:modelValue'])
@@ -486,6 +538,10 @@ const DEFAULTS = {
 	// are read per fetch against the share the file is travelling through.
 	watermarkInternalShares: false,
 	watermarkExternalShares: false,
+	// Off, matching the column. The server refuses it outright on a host with no
+	// rasteriser, so it can only ever be turned on where it can be honoured.
+	flattenPdf: false,
+	flattenDpi: 150,
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })
@@ -533,11 +589,23 @@ const selectedFolderTag = computed({
 	},
 })
 
+/**
+ * Whether this policy can ever touch a PDF. A blank type filter means every supported
+ * type, so flattening is only irrelevant when the admin has narrowed the filter to types
+ * that exclude PDFs.
+ */
+const pdfCapable = computed(() => {
+	const filter = (form.mimeTypes ?? '').trim()
+	return filter === '' || filter.split(',').some((m) => m.trim() === 'application/pdf')
+})
+
 // Whether the narrowing filters above are on screen. A view preference, not a setting:
 // it is never sent to the server and it never changes what is stored, so switching it off
 // with a filter set hides the control, not the filter. Seeded from the stored config so a
 // narrowed policy arrives with its reason visible.
-const showAdvanced = ref(!!(form.mimeTypes || form.folderTag))
+// `flattenPdf` seeds it too, for the same reason the filters do: a policy that is
+// rasterising every PDF download must not hide the only control that says so.
+const showAdvanced = ref(!!(form.mimeTypes || form.folderTag || form.flattenPdf))
 
 watch(form, (val) => emit('update:modelValue', { ...val }))
 
@@ -1043,6 +1111,10 @@ const contentLines = [
     margin: 4px 0 0;
     font-size: 12px;
     color: var(--color-text-maxcontrast);
+}
+/* The flattening trade-offs are a genuine warning, not incidental help text. */
+.wm-help--warn {
+    color: var(--color-warning-text, var(--color-text-maxcontrast));
 }
 /* The real input is driven by the buttons above it; hidden rather than removed so it
    stays focusable and keeps native file-picker behaviour. */

@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\InstanceTimeZone;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
@@ -41,6 +42,7 @@ class ApiController extends Controller {
 		private ISystemTagManager $tagManager,
 		private IL10N $l,
 		private InstanceTimeZone $timeZone,
+		private PdfFlattener $pdfFlattener,
 	) {
 		parent::__construct($appName, $request);
 	}
@@ -66,8 +68,13 @@ class ApiController extends Controller {
 			$configs = [];
 		}
 
+		// `flattenAvailable` is what the settings form branches on: with no rasteriser on the
+		// host - or a PHP that may not spawn one - it omits the flattening block entirely,
+		// rather than offering a setting this server could not honour.
 		return new DataResponse([
 			'configs' => array_map(fn (WatermarkConfig $c) => $c->jsonSerialize(), $configs),
+			'flattenAvailable' => $this->pdfFlattener->isAvailable(),
+			'flattenDpiRange' => ['min' => PdfFlattener::MIN_DPI, 'max' => PdfFlattener::MAX_DPI],
 		]);
 	}
 
@@ -109,6 +116,8 @@ class ApiController extends Controller {
 		bool $logDelivery = true,
 		bool $watermarkInternalShares = false,
 		bool $watermarkExternalShares = false,
+		bool $flattenPdf = false,
+		int $flattenDpi = PdfFlattener::DEFAULT_DPI,
 		?int $id = null,
 	): DataResponse {
 
@@ -116,6 +125,17 @@ class ApiController extends Controller {
 		// from which complaint comes back.
 		if (!$this->isAdmin()) {
 			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
+		}
+
+		// The real gate on the app's one external binary. The form omits the control on a
+		// host with no rasteriser, but hiding a control is not a check - this refuses the
+		// value however it arrives, so a stored `flatten_pdf` can only ever be true on a
+		// server that could honour it at the moment it was saved.
+		if ($flattenPdf && !$this->pdfFlattener->isAvailable()) {
+			return new DataResponse(
+				['error' => $this->l->t('Flattened PDFs need %s on the server (package poppler-utils). Install it, or leave flattening off.', [PdfFlattener::RENDERER])],
+				Http::STATUS_BAD_REQUEST,
+			);
 		}
 
 		if (!in_array($type, self::VALID_TYPES, true)) {
@@ -241,6 +261,11 @@ class ApiController extends Controller {
 		// stored state left behind when one is switched off again.
 		$config->setWatermarkInternalShares($watermarkInternalShares);
 		$config->setWatermarkExternalShares($watermarkExternalShares);
+		// Clamped rather than validated: an out-of-range DPI is a slider the browser sent
+		// badly, not a policy an admin can have meant, and the renderer treats it as a
+		// resource ceiling - 20000 DPI is a denial of service, not a quality setting.
+		$config->setFlattenPdf($flattenPdf);
+		$config->setFlattenDpi(PdfFlattener::clampDpi($flattenDpi));
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));
 
 		if ($id !== null) {

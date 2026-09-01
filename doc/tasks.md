@@ -9,8 +9,10 @@ what was measured, why a design is what it is - lives in
 **Closed items are deleted from here, not ticked.** What was done, and what it cost to
 learn, is recorded in `development.md`; everything below is genuinely still open.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. PHPUnit (**784**) and Jest
-(**116**) are green, along with Psalm at level 3, php-cs-fixer and ESLint.
+Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. PHPUnit (**837**, one skip) and
+Jest (**131**) are green, along with Psalm at level 3, php-cs-fixer and ESLint. The skip is
+`PdfFlattenerTest::testAgainstTheRealRendererIfThisHostHasOne`, the only case that wants a
+real `pdftoppm`; CI installs `poppler-utils`, so it runs there.
 
 **The Cypress suite has not been run since the trigger rework**, and there are now two
 reasons it is the first thing to do. Every spec was rewritten for the new model and none of
@@ -105,8 +107,10 @@ them.
 
 - [ ] **Emit `CriticalActionPerformedEvent`** into the Nextcloud admin audit log.
   [notes](development.md#audit-log)
-- [ ] **Enforce the no-`exec()` rule mechanically** - a static-analysis rule or a CI grep.
-  Nothing stops a future contributor reintroducing a shell-out.
+- [ ] **Enforce the one-exception `exec()` rule mechanically** - a static-analysis rule or
+  a CI grep. `PdfFlattener` is the single permitted call site, so the check to write is
+  "no `exec(` outside `lib/Service/PdfFlattener.php`". Nothing stops a future contributor
+  adding a second shell-out.
   [notes](development.md#open-nobinary)
 - [ ] **Marking does not reach previews already in a browser's cache.** Confirmed on the
   instance, and it is the first thing an admin reports - "I marked it and the preview has
@@ -198,10 +202,11 @@ them.
   shapes. [notes](development.md#docs-and-release)
 - [ ] Developer guide: how to add a new file-type renderer.
 - [ ] Localisation section: which languages ship, how to add one.
-- [ ] `CHANGELOG.md`, covering 1.0.0 and the 1.1.0 flattening release.
-- [ ] **Release note for the dropped `flatten_pdf` / `flatten_dpi` columns.** The migration
-  has no `down()`, so an admin who had flattening on loses it silently on upgrade and the
-  audit log will not explain why watermarked PDFs are suddenly selectable text.
+- [ ] `CHANGELOG.md`, covering 1.0.0 through 1.7.0.
+- [ ] **Release note for flattening, in both directions.** It was dropped in 1.2.0 and is
+  back in 1.7.0 as an optional setting - and because the columns were dropped and re-added
+  at their defaults, an admin who had it on before 1.2.0 does *not* get it back by
+  upgrading. Say so, along with the `poppler-utils` requirement and the accessibility cost.
   [notes](development.md#open-nobinary)
 - [ ] Package for the App Store and tag the release.
 - [ ] Headless LibreOffice in the documented Docker workflow, pending Office support.
@@ -221,11 +226,11 @@ them.
 | [Storage backends](development.md#5-storage-backends-goal-5) | S3 verified end to end; no S3-specific code needed | - |
 | [Team folders](development.md#team-folders) | Built: `on_share` no longer exempts the whole team, originals stay in the folder. No dependency on `groupfolders` | **Deleted by the rework** - nothing is exempt, so there is nothing to detect |
 | [Arabic and RTL](development.md#arabic-and-rtl-support) | **Both halves done** - watermark shaped and reordered, UI translated and RTL-clean. The two `tc-lib-unicode` bugs found here are [fixed upstream in 3.0](development.md#vendor-patches); the local patches are gone | `{date}` localisation, a real Arabic instance |
-| [No external binaries](development.md#no-external-binaries) | **Done.** No `exec()` anywhere | A rule that keeps it that way |
+| [No external binaries](development.md#no-external-binaries) | **One exception, deliberate.** `PdfFlattener` shells out to `pdftoppm` for the optional tamper-resistance setting; nothing else spawns a process. Optional, probed, and falls back to the ordinary watermark | A rule that keeps it to the one |
 | [PDF stack migration](development.md#pdf-stack-migration-to-tc-lib-pdf) | **Complete.** FPDI and TCPDF are gone | - |
 | [Preserved originals](development.md#security) | In the owner's storage, so server-side encryption covers them; hidden from every client | **Deleted by the rework** - no burn, so no copy to preserve, hide or give back |
 | [Data model](development.md#data-model) | Schema carries every implemented feature; the whole migration chain is squashed into one step at app version 1.2.0 | `metadata` type, cross-DB run |
 | [Environment](development.md#environment-and-dependencies) | PHP + `bcmath` + GD, Imagick optional | LibreOffice, `exif` |
 | [Security](development.md#security) | Two real vulnerabilities found and fixed. On-demand applies bounded by rate limit + size cap; images by a pixel ceiling on every trigger | - |
-| [Testing](development.md#testing) | 784 PHPUnit + 116 Jest + 80 Cypress, **nothing skipped** - the last pending spec was the bidi bug, now fixed upstream | Psalm level 3, and Cypress against an instance |
+| [Testing](development.md#testing) | 837 PHPUnit + 131 Jest + 80 Cypress; one skip, the flattener's real-renderer case, which CI does run | Psalm level 3, and Cypress against an instance |
 | [Docs and release](development.md#docs-and-release) | README covers install, Docker and S3 | API reference, changelog, packaging |

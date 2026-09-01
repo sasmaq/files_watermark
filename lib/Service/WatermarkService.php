@@ -86,6 +86,7 @@ class WatermarkService {
 		private WatermarkLogMapper $logMapper,
 		private WatermarkMarkMapper $markMapper,
 		private PdfWatermarker $pdfWatermarker,
+		private PdfFlattener $pdfFlattener,
 		private ImageWatermarker $imageWatermarker,
 		private IUserSession $userSession,
 		private ISystemTagObjectMapper $tagObjectMapper,
@@ -565,6 +566,7 @@ class WatermarkService {
 		try {
 			if (in_array($mime, self::SUPPORTED_PDF, true)) {
 				$this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
+				$this->flattenInPlace($tmpPath, $config);
 			} else {
 				// Inside the try, so the throw goes out through the same cleanup as a
 				// failed render - $srcTmp is a plaintext copy of the user's file and must
@@ -591,6 +593,79 @@ class WatermarkService {
 		unlink($srcTmp);
 
 		return [$tmpPath, $config];
+	}
+
+	/**
+	 * Rasterise the freshly watermarked PDF at $tmpPath, replacing it in place.
+	 *
+	 * Applied *after* the overlay, which is the whole point - the watermark has to be in
+	 * the pixels being captured. See {@see PdfFlattener} for what that buys and costs.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * **THIS FALLS BACK; IT DOES NOT FAIL CLOSED.**
+	 *
+	 * Every way this can go wrong - the policy asks for flattening on a host with no
+	 * `pdftoppm`, the renderer fails on one page, the rebuild cannot be written - leaves
+	 * the ordinary overlay-watermarked file at `$tmpPath` and lets the fetch proceed with
+	 * it. Nothing is thrown from here.
+	 *
+	 * That is a deliberate reversal of how this behaved when the feature last existed,
+	 * where a failed flatten refused the download outright on the grounds that the
+	 * overlay-only PDF is the removable version the setting exists to avoid handing out.
+	 * The trade is now read the other way: flattening is **hardening on top of a watermark
+	 * that is already there and already names its reader**, and a rasteriser that is
+	 * missing or that chokes on one document is not a reason to make a marked file
+	 * undownloadable. The file still carries the watermark; it carries a strippable one.
+	 *
+	 * The fallback is loud rather than silent - a `warning` per failure, naming the config
+	 * - because "some downloads are flattened and some are not" is otherwise invisible to
+	 * an admin looking at the setting.
+	 * ---------------------------------------------------------------------------
+	 */
+	private function flattenInPlace(string $tmpPath, WatermarkConfig $config): void {
+		if (!$config->getFlattenPdf()) {
+			return;
+		}
+
+		if (!$this->pdfFlattener->isAvailable()) {
+			// A config can carry `flattenPdf` onto a host with no rasteriser - a restore, a
+			// host migration, or someone removing the package. The admin UI hides the control
+			// in that state, so it cannot even be switched off from the browser; the stored
+			// column therefore keeps its value and comes back intact if the package does.
+			$this->logger->warning(
+				'files_watermark: policy {config} asks for flattened PDFs but ' . PdfFlattener::RENDERER
+					. ' is not available; delivering the overlay watermark instead. Install poppler-utils.',
+				['app' => 'files_watermark', 'config' => $config->getId()],
+			);
+			return;
+		}
+
+		$flattened = $tmpPath . '_flat';
+		try {
+			$this->pdfFlattener->flatten($tmpPath, $flattened, $config->getFlattenDpi());
+			// Silenced because the failure is handled below and reported with more context
+			// than the PHP warning carries; an unsilenced one would also land in the log as
+			// an error on a path that recovers.
+			if (!@rename($flattened, $tmpPath)) {
+				throw new \RuntimeException('the rebuilt file could not replace the watermarked one');
+			}
+		} catch (\Throwable $e) {
+			// The flattener writes nothing on failure, but a failed `rename` is the one path
+			// that can leave a finished rebuild behind.
+			if (file_exists($flattened)) {
+				@unlink($flattened);
+			}
+
+			$this->logger->warning(
+				'files_watermark: could not flatten {path}; delivering the overlay watermark instead: {reason}',
+				[
+					'app' => 'files_watermark',
+					'path' => $tmpPath,
+					'reason' => $e->getMessage(),
+					'exception' => $e,
+				],
+			);
+		}
 	}
 
 	/**

@@ -47,6 +47,34 @@ describe('AdminSettings', () => {
 		expect(form.props('modelValue')).toMatchObject({ id: 7, textTemplate: '{username}' })
 	})
 
+	it('passes the host\'s flattening capability through to the form', async () => {
+		// Whether this server can rasterise a PDF is a property of the host, not of the
+		// saved policy, so it arrives with the config rather than being assumed.
+		mockGet(Promise.resolve({
+			data: {
+				configs: [GLOBAL_CONFIG],
+				flattenAvailable: true,
+				flattenDpiRange: { min: 100, max: 400 },
+			},
+		}))
+		const wrapper = mount(AdminSettings)
+		await flushPromises()
+
+		const form = wrapper.findComponent(WatermarkForm)
+		expect(form.props('flattenAvailable')).toBe(true)
+		expect(form.props('flattenDpiRange')).toEqual({ min: 100, max: 400 })
+	})
+
+	it('treats a response that says nothing about flattening as unavailable', async () => {
+		// An older server, or one that failed the probe. Defaulting to "available" would
+		// show a control whose save the server then refuses.
+		mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
+		const wrapper = mount(AdminSettings)
+		await flushPromises()
+
+		expect(wrapper.findComponent(WatermarkForm).props('flattenAvailable')).toBe(false)
+	})
+
 	it('saves the config (with the existing id) and shows a success note', async () => {
 		mockGet(Promise.resolve(configResponse([GLOBAL_CONFIG])))
 		axios.post.mockResolvedValue({ data: { ...GLOBAL_CONFIG, opacity: 50 } })

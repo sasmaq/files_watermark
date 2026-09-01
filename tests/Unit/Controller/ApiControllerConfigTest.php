@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Controller\ApiController;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
@@ -43,11 +44,18 @@ class ApiControllerConfigTest extends TestCase {
 	use L10nMock;
 
 	private WatermarkConfigMapper&MockObject $configMapper;
+	/**
+	 * Shared so a test can say what this host has. Unstubbed it answers false, which is the
+	 * honest default: most hosts have no `pdftoppm`, and every save in this file that says
+	 * nothing about flattening is a save that does not ask for it.
+	 */
+	private PdfFlattener&MockObject $pdfFlattener;
 	private ApiController $controller;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->configMapper = $this->createMock(WatermarkConfigMapper::class);
+		$this->pdfFlattener = $this->createMock(PdfFlattener::class);
 
 		$this->configMapper->method('insert')->willReturnCallback(
 			static fn (WatermarkConfig $config): WatermarkConfig => $config,
@@ -90,6 +98,7 @@ class ApiControllerConfigTest extends TestCase {
 			$this->createMock(ISystemTagManager::class),
 			$this->l10n(),
 			$this->timeZone(),
+			$this->pdfFlattener,
 		);
 	}
 
@@ -239,6 +248,103 @@ class ApiControllerConfigTest extends TestCase {
 		$this->assertSame($external, $response->getData()['watermarkExternalShares']);
 		// Unchanged by either: the trigger still decides which files are marked.
 		$this->assertSame('on_demand', $response->getData()['trigger']);
+	}
+
+	// Flattening ------------------------------------------------------------------------
+
+	/**
+	 * The form renders the flattening block only when the server says it can honour it, so
+	 * the answer travels with the policy rather than being guessed in the browser.
+	 *
+	 * @testWith [true]
+	 *           [false]
+	 */
+	public function testGetConfigReportsWhetherThisHostCanFlatten(bool $available): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->storedConfig());
+		$this->pdfFlattener->method('isAvailable')->willReturn($available);
+
+		$data = $this->controller->getConfig()->getData();
+
+		$this->assertSame($available, $data['flattenAvailable']);
+		$this->assertSame(
+			['min' => PdfFlattener::MIN_DPI, 'max' => PdfFlattener::MAX_DPI],
+			$data['flattenDpiRange'],
+		);
+	}
+
+	public function testFlatteningIsStoredWhenTheHostHasARenderer(): void {
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			flattenPdf: true,
+			flattenDpi: 300,
+		);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertTrue($response->getData()['flattenPdf']);
+		$this->assertSame(300, $response->getData()['flattenDpi']);
+	}
+
+	/**
+	 * **The real gate on the app's one external binary.** The form omits the control on a
+	 * host with no rasteriser, but hiding a control is not a check - a request that asks
+	 * for it anyway is refused rather than stored, so `flatten_pdf` can never be true on a
+	 * server that could not honour it when it was saved.
+	 */
+	public function testFlatteningIsRefusedWhenTheHostHasNoRenderer(): void {
+		$this->pdfFlattener->method('isAvailable')->willReturn(false);
+		$this->configMapper->expects($this->never())->method('insert');
+
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			flattenPdf: true,
+		);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+		$this->assertStringContainsString('poppler-utils', $response->getData()['error']);
+	}
+
+	/** A policy that does not ask for flattening saves fine on a host without the binary. */
+	public function testASaveThatDoesNotAskForFlatteningIsUnaffectedByTheProbe(): void {
+		$this->pdfFlattener->method('isAvailable')->willReturn(false);
+
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+		);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertFalse($response->getData()['flattenPdf']);
+		$this->assertSame(PdfFlattener::DEFAULT_DPI, $response->getData()['flattenDpi']);
+	}
+
+	/**
+	 * An out-of-range DPI is a slider the browser sent badly, not a policy anyone can have
+	 * meant - and at the top end it is a resource attack rather than a quality setting.
+	 *
+	 * @testWith [20000, 600]
+	 *           [1, 72]
+	 *           [-5, 72]
+	 *           [150, 150]
+	 */
+	public function testTheRenderResolutionIsClamped(int $sent, int $expected): void {
+		$this->pdfFlattener->method('isAvailable')->willReturn(true);
+
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			flattenPdf: true,
+			flattenDpi: $sent,
+		);
+
+		$this->assertSame($expected, $response->getData()['flattenDpi']);
 	}
 
 	/** Off unless asked for, so an upgrade watermarks nothing it did not watermark before. */

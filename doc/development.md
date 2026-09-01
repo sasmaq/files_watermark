@@ -358,14 +358,22 @@ particular came through unchanged.
     that a valid *n*-page PDF came out. Rendering a page to an image and **looking at it** is
     now the minimum bar for believing anything about output geometry
 
-### Flattened (rasterised) PDFs - removed
+### Flattened (rasterised) PDFs - removed, then reinstated {#flattened-rasterised-pdfs---removed}
 
-Built, shipped, and then **deleted**. It rebuilt every watermarked page as a bitmap so the
-overlay was fused into the pixels, which made the watermark impractical to strip - an
-ordinary overlay is a separate content stream that `qpdf` or `mutool` can drop.
+Built, shipped, **deleted**, and - on 2026-09-01 - **brought back as an optional feature**
+behind the advanced options. It rebuilds every watermarked page as a bitmap so the overlay
+is fused into the pixels, which makes the watermark impractical to strip: an ordinary
+overlay is a separate content stream that `qpdf` or `mutool` can drop.
 
-**Why it went.** The rasterise step needed an external renderer (`pdftoppm` from
-poppler-utils), and the app is now required to spawn no processes at all. There is no
+The terms it returned on, and why they differ from the terms it left on, are in [No
+external binaries](#no-external-binaries). In short: the binary is optional and probed at
+runtime, the control is absent where it cannot be honoured, and **a failed rasterise now
+delivers the overlay-watermarked PDF instead of refusing the download** - the reversal that
+made the dependency affordable to carry. What has not changed is the cost below, which is
+why it is off by default and why the form warns at the point of switching it on.
+
+**Why it went the first time.** The rasterise step needed an external renderer (`pdftoppm` from
+poppler-utils), and the app was at that point required to spawn no processes at all. There is no
 pure-PHP substitute worth having: rasterising a PDF means implementing or bundling a PDF
 *interpreter*, which is a far larger surface than the watermarking this app exists to do.
 Rather than keep one feature that dragged a binary dependency, a per-host availability
@@ -390,6 +398,18 @@ Removed with it: `PdfFlattener`, `PdfFlattenerTest`, `ApiControllerFlattenTest`,
 five `WatermarkServiceTest` cases. The decisions taken when it was built - PNG page
 images, flatten-per-fetch with no cache, fail-closed on a failed rasterise, server forces a
 stranded setting off - are recorded in git history rather than duplicated here.
+
+**What came back, and what did not.** The 2026-09-01 reinstatement restores all of the
+above except one decision: **fail-closed is gone**, replaced by the fallback described in
+[No external binaries](#no-external-binaries). Two things are new rather than restored -
+the availability probe also refuses a PHP with `exec` in `disable_functions`, and the tests
+fake the binary instead of skipping without it. The control now lives inside **advanced
+options** rather than as a card of its own, which is where the rest of the settings an
+install can ignore have since moved.
+
+Still true, and worth re-reading before switching it on: flattening destroys the text
+layer, taking selection, copy, search and screen-reader access with it - a possible WCAG /
+EN 301 549 problem for a document-management product. Off by default for that reason.
 
 ### Images (`ImageWatermarker`)
 
@@ -2242,11 +2262,44 @@ CMap into a run of plausible-looking letters.
 
 ---
 
-## No external binaries
+## No external binaries, with one deliberate exception {#no-external-binaries}
 
-**Position:** done. The app spawns **no processes** - no `exec()`, `shell_exec()`,
-`proc_open()` or any equivalent, in production code or in tests. `grep -rn "exec("` over
-`lib/` and `tests/` returns nothing.
+**Position:** the rule stands with a single, named exception. `PdfFlattener` calls `exec()`
+to run `pdftoppm`; **nothing else in `lib/` spawns a process**, and the rule for anything
+new is unchanged. `grep -rn "exec(" lib/` should return exactly the one call site, which is
+how the exception stays an exception rather than a precedent.
+
+> **Reinstated 2026-09-01**, after the whole feature had been deleted for this rule's sake.
+> Everything below the fold records why it went; this preface records why it came back and
+> on what terms. The section is kept in that order on purpose - the costs listed further
+> down are real and were not wished away, they were paid.
+>
+> **What changed is the shape of the dependency, not the honesty about it.** Flattening is
+> now additive from end to end, which is precisely what it was not before:
+>
+> - **The probe decides the UI, not the render.** `isAvailable()` checks PATH *and* that
+>   `exec` is not in `disable_functions` - the hardened-server case the old probe missed.
+>   The admin form omits the block when it answers false, and `saveConfig` refuses the
+>   field, so `flatten_pdf` can only be true where it could be honoured when saved.
+> - **A failed rasterise falls back instead of failing closed.** This is the reversal that
+>   made the feature affordable to have. A missing binary, a page poppler chokes on, a
+>   rebuild that cannot be written: all deliver the ordinary overlay-watermarked PDF and log
+>   a warning naming the file. The old behaviour - refuse the download, on the grounds that
+>   an overlay is strippable - made one absent package able to take every marked PDF offline.
+>   Flattening is hardening on top of a watermark that already names its reader, and is
+>   treated as such.
+> - **The tests do not need the binary.** `PdfFlattenerTest` puts a fake `pdftoppm` on PATH
+>   that logs its arguments and copies a PNG, so the command line, the ceilings, the rebuild
+>   and the cleanup are all exercised on any host. Exactly **one** test wants the real
+>   renderer and skips without it - against the dozen that used to. CI installs
+>   `poppler-utils` so even that one runs.
+> - **The schema round trip is deliberate.** `Version1002Date20260804120000` still drops the
+>   old columns and `Version1005Date20260901120000` adds them back at their defaults, so an
+>   instance that had flattening on two versions ago does not silently get it back;
+>   `SchemaConvergenceTest::testFlatteningColumnsAreReinstatedOnUpgrade` pins that ordering.
+> - **The accessibility cost is unchanged and still the reason it is off by default.** The
+>   form states it at the point of switching it on, in a warning-coloured line, and the
+>   README repeats it.
 
 **Why it matters here.** Every binary dependency this app had came with the same tail of
 problems: a runtime probe to see whether the host had it, a feature that silently changed
@@ -2259,7 +2312,7 @@ count used to depend on the developer's laptop.
 
 | Removed | Was used for | Consequence |
 | --- | --- | --- |
-| `PdfFlattener` + `pdftoppm` | Rasterising pages so the watermark could not be stripped | **Tamper resistance is gone.** See [Flattened PDFs](#flattened-rasterised-pdfs---removed) |
+| ~~`PdfFlattener` + `pdftoppm`~~ | Rasterising pages so the watermark could not be stripped | **Back as of 2026-09-01**, optional and probed. See [Flattened PDFs](#flattened-rasterised-pdfs---removed) |
 | `PdfNormalizer` + `qpdf` | `--decrypt` on files locked with an empty password | **Empty-password encrypted PDFs are now skipped** rather than watermarked |
 | `BinaryLocator` | Probing `PATH` for both of the above | Nothing left to probe |
 
@@ -2272,8 +2325,9 @@ Neither loss is invisible, and neither is being papered over:
   real password and an empty one, and asserts the refusal is *clean*: no destination
   written, source byte-identical
 - **Tamper resistance.** There is no pure-PHP replacement, because rasterising a PDF means
-  bundling a PDF interpreter. The honest position is that this app deters and traces; it
-  does not prevent
+  bundling a PDF interpreter. That is still true, which is why the feature came back as an
+  *optional* external binary rather than as PHP: on a host without `poppler-utils` the
+  honest position is unchanged - this app deters and traces; it does not prevent
 
 ### What it bought
 
@@ -2281,6 +2335,9 @@ Neither loss is invisible, and neither is being papered over:
   suite result no longer depends on which machine ran it, which is worth more than it
   sounds - the flattener's rasterise cases were green on the developer's laptop and
   skipped in CI for most of their life
+  - *2026-09-01:* one skip is back, and only one. `PdfFlattenerTest` fakes the renderer
+    for everything except the single case that exists to exercise poppler itself, so the
+    rest of the suite is machine-independent as before
 - **No `exec()` anywhere, including fixtures.** The encrypted-PDF fixtures were built by
   shelling out to `qpdf --encrypt`; they now use tc-lib-pdf's own encryption support
   (`Com\Tecnick\Pdf\Encrypt\Encrypt`), so the test suite spawns nothing either. A test
@@ -2297,6 +2354,16 @@ Neither loss is invisible, and neither is being papered over:
 
 ### Notes and open questions {#open-nobinary}
 
+- **What the exception costs, measured rather than asserted.** One skipped test on a host
+  without `poppler-utils` (`testAgainstTheRealRendererIfThisHostHasOne`), one probe, one
+  package that differs between RHEL 9 AppStream and Debian, and one setting that is absent
+  on some servers. That is the tail this rule exists to keep short, and it is the price of
+  the only capability with no pure-PHP substitute. Anything *else* that wants a binary
+  should be refused on the strength of this list
+- **The memory ceiling of the page-at-a-time rasterise loop is still unmeasured.** The
+  page and byte ceilings (200 pages, 256 MiB) are inherited from the first implementation
+  and were never derived from a measurement. They now bound work done *per fetch* rather
+  than once per file, which makes measuring them more worthwhile than it was
 - The **schema column drop is one-way.** `Version1002Date20260730000000` drops
   `flatten_pdf` and `flatten_dpi`; Nextcloud migrations have no `down()`, and re-adding the
   columns would not bring the feature back. An admin who had flattening enabled loses it
@@ -2304,8 +2371,10 @@ Neither loss is invisible, and neither is being papered over:
   newly watermarked PDFs are suddenly selectable text
   - the app version is bumped to **1.2.0**, without which Nextcloud would not run the
     migration at all
-- Nothing enforces the no-`exec()` rule mechanically. A static-analysis rule or a
-  one-line grep in CI would keep it true; right now it rests on review
+- Nothing enforces the rule mechanically, and the exception makes that *more* worth
+  fixing rather than less: the check to write now is not "no `exec(` in `lib/`" but "no
+  `exec(` outside `lib/Service/PdfFlattener.php`", which a one-line grep in CI states
+  exactly. Right now it rests on review
 
 ---
 
@@ -2681,8 +2750,8 @@ still missing.
     `Application::RUNTIME_VENDOR_PACKAGES` or its classes will not load inside Nextcloud;
     `RuntimeVendorPackagesTest` enforces that against `composer.lock` in both directions
 - **`ext-bcmath`** - a hard requirement of `tc-lib-pdf`, and **confirmed present in RHEL 9
-  AppStream on the real target build**, which was the last packaging question standing
-  (`qpdf` and `poppler-utils` are no longer used, so nothing else needs a host package).
+  AppStream on the real target build**, which was the last packaging question standing for a
+  *required* dependency (`qpdf` is no longer used; `poppler-utils` is optional - see below).
   Declared in `composer.json` and in
   `<dependencies>` in `appinfo/info.xml`, so Nextcloud refuses to enable the app on a host
   without it rather than fatalling on the first PDF. Composer will not even resolve without it.
@@ -2696,15 +2765,23 @@ still missing.
   [Images](#images-imagewatermarker) for why the preference was flipped. GD is a Nextcloud
   server requirement already, so the default engine is present on every host by definition;
   Imagick stays optional and stays supported
-- ~~**`qpdf`** for `PdfNormalizer` and ~~**`poppler-utils`** for `pdftoppm`~~ - both
-  **removed**. See [No external binaries](#no-external-binaries) for what went with them
+- **`poppler-utils`** for `pdftoppm` - **optional**, and the app's only external binary.
+  It powers the tamper-resistance setting and nothing else; an install without it hides the
+  setting and is otherwise identical. **RHEL 9 AppStream**, so no EPEL and no third-party
+  repo; Debian/Ubuntu `apt install poppler-utils`; installed by both compose entrypoints and
+  by `ci/php.Dockerfile`. Not declared in `appinfo/info.xml` - `<lib>` means *required*, and
+  declaring it would refuse to enable the app on hosts that run everything but one setting
+  - **Imagick is deliberately not a fallback rasteriser**: on RHEL 9 it is EPEL-only and its
+    PDF delegate *is* Ghostscript, disabled by `policy.xml` by default over the Ghostscript
+    CVEs. Ghostscript direct re-distills the document and can shift fonts and colour
+- ~~**`qpdf`** for `PdfNormalizer`~~ - **removed**. See
+  [No external binaries](#no-external-binaries) for what went with it
   - kept here because the reasoning still applies to any future proposal to shell out.
-    `qpdf` was chosen over `pdftk` (which drags in a JRE) and Ghostscript (which re-distills
-    the document and can shift fonts and colour). **Imagick was deliberately never a
-    fallback rasteriser**: on RHEL 9 it is EPEL-only and its PDF delegate *is* Ghostscript,
-    disabled by `policy.xml` by default over the Ghostscript CVEs
-  - the argument that eventually beat all of them was not about which binary: it was that
-    every one of them makes behaviour depend on the host
+    `qpdf` was chosen over `pdftk` (which drags in a JRE) and Ghostscript
+  - the argument that beat them was not about which binary: it was that every one of them
+    makes behaviour depend on the host. That argument is still the default answer; what
+    `pdftoppm` has that the others did not is a capability with no pure-PHP substitute and
+    a fallback that costs the user nothing when the binary is absent
 - Frontend: `@nextcloud/vue` `^9.8`, `@nextcloud/axios` `^2.5`, `@nextcloud/files` `^3.9`
 - `sabre/dav` pinned to **4.7.0** in `require-dev`, the exact version NC 31.0.14 ships -
   see the shadowing note under [Testing](#dav-plugin-test-harness)
