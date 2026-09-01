@@ -159,21 +159,34 @@ const TRIGGER_LABELS = {
  * One 24x24 glyph per kind of row, drawn with `fill-rule="evenodd"` so the cut-outs knock
  * through whichever way their subpaths wind.
  *
- * The two shields are deliberately the same silhouette as the badge the Files list puts on
- * a marked file, so "this file was protected" and "that protection was taken off" read as
- * the same object in two states rather than as two unrelated symbols. The arrows point the
- * way the file was moving: in on upload, out on delivery.
+ * **The document is the object; what it carries says what happened to it.** The outline is
+ * the app's own mark, the one the Files list badges a marked row with, so three of the four
+ * rows are the same familiar page with a different thing knocked out of it: the watermark
+ * droplet where a mark was placed, an arrow in where the policy marked it on arrival, and a
+ * bar where the droplet should be once the mark came off.
+ *
+ * `delivered` is the exception and stays a bare arrow out of a tray. It is not a statement
+ * about the file at all - the file is unchanged, a *copy* went out - and by far the most
+ * common row in the log, so it is the one that has to be told apart at a glance.
+ *
+ * `DOCUMENT` is `img/app.svg`'s outline and is duplicated from `main-files.js` on purpose -
+ * a shared module for one path would be imported by the settings bundle only to reach a
+ * constant, and the two are checked against each other by eye at the one place that
+ * matters, `img/app.svg`.
  */
-const SHIELD = 'M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z'
+const DOCUMENT = 'M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z'
+const DROPLET = 'M12 9c-1.6 2-3 4.3-3 6a3 3 0 0 0 6 0c0-1.7-1.4-4-3-6Z'
 const TRIGGER_ICONS = {
-	// Shield + check: someone deliberately marked this file.
-	on_demand: SHIELD + 'M10.8 15.2 7.5 11.9l1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z',
-	// Arrow into a tray: marked by policy as the file arrived.
-	on_upload: 'M12 3 6 9h4v6h4V9h4L12 3ZM5 18h14v2H5Z',
+	// The app's mark: someone deliberately put a watermark on this file.
+	on_demand: DOCUMENT + DROPLET,
+	// The same document, carrying the arrow instead of the droplet: marked by policy as
+	// the file arrived. Sized and placed to sit inside the outline the way the droplet
+	// does - clear of the folded corner, which cuts the document above `y = x - 12`.
+	on_upload: DOCUMENT + 'M12 7 7.5 12H10v6h4v-6h2.5L12 7Z',
 	// Arrow out of a tray: one watermarked copy handed to one reader.
 	delivered: 'M12 16 6 10h4V4h4v6h4l-6 6ZM5 18h14v2H5Z',
-	// The same shield with the check struck out: protection removed.
-	unmarked: SHIELD + 'M8 11h8v2H8v-2Z',
+	// The same document with a bar where the droplet was: the mark is off.
+	unmarked: DOCUMENT + 'M8 13h8v2H8Z',
 }
 
 // A row whose trigger this version does not know - written by an older or newer release -

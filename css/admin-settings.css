@@ -1548,27 +1548,27 @@ to { opacity: 1; transform: none;
 }
 
 
-.loading-wrapper[data-v-4e134bb6] {
+.loading-wrapper[data-v-0e5aa73b] {
 	display: flex;
 	justify-content: center;
 	padding: 32px;
 }
-.log-card[data-v-4e134bb6] {
+.log-card[data-v-0e5aa73b] {
 	border: 1px solid var(--color-border);
 	border-radius: var(--border-radius-large, 12px);
 	overflow: hidden;
 	background: var(--color-main-background);
 }
-.log-scroll[data-v-4e134bb6] {
+.log-scroll[data-v-0e5aa73b] {
 	overflow-x: auto;
 }
-.log-table[data-v-4e134bb6] {
+.log-table[data-v-0e5aa73b] {
 	width: 100%;
 	min-width: 560px;
 	border-collapse: collapse;
 	font-size: 14px;
 }
-.log-table thead th[data-v-4e134bb6] {
+.log-table thead th[data-v-0e5aa73b] {
 	/* `start`, not `left`: the header has to follow the reading direction, otherwise an
 	   RTL table has every heading pinned to the wrong end of its own column. */
 	text-align: start;
@@ -1584,54 +1584,54 @@ to { opacity: 1; transform: none;
 }
 /* Arabic is a joined script: letter-spacing breaks the joins apart, and there is no case
    for text-transform to change. Both are undone rather than left to apply harmlessly. */
-[dir="rtl"] .log-table thead th[data-v-4e134bb6] {
+[dir="rtl"] .log-table thead th[data-v-0e5aa73b] {
 	text-transform: none;
 	letter-spacing: normal;
 }
-.log-table tbody td[data-v-4e134bb6] {
+.log-table tbody td[data-v-0e5aa73b] {
 	padding: 12px 16px;
 	border-bottom: 1px solid var(--color-border);
 	vertical-align: middle;
 }
-.log-table tbody tr:last-child td[data-v-4e134bb6] {
+.log-table tbody tr:last-child td[data-v-0e5aa73b] {
 	border-bottom: none;
 }
-.log-table tbody tr:hover td[data-v-4e134bb6] {
+.log-table tbody tr:hover td[data-v-0e5aa73b] {
 	background: var(--color-background-hover);
 }
-.col-date[data-v-4e134bb6] {
+.col-date[data-v-0e5aa73b] {
 	white-space: nowrap;
 }
-.date-main[data-v-4e134bb6] {
+.date-main[data-v-0e5aa73b] {
 	font-variant-numeric: tabular-nums;
 }
-.date-time[data-v-4e134bb6] {
+.date-time[data-v-0e5aa73b] {
 	margin-inline-start: 6px;
 	font-size: 13px;
 	font-variant-numeric: tabular-nums;
 	color: var(--color-text-maxcontrast);
 }
-.log-timezone[data-v-4e134bb6] {
+.log-timezone[data-v-0e5aa73b] {
 	margin: 8px 2px 0;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.user-name[data-v-4e134bb6] {
+.user-name[data-v-0e5aa73b] {
 	font-weight: 500;
 }
-.file-cell[data-v-4e134bb6] {
+.file-cell[data-v-0e5aa73b] {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
 	max-width: 340px;
 }
-.file-icon[data-v-4e134bb6] {
+.file-icon[data-v-0e5aa73b] {
 	flex: none;
 	width: 18px;
 	height: 18px;
 	fill: var(--color-text-maxcontrast);
 }
-.file-path[data-v-4e134bb6] {
+.file-path[data-v-0e5aa73b] {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1648,7 +1648,7 @@ to { opacity: 1; transform: none;
    The tint is `color-mix` against `transparent`, not a second hard-coded colour, so the
    same four declarations sit correctly on the light and the dark background.
 */
-.trigger-badge[data-v-4e134bb6] {
+.trigger-badge[data-v-0e5aa73b] {
 	--trigger-color: var(--color-text-maxcontrast);
 	display: inline-flex;
 	align-items: center;
@@ -1663,7 +1663,7 @@ to { opacity: 1; transform: none;
 	line-height: 18px;
 	white-space: nowrap;
 }
-.trigger-icon[data-v-4e134bb6] {
+.trigger-icon[data-v-0e5aa73b] {
 	flex: none;
 	width: 14px;
 	height: 14px;
@@ -1671,22 +1671,22 @@ to { opacity: 1; transform: none;
 }
 
 /* Marked on purpose by a person. */
-.trigger-badge--on_demand[data-v-4e134bb6] { --trigger-color: #6d5bd0;
+.trigger-badge--on_demand[data-v-0e5aa73b] { --trigger-color: #6d5bd0;
 }
 /* Marked by the policy, without anybody deciding. */
-.trigger-badge--on_upload[data-v-4e134bb6] { --trigger-color: #2f9e5a;
+.trigger-badge--on_upload[data-v-0e5aa73b] { --trigger-color: #2f9e5a;
 }
 /* One copy handed to one reader - the routine row, and by far the most common. */
-.trigger-badge--delivered[data-v-4e134bb6] { --trigger-color: #3d7fd6;
+.trigger-badge--delivered[data-v-0e5aa73b] { --trigger-color: #3d7fd6;
 }
 /*
    Protection taken off. Amber rather than the violet it used to share with everything
    else: this is the row an auditor is scanning for, and it is the only one here that
    makes a file *less* protected than it was.
 */
-.trigger-badge--unmarked[data-v-4e134bb6] { --trigger-color: #b8770f;
+.trigger-badge--unmarked[data-v-0e5aa73b] { --trigger-color: #b8770f;
 }
-.empty-state[data-v-4e134bb6] {
+.empty-state[data-v-0e5aa73b] {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -1694,24 +1694,24 @@ to { opacity: 1; transform: none;
 	gap: 6px;
 	padding: 48px 24px;
 }
-.empty-icon[data-v-4e134bb6] {
+.empty-icon[data-v-0e5aa73b] {
 	width: 40px;
 	height: 40px;
 	margin-bottom: 2px;
 	fill: var(--color-text-maxcontrast);
 	opacity: 0.6;
 }
-.empty-title[data-v-4e134bb6] {
+.empty-title[data-v-0e5aa73b] {
 	margin: 0;
 	font-weight: 600;
 }
-.empty-sub[data-v-4e134bb6] {
+.empty-sub[data-v-0e5aa73b] {
 	margin: 0;
 	max-width: 320px;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.pagination-bar[data-v-4e134bb6] {
+.pagination-bar[data-v-0e5aa73b] {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -1719,14 +1719,14 @@ to { opacity: 1; transform: none;
 	flex-wrap: wrap;
 	margin-top: 14px;
 }
-.page-size[data-v-4e134bb6] {
+.page-size[data-v-0e5aa73b] {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
-.page-size-select[data-v-4e134bb6] {
+.page-size-select[data-v-0e5aa73b] {
 	height: 36px;
 	padding: 0 8px;
 	border: 1px solid var(--color-border-maxcontrast, #949494);
@@ -1736,12 +1736,12 @@ to { opacity: 1; transform: none;
 	font-size: 13px;
 	cursor: pointer;
 }
-.page-nav[data-v-4e134bb6] {
+.page-nav[data-v-0e5aa73b] {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 }
-.page-range[data-v-4e134bb6] {
+.page-range[data-v-0e5aa73b] {
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 	font-variant-numeric: tabular-nums;

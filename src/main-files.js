@@ -188,13 +188,34 @@ export function isRemoveActionEnabled(files, view) {
 		|| (Number.isInteger(id) && watermarkedIds.has(id))
 }
 
-// Small badge SVG (distinct from the action icon: a filled tag/seal mark).
-const INDICATOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.5-4.5 1.4 1.4-5.9 5.9Z"/></svg>'
+// The app's mark, from `img/app.svg`: a filled document with a watermark droplet knocked
+// out of it. The knockout is what needs `fill-rule="evenodd"` - without it the droplet
+// fills solid and the document reads as a plain page.
+//
+// **One path, two wrappers.** The row badge and the menu icon are the same shape at
+// different sizes, so the symbol an admin learns in the Files list is the one they meet in
+// the action menu. Kept as a constant rather than copied into both strings, because two
+// copies of a path are two things to keep in step with `img/app.svg`.
+const APP_MARK_PATH = 'M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm6 7c-1.6 2-3 4.3-3 6a3 3 0 0 0 6 0c0-1.7-1.4-4-3-6Z'
 
-// Inline content of img/app.svg - a filled document with a watermark droplet
-// knocked out via the even-odd rule. `fill="currentColor"` lets it inherit the
+/**
+ * One `<svg>` carrying {@link APP_MARK_PATH}.
+ * @param {string} attributes - extra attributes for the root element, e.g. a fixed size
+ * @return {string} the markup
+ */
+function appMarkSvg(attributes) {
+	return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"'
+		+ ' fill-rule="evenodd" clip-rule="evenodd" ' + attributes + '>'
+		+ '<path d="' + APP_MARK_PATH + '"/></svg>'
+}
+
+// Sized here rather than in CSS: the badge is injected into a row Nextcloud owns, and an
+// unsized SVG there inherits whatever the file list happens to be doing.
+const INDICATOR_SVG = appMarkSvg('width="16" height="16" aria-hidden="true"')
+
+// Unsized on purpose - the menu sizes it, and `fill="currentColor"` lets it inherit the
 // menu text colour (Nextcloud's `.icon-vue svg { fill: currentColor }` rule).
-const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm6 7c-1.6 2-3 4.3-3 6a3 3 0 0 0 6 0c0-1.7-1.4-4-3-6Z"/></svg>'
+const APP_ICON_SVG = appMarkSvg('')
 
 /**
  * Mounts WatermarkModal and returns a Promise that resolves with:
