@@ -9,6 +9,7 @@ use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\Files\Event\LoadAdditionalScriptsEvent;
 use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
+use OCA\FilesWatermark\EventListener\NodeCopiedListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
@@ -23,6 +24,7 @@ use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\BeforeSabrePubliclyLoadedEvent;
+use OCP\Files\Events\Node\NodeCopiedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\IRequest;
 use OCP\IUserSession;
@@ -151,6 +153,11 @@ class Application extends App implements IBootstrap {
 
 	public function register(IRegistrationContext $context): void {
 		$context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
+		// A copy gets a new file id, so it lands outside every mark already placed - which
+		// made copying a shared file the way to obtain it clean. See NodeCopiedListener.
+		// (There is deliberately no NodeRenamedEvent listener: a move keeps the file id, so
+		// the mark moves with the file on its own.)
+		$context->registerEventListener(NodeCopiedEvent::class, NodeCopiedListener::class);
 		$context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
 		$context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
 		// Public links are served by a *separate* Sabre server that never fires

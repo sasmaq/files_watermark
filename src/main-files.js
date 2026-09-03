@@ -10,9 +10,11 @@ import WatermarkModal from './components/WatermarkModal.vue'
 import RemoveWatermarkModal from './components/RemoveWatermarkModal.vue'
 import {
 	DAV_WATERMARKED_PROP,
+	DAV_WATERMARK_LOCKED_PROP,
 	appMarkSvg,
 	decorateRows,
 	inTestRunner,
+	isNodeWatermarkLocked,
 	isNodeWatermarked,
 	markWatermarked,
 	startIndicator,
@@ -28,6 +30,7 @@ export {
 	clearWatermarkedIds,
 	decorateRows,
 	isNodeExplicitlyNotWatermarked,
+	isNodeWatermarkLocked,
 	isNodeWatermarked,
 	markWatermarked,
 	startIndicator,
@@ -38,6 +41,20 @@ export {
 // The live id set, for the two action predicates below: a file showing the badge must not
 // also be offered "Apply watermark", so both read exactly what the badge reads.
 const watermarkedIds = watermarkedIdSet()
+
+// Ids whose watermark this user may not remove, learned from the REST fallback below when
+// a listing arrives without the DAV property. Local to this bundle rather than shared with
+// the badge: the badge is about the file and this is about the viewer, and the public
+// bundle has no Remove action for it to govern.
+const lockedIds = new Set()
+
+/**
+ * Forget every locked id. Test seam, and the mirror of `clearWatermarkedIds`.
+ * @return {void}
+ */
+export function clearLockedIds() {
+	lockedIds.clear()
+}
 
 const SUPPORTED_MIME = [
 	'application/pdf',
@@ -161,6 +178,13 @@ export function isOwnedByCurrentUser(node) {
  * whole point of it - whoever the shared copy would have named is exactly whoever wants it
  * to name nobody. The server refuses them either way; this stops the button being offered
  * so the refusal is not something a user has to discover.
+ *
+ * **Ownership is not sufficient on its own**, which is why there is a second gate. A
+ * recipient who *copies* the shared file owns the copy outright, so the test above says yes
+ * - and the mark travelled with the copy, so the server still says no. `watermark-locked`
+ * is the server answering that question directly, by the same rule the API enforces. It
+ * does not fire for someone copying their own watermarked file: they are the origin, so
+ * they keep the button.
  * @param {object[]} files - selected Files `Node` objects
  * @param {object} [view] - the Files `View` the action is offered in; the trash bin offers neither
  * @return {boolean} true when the action should be shown
@@ -174,6 +198,9 @@ export function isRemoveActionEnabled(files, view) {
 		return false
 	}
 	const id = Number(node?.fileid ?? node?.id)
+	if (isNodeWatermarkLocked(node) || (Number.isInteger(id) && lockedIds.has(id))) {
+		return false
+	}
 	return isNodeWatermarked(node)
 		|| (Number.isInteger(id) && watermarkedIds.has(id))
 }
@@ -340,6 +367,11 @@ const STATUS_QUERY_CHUNK = 100
  * present-but-0 value is trusted and never re-queried, so the DAV property stays the
  * primary source.
  *
+ * Both properties are reconciled together, because they are requested together: a listing
+ * that lacks one lacks the other, and folding in "this file is watermarked" without "and
+ * you may not unmark it" would put the Remove button back on exactly the files it was
+ * hidden from.
+ *
  * With the early `dav-property` bundle in place this should now find nothing to do on a
  * normal Files page: the property arrives with the first listing. It stays because it is
  * the only cover for a page that bundle does not reach, and it is what has to work when
@@ -384,6 +416,20 @@ export async function reconcileMissingStatus(nodes) {
 		if (response.status !== 'fulfilled') {
 			// Best-effort: the indicator must never block or break the file list.
 			continue
+		}
+		// The locked ids first, so that a node updated by the loop below re-evaluates its
+		// Remove action against a set that already knows the answer. Stamped onto the node
+		// as well, so the predicate can read it the same way it reads a real listing.
+		for (const raw of response.value?.data?.locked ?? []) {
+			const id = Number(raw)
+			if (!Number.isInteger(id) || id <= 0) {
+				continue
+			}
+			lockedIds.add(id)
+			const node = nodeById.get(id)
+			if (node?.attributes) {
+				node.attributes[DAV_WATERMARK_LOCKED_PROP] = 1
+			}
 		}
 		for (const raw of response.value?.data?.watermarked ?? []) {
 			const id = Number(raw)

@@ -19,6 +19,7 @@ use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use OCP\AppFramework\Http\DataResponse;
+use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
 use OCP\IL10N;
@@ -459,13 +460,26 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $this->l->t('You do not have permission to read this file')], Http::STATUS_FORBIDDEN);
 		}
 
-		// The ownership check, per the note above. `getOwner()` is nullable and answers null
-		// for a node whose owner cannot be resolved - a broken mount, most of all - and that
-		// is treated as "not the owner": a check that cannot establish who owns the file has
-		// not established that this user does.
-		if ($node->getOwner()?->getUID() !== $user->getUID()) {
+		// The ownership check, per the note above, plus the one case ownership cannot answer.
+		// `getOwner()` is nullable and answers null for a node whose owner cannot be resolved -
+		// a broken mount, most of all - and that is treated as "not the owner": a check that
+		// cannot establish who owns the file has not established that this user does.
+		// See {@see WatermarkService::unmarkVerdict}.
+		$verdict = $this->watermarkService->unmarkVerdict($node, $user->getUID());
+
+		if ($verdict === WatermarkService::UNMARK_NOT_OWNER) {
 			return new DataResponse(
 				['error' => $this->l->t('Only the owner of this file can remove its watermark.')],
+				Http::STATUS_FORBIDDEN,
+			);
+		}
+
+		if ($verdict === WatermarkService::UNMARK_INHERITED) {
+			// They *do* own this file - they own it because they copied it. Owning the copy is
+			// what the ownership rule above would have read as permission, and it is the whole
+			// reason an inherited mark records who it descends from instead.
+			return new DataResponse(
+				['error' => $this->l->t('This file is a copy of a watermarked file owned by someone else. Only they can remove the watermark.')],
 				Http::STATUS_FORBIDDEN,
 			);
 		}
@@ -480,10 +494,49 @@ class ApiController extends Controller {
 	}
 
 	/**
+	 * The acting user's own trashbin folder, or null when there is nothing to look in.
+	 *
+	 * Named explicitly rather than widening the scope test to the whole home directory: the
+	 * question this endpoint answers is about files a user can see in a listing, and the two
+	 * listings that exist are their files and their trash. Everything else under `/{uid}` -
+	 * versions, this app's own temp work, whatever another app keeps there - is not
+	 * something any view asks about, so it stays out.
+	 *
+	 * Null covers `files_trashbin` being disabled and a user who has never deleted anything;
+	 * both mean the same thing here, and both leave the ordinary scope test in sole charge.
+	 */
+	private function trashFolder(Folder $userFolder): ?Folder {
+		try {
+			$trash = $userFolder->getParent()->get('files_trashbin/files');
+		} catch (\Throwable) {
+			return null;
+		}
+
+		return $trash instanceof Folder ? $trash : null;
+	}
+
+	/**
 	 * Report which of the given file ids are marked.
 	 *
 	 * The query is scoped to ids the acting user can actually access, so the
 	 * response never reveals whether another user's files are watermarked.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE TRASH IS IN SCOPE, AND LEAVING IT OUT WAS A BUG YOU COULD SEE.
+	 *
+	 * The scope test used to be `getUserFolder()->getById()` alone, which resolves inside
+	 * `/{uid}/files` - and a trashed file lives at `/{uid}/files_trashbin/files`. So every
+	 * id from a trash listing was dropped as *inaccessible*, of all things, and the endpoint
+	 * answered "none of these are watermarked" about the user's own deleted files.
+	 *
+	 * That is what made the badge missing in the trash, and it took a browser to see it:
+	 * the trash listing is the one place this endpoint is not a fallback but the **only**
+	 * source. `files_trashbin` freezes its PROPFIND body at its own module load, so a
+	 * property registered by this app's bundle is not in it however early that bundle runs -
+	 * unlike the Files list, whose request does carry it. `PropFindPlugin` answers for a
+	 * trashed node all the same, for the client that does ask; this is what the trash view
+	 * actually reads.
+	 * ---------------------------------------------------------------------------
 	 *
 	 * @param string $ids Comma-separated list of file ids, e.g. "1,2,3".
 	 */
@@ -498,25 +551,31 @@ class ApiController extends Controller {
 		$requested = array_values(array_unique($requested));
 
 		if (empty($requested)) {
-			return new DataResponse(['watermarked' => []]);
+			return new DataResponse(['watermarked' => [], 'locked' => []]);
 		}
 
 		// Restrict to ids the acting user can access. getById returns an empty
 		// array for ids the user cannot reach, so anything outside their scope
 		// is dropped before it ever hits the log table.
 		$userFolder = $this->rootFolder->getUserFolder($user->getUID());
+		$trash = $this->trashFolder($userFolder);
 		$accessible = array_values(array_filter(
 			$requested,
-			fn (int $id) => $userFolder->getById($id) !== [],
+			fn (int $id) => $userFolder->getById($id) !== []
+				|| ($trash !== null && $trash->getById($id) !== []),
 		));
 
 		if (empty($accessible)) {
-			return new DataResponse(['watermarked' => []]);
+			return new DataResponse(['watermarked' => [], 'locked' => []]);
 		}
 
 		$watermarked = $this->watermarkService->markedFileIds($accessible);
+		// The second list is what the `watermark-locked` DAV property carries, for the same
+		// reason this endpoint carries the first: a listing that arrived without the
+		// properties would otherwise offer Remove on a file the server will refuse.
+		$locked = $this->watermarkService->lockedFileIds($accessible, $user->getUID());
 
-		return new DataResponse(['watermarked' => $watermarked]);
+		return new DataResponse(['watermarked' => $watermarked, 'locked' => $locked]);
 	}
 
 	public function getLog(int $limit = 100, int $offset = 0): DataResponse {

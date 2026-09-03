@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
+use OCA\FilesWatermark\Db\WatermarkMark;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\FileTooLargeException;
@@ -1438,6 +1439,194 @@ class WatermarkServiceTest extends TestCase {
 		$this->service->watermarkPreviewImage($this->file('image/png'), '/tmp/a', '/tmp/b', 100);
 
 		$this->assertSame(40, $this->service->resolveConfig()->getFontSize());
+	}
+
+	// -----------------------------------------------------------------------
+	// Marks that travel with a copy
+	// -----------------------------------------------------------------------
+
+	/**
+	 * @param ?string $originOwner null for a mark placed directly on a file
+	 */
+	private function mark(string $trigger, ?string $originOwner = null): WatermarkMark {
+		$mark = new WatermarkMark();
+		$mark->setTrigger($trigger);
+		$mark->setOriginOwner($originOwner);
+		return $mark;
+	}
+
+	/**
+	 * The copy is marked, and the mark records whose file it descends from.
+	 *
+	 * The origin is the whole point: the copier owns the copy, so without it the remove gate
+	 * would read ownership as permission and hand them the off switch.
+	 */
+	public function testACopyOfAMarkedFileInheritsTheMarkAndNamesItsOrigin(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn($this->user('bob'));
+		$source = $this->file(id: 42, owner: $this->user('alice'));
+		$target = $this->file(id: 99);
+
+		$this->markMapper->expects($this->once())
+			->method('mark')
+			->with(99, 'bob', WatermarkService::TRIGGER_INHERITED, null, 'alice', 42)
+			->willReturn(true);
+
+		$this->assertTrue($this->service->inheritMark($target, $source));
+	}
+
+	/**
+	 * **Inheriting consults neither ceiling nor scope.**
+	 *
+	 * Both would refuse this file - it is far over the byte ceiling and its type is outside
+	 * the policy's whitelist - and `mark()` would throw for either reason. Refusing here
+	 * would mean an unmarked clean copy of a protected document, which is the escape being
+	 * closed rebuilt out of the checks. The bytes are the source's own, so the ceiling the
+	 * source passed still holds.
+	 */
+	public function testInheritingIgnoresTheCeilingsAndTheScope(): void {
+		$config = $this->config();
+		$config->setMimeTypes('image/png');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->userSession->method('getUser')->willReturn($this->user('bob'));
+
+		$source = $this->file(mime: 'application/pdf', id: 42, size: PHP_INT_MAX, owner: $this->user('alice'));
+		$target = $this->file(mime: 'application/pdf', id: 99, size: PHP_INT_MAX);
+
+		$this->markMapper->expects($this->once())->method('mark')->willReturn(true);
+
+		$this->assertTrue($this->service->inheritMark($target, $source));
+	}
+
+	/**
+	 * A copy of a copy still names the person the protection started with.
+	 *
+	 * Bob owns the file being copied, and Bob is not who may release it: he holds it only
+	 * because he copied it from Alice. Reading the owner rather than the existing mark's
+	 * origin would launder the protection away in two copies.
+	 */
+	public function testACopyOfACopyStillNamesTheFirstOwner(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn($this->user('carol'));
+		$source = $this->file(id: 42, owner: $this->user('bob'));
+
+		$this->markMapper->method('findByFileId')->with(42)->willReturn(
+			$this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
+		);
+		$this->markMapper->expects($this->once())
+			->method('mark')
+			->with(99, 'carol', WatermarkService::TRIGGER_INHERITED, null, 'alice', 42)
+			->willReturn(true);
+
+		$this->service->inheritMark($this->file(id: 99), $source);
+	}
+
+	public function testInheritingAnAlreadyMarkedCopyIsANoOp(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('mark')->willReturn(false);
+		$this->logMapper->expects($this->never())->method('insertLog');
+
+		$this->assertFalse(
+			$this->service->inheritMark($this->file(id: 99), $this->file(id: 42)),
+		);
+	}
+
+	// -----------------------------------------------------------------------
+	// Who may take a mark off
+	// -----------------------------------------------------------------------
+
+	/**
+	 * The batched form of the same rule, for the status endpoint.
+	 *
+	 * Three files, one of each kind: an ordinary mark (ownership governs it, so it locks
+	 * nobody), one inherited from somebody else, and one inherited from the asker
+	 * themselves. Only the middle one comes back.
+	 */
+	public function testLockedFileIdsReturnsOnlyMarksForeignToTheAsker(): void {
+		$this->markMapper->method('findByFileIds')->with([1, 2, 3])->willReturn([
+			1 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND),
+			2 => $this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
+			3 => $this->mark(WatermarkService::TRIGGER_INHERITED, 'bob'),
+		]);
+
+		$this->assertSame([2], $this->service->lockedFileIds([1, 2, 3], 'bob'));
+	}
+
+	public function testLockedFileIdsIsEmptyWhenNothingIsMarked(): void {
+		$this->markMapper->method('findByFileIds')->willReturn([]);
+
+		$this->assertSame([], $this->service->lockedFileIds([1, 2], 'bob'));
+	}
+
+	public function testTheOwnerOfADirectlyMarkedFileMayUnmarkIt(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_DEMAND),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_OK,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'alice'),
+		);
+	}
+
+	public function testANonOwnerMayNotUnmark(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_DEMAND),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_NOT_OWNER,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'bob'),
+		);
+	}
+
+	/**
+	 * **The case ownership cannot answer.** Bob owns this file outright - he owns it because
+	 * he copied it - and he is still refused.
+	 */
+	public function testTheOwnerOfAnInheritedMarkMayNotUnmarkIt(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_INHERITED,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('bob')), 'bob'),
+		);
+	}
+
+	/**
+	 * The person it descends from may release it, even though the file is not hers.
+	 *
+	 * The mirror of the case above, and what keeps an inherited mark from being a one-way
+	 * door: the protection belongs to whoever it protects.
+	 */
+	public function testTheOriginOfAnInheritedMarkMayUnmarkIt(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_OK,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('bob')), 'alice'),
+		);
+	}
+
+	/**
+	 * An inherited mark that names nobody is removable by nobody.
+	 *
+	 * The fail-closed direction, and the same call the ownership check makes for a node
+	 * whose owner will not resolve. An empty uid must not match an unset origin.
+	 */
+	public function testAnInheritedMarkWithNoOriginIsRemovableByNobody(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_INHERITED, null),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_INHERITED,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('bob')), ''),
+		);
 	}
 
 	private function cleanup(?string $tmpPath): void {

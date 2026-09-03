@@ -70,6 +70,15 @@ class WatermarkService {
 	public const TRIGGERS = [self::TRIGGER_ON_DEMAND, self::TRIGGER_ON_UPLOAD];
 
 	/**
+	 * The mark came with a copy of an already-protected file - {@see inheritMark}.
+	 *
+	 * Not one of {@see TRIGGERS}: no admin chooses it, and it describes how one particular
+	 * mark got here rather than a policy about which files get marked. It is the one trigger
+	 * that is also load-bearing rather than audit - the remove gate reads it.
+	 */
+	public const TRIGGER_INHERITED = 'inherited';
+
+	/**
 	 * Audit-only triggers - recorded in `watermark_log`, never stored on a mark.
 	 *
 	 * `unmarked` is a user taking the mark off; `delivered` is one watermarked copy handed
@@ -77,6 +86,13 @@ class WatermarkService {
 	 */
 	public const TRIGGER_UNMARKED = 'unmarked';
 	public const TRIGGER_DELIVERED = 'delivered';
+
+	/** {@see unmarkVerdict} - this user may take the mark off. */
+	public const UNMARK_OK = 'ok';
+	/** They do not own the file. */
+	public const UNMARK_NOT_OWNER = 'not_owner';
+	/** They own it, and the mark came from somebody else's file. */
+	public const UNMARK_INHERITED = 'inherited';
 
 	/** Per-request memo for {@see resolveConfig}. One policy, so one slot. */
 	private ?WatermarkConfig $configCache = null;
@@ -168,6 +184,116 @@ class WatermarkService {
 		);
 
 		return true;
+	}
+
+	/**
+	 * Carry $source's protection onto $target, which is a copy of it.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * WHY A COPY HAS TO BE MARKED, AND WHY THIS ONE IGNORES EVERY CHECK `mark()` MAKES.
+	 *
+	 * Nothing this app does changes a stored file, so the bytes behind a marked file are the
+	 * clean original and a copy of them is a clean original with a *new file id* - which the
+	 * mark table knows nothing about. Copying was therefore a two-click way to obtain the
+	 * unwatermarked document: copy the shared file into your own folder, download it. (A
+	 * *move* was never this: core's cache moves the existing row, file id and all, so the
+	 * mark travels with the file already.)
+	 *
+	 * `assertMarkable()` is deliberately not called:
+	 *
+	 *  - **the ceilings are already satisfied, by construction.** A copy has the same bytes
+	 *    as its source, and the source passed both ceilings at the moment it was marked.
+	 *  - **the scope must not be consulted.** Scope decides which files get marked *first*.
+	 *    Re-asking it here would mean that copying a marked file out of the tagged folder it
+	 *    lives in produces an unmarked clean copy - which is precisely the escape being
+	 *    closed, rebuilt out of the scope check.
+	 *
+	 * The one case where the source was never checked at all - a file watermarked only
+	 * because it was leaving through a share - is marked on the same terms. If such a file is
+	 * over a ceiling its copy will 403 on download rather than render, and that is the
+	 * app's posture everywhere else too: a protected file that cannot be watermarked is not
+	 * served.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * @return bool true when this call placed the mark, false when the copy was already
+	 *              marked or either id could not be resolved
+	 */
+	public function inheritMark(File $target, File $source): bool {
+		$targetId = $target->getId();
+		$sourceId = $source->getId();
+		if ($targetId === null || $sourceId === null) {
+			return false;
+		}
+
+		// A copy of a copy still names the person the protection started with, rather than
+		// the intermediate holder: whoever copies it on is no more entitled to release it
+		// than the first recipient was.
+		$origin = $this->markMapper->findByFileId($sourceId)?->getOriginOwner()
+			?? $source->getOwner()?->getUID();
+
+		$placed = $this->markMapper->mark(
+			$targetId,
+			$this->userSession->getUser()?->getUID() ?? 'system',
+			self::TRIGGER_INHERITED,
+			$this->resolveConfig()->getId(),
+			$origin,
+			$sourceId,
+		);
+
+		if (!$placed) {
+			return false;
+		}
+
+		$this->recordLog($target, self::TRIGGER_INHERITED, $this->resolveConfig());
+
+		return true;
+	}
+
+	/**
+	 * The subset of $fileIds whose mark $uid is barred from removing.
+	 *
+	 * The batched form of the same rule {@see unmarkVerdict} enforces, for the status
+	 * endpoint that stands in for the DAV property on a listing that arrived without it.
+	 * One query, and only marked files produce a row.
+	 *
+	 * @param int[] $fileIds
+	 * @return int[]
+	 */
+	public function lockedFileIds(array $fileIds, string $uid): array {
+		$locked = [];
+		foreach ($this->markMapper->findByFileIds($fileIds) as $id => $mark) {
+			if ($mark->isForeignTo($uid)) {
+				$locked[] = $id;
+			}
+		}
+
+		return $locked;
+	}
+
+	/**
+	 * Whether $uid may take the mark off $file, and if not, why not.
+	 *
+	 * The ordinary rule is ownership - see `ApiController::removeWatermark`, which holds the
+	 * reasoning. An **inherited** mark cannot use that rule, because copying is what makes
+	 * the copier the owner: propagating the mark onto the copy and then letting its new owner
+	 * remove it would hand over the protection and the means to drop it in one gesture. So an
+	 * inherited mark names the person it descends from, and only they can release it.
+	 *
+	 * An inherited mark whose origin could not be resolved when it was placed names nobody,
+	 * and is removable by nobody. That is the fail-closed direction, and it is the same call
+	 * the ownership check itself makes for a node whose owner will not resolve.
+	 *
+	 * @return string one of {@see UNMARK_OK}, {@see UNMARK_NOT_OWNER}, {@see UNMARK_INHERITED}
+	 */
+	public function unmarkVerdict(File $file, string $uid): string {
+		$id = $file->getId();
+		$mark = $id === null ? null : $this->markMapper->findByFileId($id);
+
+		if ($mark !== null && $mark->getTrigger() === self::TRIGGER_INHERITED) {
+			return $mark->isForeignTo($uid) ? self::UNMARK_INHERITED : self::UNMARK_OK;
+		}
+
+		return $file->getOwner()?->getUID() === $uid ? self::UNMARK_OK : self::UNMARK_NOT_OWNER;
 	}
 
 	public function isMarked(int $fileId): bool {

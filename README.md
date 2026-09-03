@@ -404,7 +404,8 @@ bound on marking from the UI, which is why it is still there. It is not configur
   everything
 - **Removing a watermark:** right-click → **Remove watermark**. Instant, and complete -
   there is nothing to restore, because nothing was overwritten. **Only the file's owner can
-  do this**, even on a share with edit permission - see below
+  do this**, even on a share with edit permission - and on a copy of somebody else's
+  watermarked file, only *they* can - see below
 - **Admin settings:** configure the global policy under **Settings → Additional → Watermark Settings**
 
 ## Previews
@@ -432,6 +433,13 @@ Two consequences:
 
 Previews of unmarked files are untouched and uncached-by-us; nothing changes for them.
 
+**Deleted files keep the badge.** A file in the trash keeps its identity, so it keeps its
+watermark: downloading it out of the trash produces a watermarked copy, and its preview
+carries one. The trash list shows the same indicator the Files list does, so that is visible
+rather than something you find out by restoring the file. **Apply watermark** and **Remove
+watermark** are still not offered there - a deleted file is not somewhere a policy can be
+changed.
+
 ## Removing a watermark
 
 There is nothing to restore, because nothing was ever overwritten. **Remove watermark**
@@ -453,6 +461,27 @@ out, since the owner can remove a watermark from anything they own.
 In the Files app the action is simply not offered on a file somebody else owns. The server
 refuses it either way - the hidden button is so the refusal is not something a user has to
 discover by clicking.
+
+### Copies keep the watermark
+
+**Copying a watermarked file produces a watermarked copy.** Nothing is stored watermarked -
+the watermark is drawn when the file is fetched - so a copy would otherwise be a clean
+original that no policy pointed at, and copying a shared file into your own folder would have
+been the way to obtain it unmarked. The copy inherits the protection instead, including a
+file copied inside a whole copied folder, and including the case where the original carried
+no watermark of its own but was being watermarked because it was leaving through a share.
+
+A copy also makes you its owner, so the ownership rule above cannot govern it. An inherited
+watermark records **whose file it came from**, and only that person can remove it - a
+recipient who copies a document cannot unmark their copy. Copying your *own* watermarked file
+is unaffected: you are the origin, so you keep control of both.
+
+**Remove watermark** is not offered on such a copy at all, the same way it is not offered on
+a file somebody else owns - the button is hidden rather than shown and refused, so the rule
+is not something a user has to discover by clicking.
+
+Moving a file changes nothing, in either direction: Nextcloud keeps the file's identity
+across a move, so the watermark simply travels with it.
 
 Earlier versions burned the watermark into the stored file and kept a copy of the original
 in the owner's storage to undo it with. That whole apparatus is gone - no copies against

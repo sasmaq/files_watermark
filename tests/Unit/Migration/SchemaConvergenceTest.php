@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Migration\Version1002Date20260804120000;
 use OCA\FilesWatermark\Migration\Version1003Date20260806120000;
 use OCA\FilesWatermark\Migration\Version1004Date20260806140000;
 use OCA\FilesWatermark\Migration\Version1005Date20260901120000;
+use OCA\FilesWatermark\Migration\Version1006Date20260903120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -76,6 +77,23 @@ class SchemaConvergenceTest extends TestCase {
 		// dropped column that survived would show up here as an ordering difference.
 		'flatten_pdf',
 		'flatten_dpi',
+	];
+
+	/**
+	 * Ordered for the same reason as the config columns above: 1006 appends its pair to a
+	 * table 1003 has already built, so a fresh install and an upgraded one only match if the
+	 * additions stay additions.
+	 */
+	private const EXPECTED_MARK_COLUMNS = [
+		'id',
+		'file_id',
+		'marked_by',
+		'trigger',
+		'config_id',
+		'created_at',
+		// 1006 - who an inherited mark descends from, and the file it came from.
+		'origin_owner',
+		'origin_file_id',
 	];
 
 	/**
@@ -164,6 +182,11 @@ class SchemaConvergenceTest extends TestCase {
 			$schema->getTable('watermark_mark')->indexNames(),
 			'the mark table needs its unique file_id index - it is what makes marking idempotent',
 		);
+		$this->assertSame(
+			self::EXPECTED_MARK_COLUMNS,
+			$schema->getTable('watermark_mark')->columnNames(),
+			'watermark_mark did not converge on the expected columns',
+		);
 	}
 
 	/**
@@ -177,6 +200,32 @@ class SchemaConvergenceTest extends TestCase {
 	 * migration chain that skipped the drop would leave the *old* value in place and quietly
 	 * re-enable rasterised downloads on an instance whose admin never saw the control.
 	 */
+	/**
+	 * The provenance columns land on every path, including an instance that already has
+	 * marks.
+	 *
+	 * They are what the remove gate reads for an inherited mark, so a state that reaches the
+	 * end of the chain without them is one where copying a shared file still yields a copy
+	 * its new owner can unmark.
+	 */
+	public function testProvenanceColumnsAreAddedToAnExistingMarkTable(): void {
+		$schema = new FakeSchema();
+		$this->preCreateTables($schema, []);
+		// The mark table as 1003 built it - no provenance columns.
+		(new Version1003Date20260806120000())->changeSchema(
+			$this->createMock(IOutput::class),
+			fn (): ISchemaWrapper => $schema,
+			[],
+		);
+
+		$this->runMigration($schema);
+
+		$this->assertSame(
+			self::EXPECTED_MARK_COLUMNS,
+			$schema->getTable('watermark_mark')->columnNames(),
+		);
+	}
+
 	public function testFlatteningColumnsAreReinstatedOnUpgrade(): void {
 		$schema = new FakeSchema();
 		$this->preCreateTables($schema, ['flatten_pdf', 'flatten_dpi']);
@@ -329,6 +378,7 @@ class SchemaConvergenceTest extends TestCase {
 		(new Version1003Date20260806120000())->changeSchema($output, $closure, []);
 		(new Version1004Date20260806140000())->changeSchema($output, $closure, []);
 		(new Version1005Date20260901120000())->changeSchema($output, $closure, []);
+		(new Version1006Date20260903120000())->changeSchema($output, $closure, []);
 	}
 
 	/**

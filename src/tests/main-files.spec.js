@@ -10,6 +10,8 @@ import {
 	markWatermarked,
 	unmarkWatermarked,
 	isRemoveActionEnabled,
+	isNodeWatermarkLocked,
+	clearLockedIds,
 	isNodeExplicitlyNotWatermarked,
 	reconcileMissingStatus,
 	startIndicator,
@@ -31,9 +33,10 @@ const INDICATOR_SELECTOR = '.files-watermark-indicator'
  * @param {number} props.fileid - the node's file id
  * @param {boolean} props.watermarked - whether the property marks it watermarked
  * @param {string} props.owner - the uid the node reports as its owner
+ * @param {boolean} props.locked - whether the watermark is one this user may not remove
  * @return {object} a node-like object
  */
-function node({ mime = 'application/pdf', fileid = 1, watermarked = false, owner = 'alice' } = {}) {
+function node({ mime = 'application/pdf', fileid = 1, watermarked = false, owner = 'alice', locked = false } = {}) {
 	return {
 		fileid,
 		mime,
@@ -41,7 +44,12 @@ function node({ mime = 'application/pdf', fileid = 1, watermarked = false, owner
 		// somebody else's. The mock user is `alice`, so this defaults to "mine".
 		owner,
 		// The webdav client parses the tag value to a number, so mirror that here.
-		attributes: { 'is-watermarked': watermarked ? 1 : 0 },
+		attributes: {
+			'is-watermarked': watermarked ? 1 : 0,
+			// The second property: set on a copy of somebody else's watermarked file, where
+			// the copier owns the file and still may not unmark it.
+			'watermark-locked': locked ? 1 : 0,
+		},
 	}
 }
 
@@ -72,6 +80,7 @@ describe('main-files', () => {
 	beforeEach(() => {
 		document.body.innerHTML = ''
 		clearWatermarkedIds()
+		clearLockedIds()
 		__resetState()
 		// Default the effective trigger to on_demand so existing assertions about
 		// action availability hold; the trigger-gating suite overrides it per case.
@@ -176,6 +185,24 @@ describe('main-files', () => {
 		})
 	})
 
+	describe('isNodeWatermarkLocked', () => {
+		it('reads the DAV property, as a number or a string', () => {
+			expect(isNodeWatermarkLocked({ attributes: { 'watermark-locked': 1 } })).toBe(true)
+			expect(isNodeWatermarkLocked({ attributes: { 'watermark-locked': '1' } })).toBe(true)
+			expect(isNodeWatermarkLocked({ attributes: { 'watermark-locked': 0 } })).toBe(false)
+		})
+
+		/**
+		 * A listing fetched before the property existed knows nothing, and "unknown" has to
+		 * leave the ownership rule in charge rather than hiding the button from everybody.
+		 */
+		it('is false for a node that does not carry the property at all', () => {
+			expect(isNodeWatermarkLocked({ attributes: {} })).toBe(false)
+			expect(isNodeWatermarkLocked({})).toBe(false)
+			expect(isNodeWatermarkLocked(undefined)).toBe(false)
+		})
+	})
+
 	describe('isRemoveActionEnabled', () => {
 		it('is enabled only for a watermarked single supported file', () => {
 			expect(isRemoveActionEnabled([node({ watermarked: true })])).toBe(true)
@@ -228,6 +255,47 @@ describe('main-files', () => {
 			// Unknown ownership hides a button rather than offering one the server will
 			// refuse. The safe direction is the quiet one.
 			expect(isRemoveActionEnabled([ownerless])).toBe(false)
+		})
+
+		/**
+		 * **The copy of a shared watermarked file.**
+		 *
+		 * Ownership says yes - the copier owns the copy outright, which is what copying
+		 * does - and the server says no, because the mark travelled with the copy and
+		 * names the person it came from. Before the `watermark-locked` property the button
+		 * was offered here and answered with a 403.
+		 */
+		it('is disabled on a file the user owns whose watermark is locked', () => {
+			const copied = [node({ watermarked: true, owner: 'alice', locked: true })]
+
+			expect(isRemoveActionEnabled(copied)).toBe(false)
+			// Apply stays hidden too - the file is already watermarked - so the row offers
+			// neither action rather than falling back to the wrong one.
+			expect(isApplyActionEnabled(copied)).toBe(false)
+		})
+
+		/**
+		 * Copying your *own* watermarked file must not lock you out of it: you are the
+		 * origin the mark names, so the server answers "ok" and the property is 0.
+		 */
+		it('stays enabled on a copy of the user\'s own watermarked file', () => {
+			expect(isRemoveActionEnabled([
+				node({ watermarked: true, owner: 'alice', locked: false }),
+			])).toBe(true)
+		})
+
+		it('is disabled when the locked id set knows, before the property arrives', () => {
+			// The REST fallback's half: a listing with no properties at all, reconciled
+			// afterwards. Built by hand so neither property is present.
+			markWatermarked(88)
+			const bare = { fileid: 88, mime: 'application/pdf', owner: 'alice' }
+
+			expect(isRemoveActionEnabled([bare])).toBe(true)
+
+			axios.get.mockResolvedValueOnce({ data: { watermarked: [88], locked: [88] } })
+			return reconcileMissingStatus([bare]).then(() => {
+				expect(isRemoveActionEnabled([bare])).toBe(false)
+			})
 		})
 
 		it('is enabled from the badge set when the DAV property is still stale', () => {

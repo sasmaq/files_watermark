@@ -34,6 +34,18 @@ import { t } from '@nextcloud/l10n'
 export const DAV_WATERMARKED_PROP = 'is-watermarked'
 registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns' })
 
+// The second property, and it answers a different question: may *this* viewer take the
+// mark off. It is separate from `is-watermarked` on purpose - that one describes the file
+// and reads the same for everybody, this one is about who is looking - and it exists
+// because ownership stopped being the whole answer once marks began travelling with
+// copies. Copying a shared file makes the copier its owner, so the ownership test below
+// says yes on a file the server will refuse.
+//
+// Registered here rather than in the Files bundle because the pair has to be requested
+// together, in the same early PROPFIND, or a row renders knowing one and not the other.
+export const DAV_WATERMARK_LOCKED_PROP = 'watermark-locked'
+registerDavProperty(`nc:${DAV_WATERMARK_LOCKED_PROP}`, { nc: 'http://nextcloud.org/ns' })
+
 /**
  * Whether a Files `Node` is marked - that is, whether downloading or previewing it
  * produces a watermarked copy. Read from the WebDAV property delivered with the listing.
@@ -45,6 +57,24 @@ registerDavProperty(`nc:${DAV_WATERMARKED_PROP}`, { nc: 'http://nextcloud.org/ns
  */
 export function isNodeWatermarked(node) {
 	const value = node?.attributes?.[DAV_WATERMARKED_PROP]
+	return value === 1 || value === '1'
+}
+
+/**
+ * Whether this node's watermark is one the current user is barred from removing.
+ *
+ * True only for a mark inherited from somebody else's file - the copy a share recipient
+ * made of a protected document. An unmarked file, and a file marked in the ordinary way,
+ * both answer false and are governed by ownership exactly as before.
+ *
+ * **A node that does not carry the property answers false**, which leaves the ownership
+ * rule in charge. That is the same degradation `is-watermarked` has: a listing fetched
+ * before the property was registered knows nothing, and the server refuses either way.
+ * @param {object} node - a Files `Node`
+ * @return {boolean} true when the watermark cannot be removed by this user
+ */
+export function isNodeWatermarkLocked(node) {
+	const value = node?.attributes?.[DAV_WATERMARK_LOCKED_PROP]
 	return value === 1 || value === '1'
 }
 

@@ -1235,6 +1235,85 @@ the same row. The visible cost is that a recipient sees no badge on a file they 
 watermarked. Worth revisiting only with a second property that says something different,
 never by widening this one.
 
+### Copying, and the mark that travels {#copy-inheritance}
+
+**Copying a shared file was how you got it clean.** A mark is a row against a file id and
+nothing this app does changes a stored file, so the bytes behind a marked file are the clean
+original. A copy gets a **new file id** (`Cache::copyFromCache` → `put`), so it landed
+outside every mark that existed: the recipient copied the document into their own folder and
+downloaded it unwatermarked. Two clicks, no tooling.
+
+It was worse than one hole, because the copy also flipped ownership. `removeWatermark` gates
+on ownership - written precisely so a recipient cannot unmark a file they were given - and
+owning a copy opens that gate. So propagating the mark without recording where it came from
+would only have moved the escape one step: inherit the mark, then press Remove.
+
+Both halves are `NodeCopiedListener` and `origin_owner`.
+
+- **The copy inherits the mark**, whoever copies it and wherever it lands. Also when the
+  source carries no mark but *this fetch of it* would have been watermarked because it is
+  leaving through a share ([share switches](#share-switches)) - that switch is evaluated per
+  fetch against the storage the file sits on, so it has nothing to say once the file is in
+  the recipient's own storage. The mark placed there is what makes the per-fetch policy
+  survive the boundary it was protecting. Asked only when the copy actually crosses from one
+  owner to another, so an ordinary copy inside one user's own files pays one batched lookup
+  and nothing else.
+- **An inherited mark records who it descends from**, and `unmarkVerdict` consults *that*
+  instead of ownership once it is set. A chain of copies keeps naming the first protector,
+  so the protection cannot be laundered off in two hops. An owner who copies their **own**
+  marked file is the origin, so they keep control of both - verified, because locking a user
+  out of their own document would have been the obvious way to get this wrong.
+
+**`inheritMark()` deliberately runs none of the checks `mark()` runs.** The ceilings are
+already satisfied by construction - a copy has the source's bytes, and the source passed them
+when it was marked - and re-asking the *scope* would rebuild the escape out of the scope
+check: copying a marked file out of its tagged folder would produce an unmarked clean copy.
+Pinned by `testInheritingIgnoresTheCeilingsAndTheScope`, which was verified to fail with
+`assertMarkable()` reinstated.
+
+**A move needs no listener, and that is a fact about core rather than a decision here.**
+`Updater::renameFromStorage` ends in `Cache::move` / `moveFromCache`, both of which update the
+existing row in place - file id included, across storages, and out of a share. The mark
+travels with the file already. Only copying makes a new id, so only copying loses it. This is
+worth stating because "move and copy both need handling" is the reflex, and a
+`NodeRenamedEvent` listener would be dead code that *looks* load-bearing: the event's source
+node is a `NonExistingFile` whose `getId()` throws, so such a listener could not read the id
+it would need anyway.
+
+**Folders are walked.** `View::copy()` emits one `post_copy` for the top of the tree, not one
+per file, so a marked file one directory down would otherwise be the same escape with one
+more click. The walk goes down the *source* side and asks for marked ids once per directory;
+only the files that come back marked are then resolved on the target side. It is bounded by
+the size of the copy that just happened, which wrote every one of those files to storage.
+
+**The Files app stops offering Remove, rather than offering it and being refused.** The
+client hid that action on a file somebody else owns, and ownership stopped being the whole
+answer here: the copier owns the copy. A **second** DAV property, `watermark-locked`, says
+whether *this viewer* may unmark this row, computed by the same `WatermarkMark::isForeignTo`
+the API enforces - one definition, so the button and the server cannot drift.
+
+- **A second property, not a wider `is-watermarked`.** That one describes the file and reads
+  the same for everybody; this one is about who is looking. Folding them together would make
+  the badge mean something different depending on the viewer, which is exactly what
+  [the badge note](#share-switches) rules out.
+- **It answers false for everything except an inherited mark**, so ordinary marks stay
+  governed by ownership and nothing else changes. It is false with no session too - the
+  public-link server has no Remove action for it to govern.
+- **Both properties are answered from one cached row**, so a listing costs the same query it
+  did before: `findByFileIds` returns the marks where `markedFileIds` returned bare ids, and
+  only marked files produce a row either way.
+- The `watermarked` status endpoint grew a matching `locked` list, for a listing that
+  arrives without the properties. Reconciling one without the other would put the button back
+  on precisely the files it was hidden from.
+
+**Verified against a running Nextcloud 31**, not only in the suite: alice's marked file
+copied by bob out of an internal share, a marked file two levels inside a copied *folder*,
+and the share-switch case with no mark anywhere - all three land an `inherited` mark naming
+alice, bob's download of his copy comes out watermarked, and `unmarkVerdict` answers
+`inherited` for bob on files he demonstrably owns while alice keeps `ok` on her own. A
+PROPFIND over the real listing returns `watermark-locked` 1 on bob's copy and 0 on alice's
+copy of her own file, on his own genuinely-owned files, and on the share itself.
+
 ### Team folders
 
 Not covered, and knowingly. A Team folder is not an `ISharedStorage` and not a public link,
@@ -1421,6 +1500,64 @@ and that a reloaded page still badges the file and offers Remove.
   debounced `MutationObserver` handles row mounting and recycling
 - Only supported MIME types are decorated, and the property is scoped server-side too
 - Absent property is treated as "not watermarked" and never blocks the file list
+
+#### In the trash {#indicator-trash}
+
+**The badge was missing on deleted files.** A trashed file keeps its id, so it keeps its
+mark: its download out of the trash is watermarked and its preview always was. The badge was
+the only part that disagreed - and it took a **browser** to find out why, because the two
+things that looked like the cause from the server side were not it.
+
+**The cause is the status endpoint's scope test, and it was inverted by accident.**
+`getWatermarkedStatus` scoped its ids through `getUserFolder()->getById()`, which resolves
+inside `/{uid}/files` - and a deleted file lives at `/{uid}/files_trashbin/files`. So every
+id in a trash listing was dropped as *inaccessible*, of all things, and the endpoint answered
+"none of these are watermarked" about the user's own deleted files. It now consults the
+user's trashbin folder as well, named explicitly rather than by widening the test to the
+whole home directory: the question is about files a user can see in a listing, and their
+files and their trash are the two listings that exist.
+
+**The trash is the one listing where that endpoint is not a fallback but the only source.**
+`files_trashbin` builds its PROPFIND body once, at its own module load, from
+`getDavProperties()`. A property this app registers is therefore not in it however early this
+app's bundle runs - `registerDavProperty` writes to the shared `window._nc_dav_properties`,
+but that template has already been frozen. The ordinary Files list is different and does
+carry the property; measured, both of them:
+
+| listing | PROPFIND asks for `is-watermarked` | badge comes from |
+| --- | --- | --- |
+| Files | yes | the DAV property |
+| Trash | **no** | `GET /api/v1/watermarked` |
+
+**`PropFindPlugin` answers for a trashed node too, and that half is deliberately kept even
+though nothing asks today.** A trashed node is an `ITrash`, never an
+`OCA\DAV\Connector\Sabre\Node`, and the type test used to decline it - the identical blind
+spot `DownloadInterceptorPlugin` had on the identical cause. The server should not answer
+"not watermarked" about a file it will watermark on the way out, whoever asks. **It is not
+what makes the badge appear**, and that is written down here so the next person does not
+assume it is and go looking in the wrong place.
+
+- **The batching moved ahead of the id lookup**, which is a real constraint rather than
+  tidying: the trash root is a bare `ICollection` with **no file id of its own**, so
+  resolving the id first and returning early would have left every trashed file to its own
+  query. The root primes the whole listing and then answers nothing for itself, which is what
+  core's own `trashbin-title` does there too (404 in the multistatus).
+- **The trash branch is driven off `ITrash` per child**, not off `TrashRoot` / `TrashFolder`,
+  so both are handled by one path and neither class is named. A collection whose children are
+  not trashed nodes yields no ids and costs no query.
+- **The share switches are not consulted for a trashed node.** They describe a file being
+  handed to somebody through a share; a trash listing is the owner looking at their own
+  deleted files. A trashed node cannot answer `getNode()` either.
+- **Apply and Remove stay hidden in the trash**, unchanged - `isReadOnlyView()` still gates
+  them on the view. The badge says what is true about the file; the actions have nothing to
+  act on, since a trashed node is not at a path the API resolves.
+
+**Pinned by `12-trash-indicator.cy.js`, and it has to be an e2e test.** Every server-side
+check passed while the badge was missing: the property is served correctly when asked, and a
+`curl` PROPFIND proves it. What was broken lived in the gap between two things that were each
+individually right, and only a real browser loading the real trash view crosses that gap. The
+spec asserts the badge in the Files list first, as a control, so a failure says which half
+broke.
 
 #### On the public share page {#indicator-public}
 

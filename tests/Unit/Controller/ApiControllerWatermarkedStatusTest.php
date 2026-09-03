@@ -82,7 +82,7 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 		$response = $this->controller->getWatermarkedStatus('');
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
-		$this->assertSame(['watermarked' => []], $response->getData());
+		$this->assertSame(['watermarked' => [], 'locked' => []], $response->getData());
 	}
 
 	public function testReturnsEmptyWhenIdsAreAllInvalid(): void {
@@ -91,7 +91,7 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 
 		$response = $this->controller->getWatermarkedStatus('0,-3,abc');
 
-		$this->assertSame(['watermarked' => []], $response->getData());
+		$this->assertSame(['watermarked' => [], 'locked' => []], $response->getData());
 	}
 
 	public function testReturnsWatermarkedIdsScopedToAccessibleFiles(): void {
@@ -113,7 +113,93 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 		$response = $this->controller->getWatermarkedStatus('1,2,3');
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
-		$this->assertSame(['watermarked' => [3]], $response->getData());
+		$this->assertSame(['watermarked' => [3], 'locked' => []], $response->getData());
+	}
+
+	/**
+	 * The locked list rides along, scoped the same way.
+	 *
+	 * It is what the `watermark-locked` DAV property carries, for a listing that arrived
+	 * without the properties at all. Reporting "watermarked" without it would put the
+	 * Remove button back on exactly the files it is meant to be hidden from - and the
+	 * scoping matters for the same reason the first list's does: an id the caller cannot
+	 * reach must not be answered about.
+	 */
+	public function testReportsWhichOfThoseTheUserMayNotUnmark(): void {
+		$this->loginAlice();
+
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getById')->willReturn([$this->createMock(\OCP\Files\File::class)]);
+		$this->rootFolder->method('getUserFolder')->willReturn($folder);
+
+		$this->watermarkService->method('markedFileIds')->willReturn([4, 5]);
+		$this->watermarkService->expects($this->once())
+			->method('lockedFileIds')
+			->with([4, 5], 'alice')
+			->willReturn([5]);
+
+		$response = $this->controller->getWatermarkedStatus('4,5');
+
+		$this->assertSame(['watermarked' => [4, 5], 'locked' => [5]], $response->getData());
+	}
+
+	/**
+	 * A trashed file is one the user can see, and the scope test has to agree.
+	 *
+	 * **This is what made the badge missing in the trash.** `getUserFolder()->getById()`
+	 * resolves inside `/{uid}/files`, and a deleted file lives at
+	 * `/{uid}/files_trashbin/files` - so every id from a trash listing was dropped as
+	 * inaccessible and the endpoint answered "none of these are watermarked" about the
+	 * user's own deleted files. The trash is also the one listing where this endpoint is
+	 * not a fallback but the only source, because `files_trashbin` freezes its PROPFIND
+	 * body before this app can register a property into it.
+	 */
+	public function testATrashedFileIsInScope(): void {
+		$this->loginAlice();
+
+		$files = $this->createMock(Folder::class);
+		// Not under /alice/files any more - it has been deleted.
+		$files->method('getById')->willReturn([]);
+
+		$trash = $this->createMock(Folder::class);
+		$trash->method('getById')->with(9)->willReturn([$this->createMock(\OCP\Files\File::class)]);
+
+		$home = $this->createMock(Folder::class);
+		$home->method('get')->with('files_trashbin/files')->willReturn($trash);
+		$files->method('getParent')->willReturn($home);
+
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($files);
+
+		$this->watermarkService->expects($this->once())
+			->method('markedFileIds')
+			->with([9])
+			->willReturn([9]);
+
+		$response = $this->controller->getWatermarkedStatus('9');
+
+		$this->assertSame(['watermarked' => [9], 'locked' => []], $response->getData());
+	}
+
+	/**
+	 * No trashbin to look in - the app disabled, or a user who has never deleted anything -
+	 * leaves the ordinary scope test in sole charge rather than throwing.
+	 */
+	public function testAMissingTrashbinLeavesTheOrdinaryScopeTestInCharge(): void {
+		$this->loginAlice();
+
+		$files = $this->createMock(Folder::class);
+		$files->method('getById')->willReturn([]);
+		$home = $this->createMock(Folder::class);
+		$home->method('get')->willThrowException(new \OCP\Files\NotFoundException());
+		$files->method('getParent')->willReturn($home);
+		$this->rootFolder->method('getUserFolder')->willReturn($files);
+
+		$this->watermarkService->expects($this->never())->method('markedFileIds');
+
+		$this->assertSame(
+			['watermarked' => [], 'locked' => []],
+			$this->controller->getWatermarkedStatus('9')->getData(),
+		);
 	}
 
 	public function testReturnsEmptyWhenNoIdsAccessible(): void {
@@ -127,6 +213,6 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 
 		$response = $this->controller->getWatermarkedStatus('1,2');
 
-		$this->assertSame(['watermarked' => []], $response->getData());
+		$this->assertSame(['watermarked' => [], 'locked' => []], $response->getData());
 	}
 }

@@ -39,7 +39,7 @@ Features:
 - سجل تدقيق كامل لكل حدث علامة مائية
 - مقاومة اختيارية للعبث: يعاد بناء ملفات PDF الموسومة كصور صفحات فلا يمكن نزع العلامة (تحتاج حزمة poppler-utils على الخادم، وبدونها تسلم العلامة المائية المعتادة)
     ]]></description>
-    <version>1.7.0</version>
+    <version>1.8.0</version>
     <licence>agpl</licence>
     <author mail="admin@example.com">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>

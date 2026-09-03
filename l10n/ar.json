@@ -133,6 +133,7 @@
         "Downloaded": "جرى تنزيله",
         "Downloads and previews of this file are watermarked": "تحمل تنزيلات هذا الملف ومعايناته علامة مائية",
         "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية.",
+        "This file is a copy of a watermarked file owned by someone else. Only they can remove the watermark.": "هذا الملف نسخة من ملف يحمل علامة مائية ويملكه شخص آخر. هو وحده من يمكنه إزالة العلامة المائية.",
         "The file itself does not change. Downloads and previews of it simply stop being watermarked, and you can apply the watermark again at any time.": "لا يتغير الملف نفسه. تتوقف تنزيلاته ومعايناته عن حمل العلامة المائية فحسب، ويمكنك تطبيق العلامة عليه مجددا في أي وقت.",
         "Watermark removed.": "أزيلت العلامة المائية.",
         "Shared files": "الملفات المشتركة",

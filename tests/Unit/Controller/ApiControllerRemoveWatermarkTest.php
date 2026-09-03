@@ -69,7 +69,12 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 	 *                          ownership is testing an ordinary file of the caller's own
 	 * @return File&MockObject
 	 */
-	private function mockFile(bool $readable, bool $updateable, ?string $ownerUid = 'alice'): File {
+	private function mockFile(
+		bool $readable,
+		bool $updateable,
+		?string $ownerUid = 'alice',
+		?string $verdict = null,
+	): File {
 		$node = $this->createMock(File::class);
 		$node->method('getMimeType')->willReturn('application/pdf');
 		$node->method('isReadable')->willReturn($readable);
@@ -82,6 +87,16 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 			$owner->method('getUID')->willReturn($ownerUid);
 			$node->method('getOwner')->willReturn($owner);
 		}
+
+		// The rule itself moved into the service - see `WatermarkServiceUnmarkVerdictTest`,
+		// which pins it against real marks. What is left here is the controller's half:
+		// turning a verdict into a status and a message a user can act on. The default
+		// mirrors what the real service answers for the ownership given.
+		$this->watermarkService->method('unmarkVerdict')->willReturn(
+			$verdict ?? ($ownerUid === 'alice'
+				? WatermarkService::UNMARK_OK
+				: WatermarkService::UNMARK_NOT_OWNER),
+		);
 
 		$folder = $this->createMock(Folder::class);
 		$folder->method('get')->willReturn($node);
@@ -188,6 +203,36 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 			Http::STATUS_FORBIDDEN,
 			$this->controller->removeWatermark('orphan.pdf')->getStatus(),
 		);
+	}
+
+	/**
+	 * **The copier of a shared file cannot unmark the copy.**
+	 *
+	 * The case the ownership rule above cannot answer, and the reason `unmarkVerdict` exists.
+	 * Copying a marked file makes the copier the owner of the copy, so the ownership check
+	 * says yes - which would have handed them the mark and the off switch in one gesture.
+	 * An inherited mark names the person it descends from instead.
+	 *
+	 * Note the ownership: this file **is** alice's. Nothing but the inherited mark can be
+	 * what refuses her.
+	 */
+	public function testTheCopierOfAProtectedFileCannotUnmarkTheirCopy(): void {
+		$this->loginAlice();
+		$this->mockFile(
+			readable: true,
+			updateable: true,
+			ownerUid: 'alice',
+			verdict: WatermarkService::UNMARK_INHERITED,
+		);
+
+		$this->watermarkService->expects($this->never())->method('unmark');
+
+		$response = $this->controller->removeWatermark('copy-of-shared.pdf');
+
+		$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		// The message has to say it is a *copy*, or the owner of a file they demonstrably
+		// own reads the refusal as a bug.
+		$this->assertStringContainsString('copy', $response->getData()['error']);
 	}
 
 	public function testUnmarksTheFile(): void {
