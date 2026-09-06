@@ -20,6 +20,38 @@ const members = 201 // one past MAX_MEMBERS
 const recipientUid = 'e2e-caps-recipient'
 const zipHeaders = { Accept: 'application/zip' }
 
+/**
+ * Fetch until the archive answers `status`, then assert it.
+ *
+ * **A single fetch after an `occ` change is a race, and it is the race that made this
+ * spec fail.** Apache serves the instance from several worker processes, each of which
+ * picks up an app-config change on its own schedule: measured on the dev container, up to
+ * four requests after `config:app:delete` were still answered with the old cap. A plain
+ * `cy.task(...).its('status').should('eq', 200)` cannot ride that out - `should` retries
+ * the *assertion* against a value `cy.task` already fetched once, so it re-checks the
+ * same stale number until it times out.
+ *
+ * So the fetch itself is what repeats. The last attempt asserts rather than returning
+ * quietly, which keeps a genuine wrong status a failure instead of a timeout.
+ *
+ * @param {Function} fetch issues one archive request
+ * @param {number} status the status to wait for
+ * @param {number} attempts how many fetches before giving up and asserting anyway
+ * @return {void}
+ */
+const expectArchiveStatus = (fetch, status, attempts = 20) => {
+	const attempt = (left) => fetch().then((response) => {
+		if (response.status === status || left === 0) {
+			expect(response.status, `archive status after ${attempts - left + 1} fetch(es)`).to.eq(status)
+			return
+		}
+		cy.wait(500)
+		attempt(left - 1)
+	})
+
+	attempt(attempts)
+}
+
 describe('Archives past the rendering cap', () => {
 	let recipient
 
@@ -57,6 +89,13 @@ describe('Archives past the rendering cap', () => {
 	})
 
 	after(() => {
+		// **Belt and braces on the cap.** The test below deletes it inline, because coming
+		// back to the default is half of what it asserts - so a failure anywhere between
+		// the set and that delete used to leave `archive_max_members = 2` on the instance,
+		// and then *every* later run of this spec failed on its own control fetch with a
+		// 403 that had nothing to do with the run. That is a confusing failure to inherit;
+		// this makes it impossible.
+		cy.task('nc:occ', { args: ['config:app:delete', 'files_watermark', 'archive_max_members'] })
 		cy.wmSetPolicy({ trigger: 'on_demand' })
 		cy.wmUnshareAll(`/${folder}`)
 		cy.task('nc:delete', { user: Cypress.env('ncUser'), password: Cypress.env('ncPassword'), path: folder })
@@ -119,20 +158,20 @@ describe('Archives past the rendering cap', () => {
 			})
 
 		// The control first: three members are served fine at the shipped default.
-		fetchArchive().its('status').should('eq', 200)
+		expectArchiveStatus(fetchArchive, 200)
 
 		cy.task('nc:occ', {
 			args: ['config:app:set', 'files_watermark', 'archive_max_members', '--value', '2'],
 		}).its('code').should('eq', 0)
 
-		fetchArchive().its('status').should('eq', 403)
+		expectArchiveStatus(fetchArchive, 403)
 
 		cy.task('nc:occ', {
 			args: ['config:app:delete', 'files_watermark', 'archive_max_members'],
 		}).its('code').should('eq', 0)
 
 		// And back: the setting is what changed, not the folder.
-		fetchArchive().its('status').should('eq', 200)
+		expectArchiveStatus(fetchArchive, 200)
 
 		cy.wmUnshareAll(`/${small}`)
 		cy.task('nc:delete', {

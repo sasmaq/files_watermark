@@ -887,12 +887,9 @@ alternative *possible*, not *better*.
 **Verified on a running 32, not only in the suite.** A fresh install enables the app at
 2.0.0, the migration chain lands all three tables on the expected columns (`watermark_mark`
 with its `origin_owner` / `origin_file_id` pair included), and the app logs nothing. The
-Cypress suite is **87 of 94 on a clean instance**; the seven failures are `06-archive-caps`
-(one) and `11-prune-log` (six), which shell out to `occ` through `docker compose` and get
-`ENOENT` inside the runner container - the limitation
-[`cypress/README.md`](../cypress/README.md) already documents, unchanged from 31. Both were
-closed by hand instead: `occ files_watermark:prune-log --all` reported and then deleted 251
-rows on 32.
+Cypress suite is **94 of 94 on a clean instance** - the first fully green run, and it took
+two fixes to the harness rather than to the app. See
+[the archive-cap spec](#archive-cap-spec) for both.
 
 **What was *not* re-measured.** The performance and storage numbers elsewhere in this
 document - the S3 round trip, the encryption findings, the script-ordering measurement, the
@@ -900,6 +897,41 @@ PDF-version sweep - were taken on 31.0.14 and are left labelled as such rather t
 relabelled 32. They are records of when they were made. The two core patches in
 [`patch.md`](patch.md) are anchored to 31 line numbers and would need re-anchoring; that file
 now says so at the top.
+
+---
+
+### Two harness bugs behind one failing spec {#archive-cap-spec}
+
+`06-archive-caps` failed, and the app was never the reason. Worth writing down because both
+causes produce failures that point somewhere else entirely.
+
+**The runner could not reach `occ` at all.** `cypress/tasks/occ.js` spawned
+`docker compose exec`, which does not exist inside `cypress/included` - the image
+[`cypress/README.md`](../cypress/README.md) recommends on macOS. The spawn failed `ENOENT`,
+`code` came back as a string rather than a number, and the two specs that configure the app
+(`06-archive-caps`, `11-prune-log`) died on their first `occ` call. **Seven assertions had
+been reporting the absence of a binary and being read as a documented limitation.** The task
+now talks to the **Docker Engine API over the mounted socket** when `NC_OCC_CONTAINER` names
+a container - the runner image has Node, and needs no Docker CLI for that.
+
+**Then the real failure appeared, and it was a race.** `occ config:app:set` is not visible
+to the very next HTTP request: Apache serves from several worker processes and they pick up
+an app-config change on their own schedule. Measured on the dev container, **four requests
+after `config:app:delete` were still answered with the old cap**. The spec asserted a single
+fetch per change, and `cy.task(...).its('status').should('eq', 200)` cannot ride that out -
+`should` retries the assertion against a value `cy.task` fetched once, so it re-checks the
+same stale number until it times out. The fetch itself now repeats (`expectArchiveStatus`).
+
+**And the failure poisoned every later run.** The cap is deleted inside the test body,
+because returning to the default is half of what the test asserts - so a failure between the
+set and that delete left `archive_max_members = 2` on the instance, and the *next* run failed
+on its own control fetch with a 403 that had nothing to do with it. That is what made the
+diagnosis circular: the symptom on screen belonged to the previous run. The cleanup is now
+also in `after()`, where a failure cannot skip it.
+
+**The capping behaviour itself was correct throughout**, verified by hand on 32 before any
+test was touched: 200 at the default cap, 403 with the cap lowered to 2, 200 again once it is
+removed.
 
 ---
 

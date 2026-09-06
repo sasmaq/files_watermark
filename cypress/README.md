@@ -38,15 +38,23 @@ docker compose exec -u www-data nextcloud php occ \
   config:system:set trusted_domains 1 --value=host.docker.internal
 
 docker run --rm -v "$PWD":/e2e -w /e2e \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   --add-host=host.docker.internal:host-gateway \
   -e NC_URL=http://host.docker.internal:8080 \
+  -e NC_OCC_CONTAINER=files_watermark_nc \
   cypress/included:15.19.0
 ```
 
 The trusted domain is required: the container reaches the instance by a different host
-name, and Nextcloud answers an untrusted one with `400`. Two specs still fail that way -
-`06-archive-caps` and `11-prune-log` shell out to `occ` through `docker compose`, which
-does not exist inside the runner container. Everything else passes.
+name, and Nextcloud answers an untrusted one with `400`.
+
+**The socket mount and `NC_OCC_CONTAINER` are what make the whole suite runnable here.**
+`06-archive-caps` and `11-prune-log` drive `occ`, and the default way of reaching it -
+spawning `docker compose exec` - cannot work from inside a container with no Docker CLI:
+the spawn fails `ENOENT` and seven assertions report the absence of a binary rather than
+anything about the app. Given a container name and the socket, `cypress/tasks/occ.js`
+talks to the Docker Engine API directly instead, which needs no CLI. With those two flags
+all **94 tests pass**; without them those two specs fail before they assert anything.
 
 `NC_URL`, `NC_ADMIN` and `NC_ADMIN_PASSWORD` override the target (`http://localhost:8080`,
 `admin`, `admin`). `NC_OCC` overrides how `occ` is invoked - it defaults to
