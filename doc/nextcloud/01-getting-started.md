@@ -10,7 +10,7 @@ development environment, and coding style/guidelines.
 - Nextcloud uses **Git** for version control; the server and apps live on GitHub
   (`github.com/nextcloud`).
 - When contributing, **choose the right target branch**. Bug fixes typically target
-  the current stable branch (e.g. `stable31`) and `master`; new features target `master`.
+  the current stable branch (e.g. `stable32`) and `master`; new features target `master`.
 - Follow the pull-request workflow: fork, branch, commit (with sign-off / DCO),
   open a PR, pass CI, get review.
 
@@ -19,15 +19,15 @@ development environment, and coding style/guidelines.
 To run a local instance you need a web server + database + the source code:
 
 - **Web server:** Apache (with `mod_php` or php-fpm) or nginx.
-- **PHP:** a version supported by NC 31 (PHP 8.1–8.3 range).
+- **PHP:** a version supported by NC 32 (PHP 8.1–8.4 range).
 - **Database:** MySQL/MariaDB, PostgreSQL, or SQLite (SQLite for dev only).
 - **Source:** clone the server, or for app dev run a server and drop your app into `apps/`.
 
 For files_watermark the project already uses Docker:
 
 ```bash
-# Run a Nextcloud 31 instance
-docker run -d -p 8080:80 nextcloud:31.0.14-apache
+# Run a Nextcloud 32 instance
+docker run -d -p 8080:80 nextcloud:32.0.14-apache
 
 # Symlink/copy the app into the container's apps/ directory, then:
 occ app:enable files_watermark

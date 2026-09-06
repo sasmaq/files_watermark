@@ -1,6 +1,6 @@
 # files_watermark
 
-A Nextcloud 31 app that applies configurable watermarks to PDF and image files. Watermarks
+A Nextcloud 32 app that applies configurable watermarks to PDF and image files. Watermarks
 embed user identity information (display name, account name, date, email) to deter
 unauthorized distribution and provide traceability.
 

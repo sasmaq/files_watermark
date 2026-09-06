@@ -1,7 +1,7 @@
 # Local test environment for the files_watermark app.
 #
 # This bind-mounts the repo into Nextcloud's custom_apps/ so the app runs
-# against a real Nextcloud 31 instance. Build the app on the host FIRST
+# against a real Nextcloud 32 instance. Build the app on the host FIRST
 # (the container runs the compiled output, not the sources):
 #
 #   composer install
@@ -24,7 +24,7 @@
 
 services:
   nextcloud:
-    image: nextcloud:31-apache
+    image: nextcloud:32-apache
     container_name: files_watermark_nc
     ports:
       - "8080:80"

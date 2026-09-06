@@ -19,9 +19,9 @@ declare(strict_types=1);
  *
  * Hand-written stubs can drift from the real classes and turn a green test into a
  * false negative. The signatures below were transcribed verbatim from Nextcloud
- * 31.0.14. To re-verify them against a newer image:
+ * 32.0.14. To re-verify them against a newer image:
  *
- *   CID=$(docker create nextcloud:31-apache)
+ *   CID=$(docker create nextcloud:32-apache)
  *   docker cp "$CID:/usr/src/nextcloud/apps/dav/lib/Connector/Sabre" ./ncsabre
  *   docker cp "$CID:/usr/src/nextcloud/lib/private/Streamer.php" ./Streamer.php
  *   docker cp "$CID:/usr/src/nextcloud/apps/dav/lib/Events/SabrePluginAddEvent.php" .
@@ -29,7 +29,7 @@ declare(strict_types=1);
  *   docker rm "$CID"
  *
  * then diff the declarations below against Node.php / File.php / Directory.php /
- * Streamer.php / the two events. Verified against: Nextcloud 31.0.14.
+ * Streamer.php / the two events. Verified against: Nextcloud 32.0.14.
  *
  * Psalm reads this file too (see the <stubs> section of psalm.xml), which is what
  * type-checks lib/ against the signatures below instead of against nothing.

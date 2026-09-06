@@ -8,8 +8,8 @@ what was measured, why a design is what it is - lives in the engineering record 
 **Closed items are deleted from here, not ticked.** What was done, and what it cost to
 learn, is recorded there; everything below is genuinely still open.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3. PHPUnit (**837**, one skip) and
-Jest (**131**) are green, along with Psalm at level 3, php-cs-fixer and ESLint. The skip is
+Verified against **Nextcloud 32.0.14.1**, PHP 8.3. PHPUnit (**899**, one skip) and
+Jest (**150**) are green, along with Psalm at level 3, php-cs-fixer and ESLint. The skip is
 `PdfFlattenerTest::testAgainstTheRealRendererIfThisHostHasOne`, the only case that wants a
 real `pdftoppm`; CI installs `poppler-utils`, so it runs there.
 
@@ -107,7 +107,7 @@ them.
   adding a second shell-out.
 - [ ] **Verify the public share page badge against a running instance.** The server half is
   tested (`PropFindPluginTest`, public mode) and the client half degrades to drawing
-  nothing, but two things were reasoned about rather than observed on NC 31: that
+  nothing, but two things were reasoned about rather than observed on NC 32: that
   `files_sharing` fires `BeforeTemplateRenderedEvent` for that page, and that its file list
   renders the same `[data-cy-files-list-row-fileid]` rows the badge looks for.
 - [ ] **Marking does not reach previews already in a browser's cache.** Confirmed on the

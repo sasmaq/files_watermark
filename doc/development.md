@@ -8,7 +8,8 @@ reorganised around the shape of the code rather than the SDD's chapter order.
 explains *why*; that one tracks *what next*. Notes are kept for finished work too - most of
 the value is in the failures behind a feature, which no diff records.
 
-Verified against **Nextcloud 31.0.14.1**, PHP 8.2 + 8.3.
+Verified against **Nextcloud 32.0.14.1**, PHP 8.3. (Through 1.8.x this app targeted
+Nextcloud 31; see [the 2.0.0 upgrade](#upgrade-32) for what moved and what did not.)
 
 The first two sections are orientation - where the code lives and how to build, run and test
 it. Everything after them is the record itself. [README.md](../README.md) covers installing
@@ -103,7 +104,7 @@ how it tells a watermarked file from a clean one is in
 
 ### A real instance, in Docker {#docker-dev-instance}
 
-[`docker-compose.yml`](../docker-compose.yml) runs the app against a real Nextcloud 31. It
+[`docker-compose.yml`](../docker-compose.yml) runs the app against a real Nextcloud 32. It
 bind-mounts this repo into Nextcloud's `custom_apps/`, so **build on the host first** - the
 container runs the compiled output.
 
@@ -857,6 +858,51 @@ every `on_share` deny goes through a failed render.
 
 ---
 
+## 2.0.0: moving to Nextcloud 32 {#upgrade-32}
+
+`appinfo/info.xml` declares `min-version="32" max-version="32"`, `nextcloud/ocp` tracks
+`dev-stable32`, and both compose files run `nextcloud:32-apache`. Measured against
+**32.0.14.1** on PHP **8.3**.
+
+**Nothing in `lib/` had to change to run on 32**, and that is the finding rather than an
+assumption. Psalm was re-run against the `dev-stable32` stubs - which type-check every one of
+the ~100 `OCP\*` symbols this app imports - and reported no signature drift. The private and
+cross-app surfaces this app is genuinely exposed to were each re-read in the 32 image and are
+unchanged:
+
+| Surface | On 32 |
+| --- | --- |
+| `OC\Streamer` (private) | constructor identical, `IRequest\|bool $preferTar, int\|float $size, int $numberOfFiles, IDateTimeZone` |
+| `OCA\DAV\Connector\Sabre\{Node,File,Directory}` | present; `getId()` / `getNode()` unchanged |
+| `HookConnector` → `NodeCopiedEvent` | still dispatched from the `post_copy` hook, so [copy inheritance](#copy-inheritance) carries over |
+| `OCA\Files_Trashbin\Sabre\ITrash` | present, `getFileId()` unchanged |
+| `sabre/dav` in `3rdparty/` | still **4.7.0**, so the `require-dev` pin stands |
+| `doctrine/dbal` | still **3.10.4**, inside the `^3.9` pin |
+
+**The one real difference is `IPreview::getPreview()`'s new `$cacheResult` argument**, which
+removes the constraint the whole [preview design](#preview-watermarking) was built around.
+The design is kept regardless, for the reason recorded there: the argument makes the
+alternative *possible*, not *better*.
+
+**Verified on a running 32, not only in the suite.** A fresh install enables the app at
+2.0.0, the migration chain lands all three tables on the expected columns (`watermark_mark`
+with its `origin_owner` / `origin_file_id` pair included), and the app logs nothing. The
+Cypress suite is **87 of 94 on a clean instance**; the seven failures are `06-archive-caps`
+(one) and `11-prune-log` (six), which shell out to `occ` through `docker compose` and get
+`ENOENT` inside the runner container - the limitation
+[`cypress/README.md`](../cypress/README.md) already documents, unchanged from 31. Both were
+closed by hand instead: `occ files_watermark:prune-log --all` reported and then deleted 251
+rows on 32.
+
+**What was *not* re-measured.** The performance and storage numbers elsewhere in this
+document - the S3 round trip, the encryption findings, the script-ordering measurement, the
+PDF-version sweep - were taken on 31.0.14 and are left labelled as such rather than
+relabelled 32. They are records of when they were made. The two core patches in
+[`patch.md`](patch.md) are anchored to 31 line numbers and would need re-anchoring; that file
+now says so at the top.
+
+---
+
 ## The trigger rework: a mark, not burned bytes {#trigger-rework}
 
 **Position:** built, landed on 2026-08-06. Four triggers became two, and the app stopped
@@ -990,13 +1036,19 @@ Previews used to be **denied** to share recipients and public-link visitors, bec
 watermarked preview could not be produced safely. The rework had to bring them back: under
 the new model a marked file is watermarked at every fetch, and a thumbnail is a fetch.
 
-**The constraint is core's preview cache, and it is not negotiable on 31.** That cache is
-keyed by file id and dimensions and **never by viewer**. A stamped thumbnail written into it
-is handed to the next person who opens the folder, with the first person's name on it -
-which is not a degraded watermark, it is the exact inversion of what a watermark is for.
-`IPreview::getPreview()` grew a `$cacheResult` argument for precisely this case, in
-**32.0.0**; this app targets 31, so there is no supported way to ask core for an uncached
-preview. Every part of the design below falls out of that one sentence.
+**The constraint is core's preview cache.** That cache is keyed by file id and dimensions
+and **never by viewer**. A stamped thumbnail written into it is handed to the next person who
+opens the folder, with the first person's name on it - which is not a degraded watermark, it
+is the exact inversion of what a watermark is for. Every part of the design below falls out
+of that one sentence.
+
+**On 32 that constraint is no longer absolute, and the design is kept anyway.**
+`IPreview::getPreview()` gained a `$cacheResult` argument in **32.0.0**, so this app could now
+ask core for an uncached, already-watermarked preview per viewer - the option that did not
+exist while it targeted 31. It is not taken, because it moves the *whole* render into every
+request: a fresh thumbnail out of a 30-page PDF for every viewer of every row, where the
+split below renders once and stamps thereafter. The new argument removes the reason this
+design was forced; it does not make it the wrong one.
 
 **So nothing watermarked goes into the cache at all.** The cache goes on holding the
 *clean* preview, and the watermark is applied per response, after it. Two things make that
@@ -1306,7 +1358,8 @@ the API enforces - one definition, so the button and the server cannot drift.
   arrives without the properties. Reconciling one without the other would put the button back
   on precisely the files it was hidden from.
 
-**Verified against a running Nextcloud 31**, not only in the suite: alice's marked file
+**Verified against a running Nextcloud 31**, and re-verified on 32 for 2.0.0, not only in
+the suite: alice's marked file
 copied by bob out of an internal share, a marked file two levels inside a copied *folder*,
 and the share-switch case with no mark anywhere - all three land an `inherited` mark naming
 alice, bob's download of his copy comes out watermarked, and `unmarkVerdict` answers
@@ -1596,7 +1649,7 @@ watermark.
 - **Open: the DOM half is unverified against a running instance.** The public page renders
   the same file-list markup, so `decorateRows()` should find `.files-list__row-name-link` on
   the same `[data-cy-files-list-row-fileid]` rows - and it degrades to drawing nothing if it
-  does not. Both that and which event `files_sharing` fires on NC 31 need one look at a real
+  does not. Both that and which event `files_sharing` fires on NC 32 need one look at a real
   public link; the Cypress suite covers the public *DAV* path only
 
 ### Skip already-watermarked files
@@ -3010,7 +3063,7 @@ still missing.
     `pdftoppm` has that the others did not is a capability with no pure-PHP substitute and
     a fallback that costs the user nothing when the binary is absent
 - Frontend: `@nextcloud/vue` `^9.8`, `@nextcloud/axios` `^2.5`, `@nextcloud/files` `^3.9`
-- `sabre/dav` pinned to **4.7.0** in `require-dev`, the exact version NC 31.0.14 ships -
+- `sabre/dav` pinned to **4.7.0** in `require-dev`, the exact version NC 32.0.14 ships -
   see the shadowing note under [Testing](#dav-plugin-test-harness)
 - Build assets (`npm run build`) and enable (`occ app:enable files_watermark`)
 
@@ -3319,8 +3372,8 @@ fetches the same files through the same servers a browser does.
   - it found real gaps on the first run: `SabrePluginAddEvent`, `LoadAdditionalScriptsEvent`
     and `OC\Hooks\Emitter` were referenced by `lib/` and declared by nothing, which is why
     `SabrePluginAddListener`'s `@template-implements` had been quietly meaningless. The two
-    events are now transcribed into `CoreStubs.php` from 31.0.14 like the rest
-  - `doctrine/dbal` (^3.9, the line Nextcloud 31 ships) joined require-dev so the migrations'
+    events are now transcribed into `CoreStubs.php` from the shipped image like the rest
+  - `doctrine/dbal` (^3.9, the line Nextcloud 32 ships) joined require-dev so the migrations'
     `ISchemaWrapper` docblocks resolve to real `Schema` / `Table` types
   - two suppressions, both commented in `psalm.xml`: `MissingOverrideAttribute` (`#[\Override]`
     is PHP 8.3 and the floor is 8.2) and `UndefinedClass` in `ImageWatermarker` alone
@@ -3387,7 +3440,7 @@ only by driving a real instance by hand:
 
 - Sabre and `OCA\DAV` are on the test path
   - **Sabre is not stubbed.** `sabre/dav` is a real `require-dev` dependency pinned to
-    **4.7.0**, the exact version NC 31.0.14 ships in `3rdparty/`, so `Server`, `ServerPlugin`,
+    **4.7.0**, the exact version NC 32.0.14 ships in `3rdparty/`, so `Server`, `ServerPlugin`,
     `Tree`, `PropFind`, the `Sabre\HTTP` request/response pair and the exception hierarchy are
     the genuine classes under test. It earned its keep immediately: real Sabre rejected three
     wrong assumptions while the tests were being written
@@ -3410,7 +3463,7 @@ only by driving a real instance by hand:
     `tests/stubs/CoreStubs.php`, required from `bootstrap.php` and kept out of composer
     autoload. They live in the server tree and are not installable from packagist, so they are
     the one place stubs remain
-    - **fidelity:** signatures transcribed verbatim from the `nextcloud:31.0.14-apache` image
+    - **fidelity:** signatures transcribed verbatim from the `nextcloud:32.0.14-apache` image
       rather than written from memory. `CoreStubs.php` carries the `docker create` / `docker cp`
       recipe to re-verify them on upgrade
     - `OC\Streamer` records its calls to a static log, because `ZipInterceptorPlugin`
@@ -3679,8 +3732,8 @@ cannot make (the Arabic UI at `dir="rtl"`).
 
 ### Integration / E2E (Cypress)
 
-**80 tests across 12 specs, none skipped**, run against a real Nextcloud 31 from
-`docker-compose.yml`. `npm run test:e2e`; the whole run is about **80 seconds**. The last
+**94 tests across 13 specs, none skipped**, run against a real Nextcloud 32 from
+`docker-compose.yml`. `npm run test:e2e`; the whole run is about **three minutes**. The last
 pending test was the [bidi bug](#open-bidi) one in `07-arabic.cy.js`, which stayed skipped for
 as long as the bug was open and is now live. Setup, layout and the reasoning behind each probe are in
 [`cypress/README.md`](../cypress/README.md).

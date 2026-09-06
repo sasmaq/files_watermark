@@ -1,6 +1,6 @@
 # Nextcloud Developer Manual (Server 31)
 
-A condensed, working reference for Nextcloud 31 app development, compiled from the
+A condensed, working reference for Nextcloud 32 app development, compiled from the
 official [Developer Manual](https://docs.nextcloud.com/server/31/developer_manual/).
 This is tailored for building server apps like **files_watermark** (PHP App Framework
 backend + Vue 3 frontend).

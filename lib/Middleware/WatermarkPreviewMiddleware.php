@@ -24,15 +24,21 @@ use Psr\Log\LoggerInterface;
  * A watermark that names the reader cannot go through core's preview cache. That cache is
  * keyed by file id and dimensions and **never by viewer**, so a stamped thumbnail written
  * into it is handed to the next person to open the folder, with the first person's name on
- * it - the exact inversion of what a watermark is for. `IPreview::getPreview()` grew a
- * `$cacheResult` argument for precisely this, in **32.0.0**; this app targets 31, so there
- * is no supported way to ask core for an uncached preview here.
+ * it - the exact inversion of what a watermark is for.
  *
  * So the cache keeps doing what it is good at - holding the *clean* preview, which is not
  * reachable by any client except through the endpoints this middleware sits on - and the
  * watermark is applied per response, after it. That also makes the expensive half cached
  * and the cheap half repeated, which is the right way round: rendering a thumbnail from a
  * 30-page PDF is the cost, stamping a 256px image is not.
+ *
+ * **On 32 there is now a second way to do this, and it is deliberately not taken.**
+ * `IPreview::getPreview()` gained a `$cacheResult` argument in 32.0.0, so this app could ask
+ * core to render an uncached, already-watermarked preview per viewer. That would move the
+ * *whole* render into every request - a fresh thumbnail out of a 30-page PDF for every
+ * viewer of every row - where the split above renders once and stamps thereafter. The new
+ * argument removes the constraint that forced this design; it does not make it the wrong
+ * one, and the cheap half is still the half worth repeating.
  *
  * `registerMiddleware($class, global: true)` (Nextcloud 26+) is what lets an app's
  * middleware run around *core's* controllers. Nothing else in the framework can reach them.

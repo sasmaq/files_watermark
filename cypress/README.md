@@ -1,6 +1,6 @@
 # End-to-end suite
 
-Drives a real Nextcloud 31 with the app enabled, and judges every scenario by the
+Drives a real Nextcloud 32 with the app enabled, and judges every scenario by the
 **bytes that come back** - not by a spinner stopping or a toast appearing.
 
 ## Running it

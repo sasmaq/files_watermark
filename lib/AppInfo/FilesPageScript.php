@@ -99,7 +99,7 @@ final class FilesPageScript {
 	 * a subfolder and the badges appear. **On a single-file share there is no second
 	 * listing** - the view fetches its one node once - so the badge simply never appeared
 	 * at all. That is the bug this method fixes, and it is why the fix is an ordering
-	 * change rather than anything to do with single-file pages specifically: NC 31 renders
+	 * change rather than anything to do with single-file pages specifically: NC 32 renders
 	 * a single-file share through the same file list, as the `public-file-share` view.
 	 * ---------------------------------------------------------------------------
 	 *

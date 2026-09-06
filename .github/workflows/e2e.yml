@@ -16,7 +16,7 @@ concurrency:
 jobs:
   cypress:
     runs-on: ubuntu-latest
-    name: Cypress (Nextcloud 31)
+    name: Cypress (Nextcloud 32)
 
     steps:
       - name: Checkout

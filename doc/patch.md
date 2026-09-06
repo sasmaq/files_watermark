@@ -19,6 +19,14 @@ The cost of that location is visibility, and most of it is already paid for **in
 to share a copy. Nothing to do for those - they ship, they are registered, and their tests
 fail if either guard is weakened. Read the class docblocks for why each hook is where it is.
 
+> **Kept as a record, not as instructions for 2.0.0.** The preserved-originals folder these
+> patches exist to hide went away with the burn - `HideOriginalsPlugin` and
+> `ShareGuardListener` are gone, and nothing writes a copy any more, so there is no folder
+> to leak. The hunks below are also anchored to **Nextcloud 31.0.14** line numbers and were
+> measured there; they will not apply cleanly to 32 without re-anchoring. They stay written
+> down because the surfaces they close are real and the measurements behind them were
+> expensive - see [`tasks.md`](tasks.md).
+
 **This document is what is left: two patches to Nextcloud's own code**, which close the two
 places the app cannot reach from outside. They are deliberately *not* applied - patching
 shipped code has consequences that belong to whoever runs the instance, see

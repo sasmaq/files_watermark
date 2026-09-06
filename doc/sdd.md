@@ -1,6 +1,6 @@
 # Software Development Document
 
-## files_watermark - Nextcloud 31 File Watermarking App
+## files_watermark - Nextcloud 32 File Watermarking App
 
 **Version:** 1.0.0  
 **Date:** 2026-06-27  
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-`files_watermark` is a Nextcloud 31 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks are applied at **delivery**: a trigger decides which files carry a *mark* - on demand, or on upload - and every download and every preview of a marked file is rendered against the identity of whoever is fetching it. The stored file is never modified. The app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define a single, server-wide policy through a management panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
+`files_watermark` is a Nextcloud 32 application that enables administrators and users to apply configurable watermarks to files stored in Nextcloud. It supports **visible** watermarks (text and/or image overlays) on PDFs, images, and Office documents, and, where the format allows, **invisible metadata** watermarks. Watermarks are applied at **delivery**: a trigger decides which files carry a *mark* - on demand, or on upload - and every download and every preview of a marked file is rendered against the identity of whoever is fetching it. The stored file is never modified. The app integrates with Nextcloud's sharing, permission, and file-event systems. Administrators define a single, server-wide policy through a management panel. The app protects documents from unauthorized distribution, provides traceability via an audit log, and works on both local and S3 storage backends.
 
 ---
 
@@ -212,7 +212,7 @@ All endpoints require a valid Nextcloud session or app password. Admin-only endp
 
 - **File Action** - context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
 
-Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component library and **@nextcloud/axios** for API calls, consistent with Nextcloud 31 app standards.
+Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component library and **@nextcloud/axios** for API calls, consistent with Nextcloud 32 app standards.
 
 ---
 
