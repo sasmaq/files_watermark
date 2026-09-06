@@ -11,9 +11,6 @@
 					<h4 class="wm-card__title">
 						{{ t('files_watermark', 'Watermark type') }}
 					</h4>
-					<p class="wm-card__desc">
-						{{ t('files_watermark', 'What should be stamped onto the file?') }}
-					</p>
 					<div class="wm-type-options"
 						role="radiogroup"
 						:aria-label="t('files_watermark', 'Watermark type')">
@@ -41,9 +38,6 @@
 						{{ t('files_watermark', 'Text content') }}
 					</h4>
 					<p class="wm-card__desc">
-						{{ t('files_watermark', 'Type the text to stamp. Insert a placeholder to fill in details automatically.') }}
-					</p>
-					<p class="wm-card__desc">
 						{{ identityHelp }}
 					</p>
 					<!--
@@ -62,7 +56,7 @@
 							:key="ph.token"
 							type="button"
 							class="wm-chip"
-							:title="t('files_watermark', '{label} - example: {ex}', { label: ph.label, ex: ph.example })"
+							:title="t('files_watermark', '{label} (example: {ex})', { label: ph.label, ex: ph.example })"
 							@click="insertPlaceholder(ph.token)">
 							{{ ph.token }}
 						</button>
@@ -74,9 +68,6 @@
 					<h4 class="wm-card__title">
 						{{ t('files_watermark', 'Watermark image') }}
 					</h4>
-					<p class="wm-card__desc">
-						{{ t('files_watermark', 'The logo is centered on each page at 30% of its width.') }}
-					</p>
 					<input ref="fileInput"
 						type="file"
 						class="wm-file-input"
@@ -104,7 +95,7 @@
 						</span>
 					</div>
 					<p class="wm-help">
-						{{ t('files_watermark', 'Upload a PNG or JPEG image, up to {max} MB.', { max: MAX_IMAGE_MB }) }}
+						{{ t('files_watermark', 'PNG or JPEG, up to {max} MB. Centered on each page at 30% of its width.', { max: MAX_IMAGE_MB }) }}
 					</p>
 					<p v-if="imagePathError" class="wm-field-error">
 						{{ imagePathError }}
@@ -116,9 +107,6 @@
 					<h4 class="wm-card__title">
 						{{ t('files_watermark', 'Appearance') }}
 					</h4>
-					<p class="wm-card__desc">
-						{{ appearanceDesc }}
-					</p>
 					<div class="wm-fields">
 						<div v-if="form.type !== 'image'" class="wm-field">
 							<label for="wm-fontsize">{{ t('files_watermark', 'Font size') }}</label>
@@ -175,7 +163,7 @@
 						{{ t('files_watermark', 'When to apply') }}
 					</h4>
 					<p class="wm-card__desc">
-						{{ t('files_watermark', 'Choose which files get watermarked. The watermark itself is drawn each time a file is downloaded or previewed, and names the person fetching it - including the owner. The stored file is never changed.') }}
+						{{ t('files_watermark', 'The stored file is never changed: the watermark is drawn on each download and preview, and names whoever fetches it.') }}
 					</p>
 					<div class="wm-option-list"
 						role="radiogroup"
@@ -208,7 +196,7 @@
 							{{ t('files_watermark', 'Record every download in the activity log') }}
 						</NcCheckboxRadioSwitch>
 						<small class="wm-help">
-							{{ t('files_watermark', 'On by default, because it is what answers "who received a copy of this file". It writes one entry per file per download, including every file inside a downloaded folder, and nothing expires on its own - use occ files_watermark:prune-log to keep it in hand. Previews are not recorded. Marking and unmarking a file is always recorded, whatever this is set to.') }}
+							{{ t('files_watermark', 'One entry per file per download, folders included. Previews are not recorded. Nothing expires on its own.') }}
 						</small>
 					</div>
 				</section>
@@ -219,25 +207,19 @@
 						{{ t('files_watermark', 'Shared files') }}
 					</h4>
 					<p class="wm-card__desc">
-						{{ t('files_watermark', 'Watermark files on their way out through a share, whether or not anyone has applied a watermark to them. This is decided each time a file is fetched, so it starts and stops the moment you save - no file is changed, and nothing is left behind when you switch it off again. The owner\'s own downloads stay untouched.') }}
+						{{ t('files_watermark', 'Watermark files leaving through a share, whether or not anyone marked them. Decided per fetch, so it starts and stops when you save.') }}
 					</p>
 					<div class="wm-field wm-field--stacked wm-share-internal">
 						<NcCheckboxRadioSwitch :model-value="!!form.watermarkInternalShares"
 							@update:model-value="form.watermarkInternalShares = $event">
 							{{ t('files_watermark', 'Always watermark files opened through an internal share') }}
 						</NcCheckboxRadioSwitch>
-						<small class="wm-help">
-							{{ t('files_watermark', 'Everyone the file is shared with - a user, a group, or a link they signed in to follow - gets a copy stamped with their own name.') }}
-						</small>
 					</div>
 					<div class="wm-field wm-field--stacked wm-share-external">
 						<NcCheckboxRadioSwitch :model-value="!!form.watermarkExternalShares"
 							@update:model-value="form.watermarkExternalShares = $event">
 							{{ t('files_watermark', 'Always watermark files opened through a public link') }}
 						</NcCheckboxRadioSwitch>
-						<small class="wm-help">
-							{{ t('files_watermark', 'A visitor following a public link has no account to name, so the copy carries the name of the file\'s owner - the person accountable for publishing it.') }}
-						</small>
 					</div>
 					<!--
 						Said plainly because it is the surprise: this app never serves a clean
@@ -245,7 +227,7 @@
 						files under that rule that were never marked by anybody.
 					-->
 					<p class="wm-help">
-						{{ t('files_watermark', 'A shared file that cannot be watermarked - one past the size limits, or a PDF the renderer cannot read - is refused rather than handed over clean. The same applies to a shared folder downloaded as an archive.') }}
+						{{ t('files_watermark', 'A shared file that cannot be watermarked is refused rather than handed over clean, archives of shared folders included.') }}
 					</p>
 				</section>
 
@@ -271,9 +253,6 @@
 					<h4 class="wm-card__title">
 						{{ t('files_watermark', 'Where to apply') }}
 					</h4>
-					<p class="wm-card__desc">
-						{{ t('files_watermark', 'Narrow the policy, or leave everything untouched to cover every supported file.') }}
-					</p>
 					<div class="wm-field wm-field--stacked">
 						<label class="wm-field__label">{{ t('files_watermark', 'Limit to file types') }}</label>
 						<!--
@@ -301,7 +280,7 @@
 						<NcSelectTags v-model="selectedFolderTag"
 							:multiple="false"
 							:placeholder="t('files_watermark', 'Any folder')" />
-						<small class="wm-help">{{ t('files_watermark', 'Only files whose containing folder carries this tag are watermarked. The tag goes on the folder, not on the files.') }}</small>
+						<small class="wm-help">{{ t('files_watermark', 'The tag goes on the folder, not on the files.') }}</small>
 					</div>
 				</section>
 
@@ -325,7 +304,7 @@
 							{{ t('files_watermark', 'Flatten watermarked PDFs') }}
 						</NcCheckboxRadioSwitch>
 						<small class="wm-help">
-							{{ t('files_watermark', 'A watermark is normally its own layer, and ordinary PDF tools can delete it. Flattening replaces every page with a picture of itself, so there is no layer left to delete. It raises the effort rather than making removal impossible - a page can still be cropped or retyped.') }}
+							{{ t('files_watermark', 'Ordinary PDF tools can delete a watermark layer. Flattening replaces every page with a picture of itself, leaving no layer to delete, though a page can still be cropped or retyped.') }}
 						</small>
 						<!--
 							The one thing an admin cannot discover from the interface: switching
@@ -335,13 +314,13 @@
 							patching obligation the admin is taking on by ticking the box.
 						-->
 						<small class="wm-help wm-help--warn">
-							{{ t('files_watermark', 'Security note: this is the only feature that runs an external program. It also costs noticeably more CPU, memory and temporary disk per download.') }}
+							{{ t('files_watermark', 'Security note: the only feature that runs an external program, and it costs noticeably more CPU, memory and disk per download.') }}
 						</small>
 						<small class="wm-help wm-help--warn">
-							{{ t('files_watermark', 'Costs: the text layer is destroyed, so no selection, copy, search or screen-reader access remains. Files also grow several times larger, and every download takes longer to prepare.') }}
+							{{ t('files_watermark', 'The text layer is destroyed: no selection, copy, search or screen-reader access. Files also grow several times larger.') }}
 						</small>
 						<small class="wm-help">
-							{{ t('files_watermark', 'If a page cannot be rebuilt, the ordinary watermarked PDF is delivered instead and the reason is written to the server log - a download is never refused for this.') }}
+							{{ t('files_watermark', 'A page that cannot be rebuilt falls back to the ordinary watermarked PDF; a download is never refused for this.') }}
 						</small>
 					</div>
 					<div v-if="form.flattenPdf" class="wm-field">
@@ -356,7 +335,7 @@
 								class="wm-range">
 							<span class="wm-inline__val">{{ form.flattenDpi }} DPI</span>
 						</div>
-						<small class="wm-help">{{ t('files_watermark', 'Higher is sharper and bigger. 150 suits text documents; raise it for detailed scans.') }}</small>
+						<small class="wm-help">{{ t('files_watermark', '150 suits text documents; raise it for detailed scans.') }}</small>
 					</div>
 				</section>
 			</div>
@@ -667,14 +646,13 @@ const SAMPLE = {
 	filename: t('files_watermark', 'document.pdf'),
 }
 
-// The help text names the two samples, so it takes them as parameters rather than
-// repeating them. Spelled out in the copy they would be a second place to translate and
-// a second place to drift, and an admin comparing the sentence against the chip tooltips
-// would be shown two different example names for the same token.
+// What each token *is* now comes from the chip tooltips, which already name it and show
+// an example; this sentence is kept for the one thing they cannot say - which of the two
+// identity tokens to reach for. The literal braces survive `t()` untouched, since nothing
+// in the params object matches them.
 const identityHelp = t(
 	'files_watermark',
-	'{displayname} is the name shown in Nextcloud ({sampleDisplayname}); {username} is the account name used to sign in ({sampleUsername}). Display names can change and are not unique - use the account name when the watermark has to identify exactly one account.',
-	{ sampleDisplayname: SAMPLE.displayname, sampleUsername: SAMPLE.username },
+	'Display names can change and are not unique. Use {username}, the sign-in name, to identify exactly one account.',
 )
 
 const PLACEHOLDERS = [
@@ -798,10 +776,6 @@ function clearImage() {
 		imagePreviewUrl.value = null
 	}
 }
-
-const appearanceDesc = computed(() => form.type === 'image'
-	? t('files_watermark', 'Adjust how strongly the logo shows through.')
-	: t('files_watermark', 'Adjust the size, color, opacity, and angle of the text.'))
 
 const previewNote = computed(() => {
 	switch (form.type) {

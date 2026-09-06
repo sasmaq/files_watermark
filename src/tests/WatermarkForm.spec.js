@@ -75,7 +75,7 @@ describe('WatermarkForm', () => {
 		})
 
 		it('spells out the difference in the section help text', () => {
-			expect(mountForm().text()).toContain('account name used to sign in')
+			expect(mountForm().text()).toContain('the sign-in name')
 		})
 
 		it('defaults to the display name, which is what a person reads', () => {
@@ -361,7 +361,7 @@ describe('WatermarkForm', () => {
 		it('says the tag belongs on the folder, not on the files', async () => {
 			// The old help text claimed the opposite of what the server checks.
 			const wrapper = await mountAdvanced()
-			expect(wrapper.text()).toContain('containing folder carries this tag')
+			expect(wrapper.text()).toContain('on the folder, not on the files')
 		})
 	})
 
@@ -450,7 +450,7 @@ describe('WatermarkForm', () => {
 
 		it('states both the benefit and the accessibility cost', async () => {
 			const text = (await mountFlatten()).text()
-			expect(text).toContain('no layer left to delete')
+			expect(text).toContain('no layer to delete')
 			expect(text).toContain('screen-reader access')
 		})
 
@@ -466,7 +466,7 @@ describe('WatermarkForm', () => {
 		})
 
 		it('says a failed rebuild falls back rather than refusing the download', async () => {
-			expect((await mountFlatten()).text()).toContain('the ordinary watermarked PDF is delivered instead')
+			expect((await mountFlatten()).text()).toContain('the ordinary watermarked PDF')
 		})
 
 		it('sends both fields on save', async () => {

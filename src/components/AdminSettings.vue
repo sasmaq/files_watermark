@@ -1,9 +1,6 @@
 <template>
 	<div class="section">
 		<h2>{{ t('files_watermark', 'Watermark') }}</h2>
-		<p class="section-intro">
-			{{ t('files_watermark', 'Define the watermark applied to files across this server. Changes are previewed live and take effect as soon as you save.') }}
-		</p>
 
 		<NcNoteCard v-if="loadError" type="error">
 			{{ t('files_watermark', 'Failed to load configuration: {error}', { error: loadError }) }}
@@ -28,9 +25,6 @@
 				<h3 class="watermark-log__title">
 					{{ t('files_watermark', 'Activity log') }}
 				</h3>
-				<p class="watermark-log__desc">
-					{{ t('files_watermark', 'Every watermark applied to a file is recorded here.') }}
-				</p>
 				<!--
 					Collapsed on arrival, and the log is not rendered at all until it is
 					opened - `v-if`, never `v-show`. The page an admin comes here for is the
@@ -129,11 +123,6 @@ async function save(formData) {
 </script>
 
 <style scoped>
-.section-intro {
-    margin: 0 0 20px;
-    max-width: 720px;
-    color: var(--color-text-maxcontrast);
-}
 .loading-wrapper {
     display: flex;
     justify-content: center;
@@ -146,14 +135,9 @@ async function save(formData) {
     border-top: 1px solid var(--color-border);
 }
 .watermark-log__title {
-    margin: 0 0 4px;
+    margin: 0 0 12px;
     font-size: 20px;
     font-weight: 700;
-}
-.watermark-log__desc {
-    margin: 0 0 12px;
-    font-size: 14px;
-    color: var(--color-text-maxcontrast);
 }
 .watermark-log__toggle {
     margin-bottom: 16px;
