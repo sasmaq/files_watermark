@@ -242,19 +242,20 @@ class PdfWatermarker {
 	/**
 	 * Register `$sourcePath` for import and return its id and page count.
 	 *
-	 * There is exactly one rescue pass, and it is not a process: a document encrypted
-	 * under an empty user password is rewritten in memory by {@see PdfDecryptor} and
-	 * imported from there. Everything else that fails to parse is refused, and the
+	 * The rescue passes are not processes: each rewrites the document in memory and
+	 * imports it from there. Everything that survives all of them is refused, and the
 	 * trigger's own policy takes over (skip plus an audit row for the in-place
 	 * triggers, deny for `on_share`).
 	 *
-	 * The rescue runs only after the ordinary import has failed, so the common path -
-	 * an unencrypted file - never pays for it. The decryptor re-reads and re-parses the
-	 * source, which is the price of leaving tc-lib-pdf's own import untouched.
+	 * They run only after the ordinary import has failed, so the common path - a file
+	 * the parser reads as it stands - never pays for them. Each rewriter re-reads and
+	 * re-parses the source, which is the price of leaving tc-lib-pdf's own import
+	 * untouched.
 	 *
-	 * The **original** failure is what gets reported when the rescue does not apply.
-	 * A decryptor that declines says only "not my case"; the import's own exception is
-	 * the one that says why the file could not be read.
+	 * The **original** failure is what gets reported when no rescue applies. A rewriter
+	 * that declines says only "not my case"; the import's own exception is the one that
+	 * says why the file could not be read. When a rescue does apply and the import still
+	 * fails, that later failure is the more informative one and is reported instead.
 	 *
 	 * @return array{0: string, 1: int} source id and page count
 	 */
@@ -263,28 +264,58 @@ class PdfWatermarker {
 			$sourceId = $pdf->setImportSourceFile($sourcePath);
 			return [$sourceId, $pdf->getSourcePageCount($sourceId)];
 		} catch (\Exception $cause) {
-			$decrypted = $this->decryptEmptyPassword($sourcePath);
-			if ($decrypted === null) {
-				throw $this->unreadable($cause);
+			$failure = $cause;
+
+			foreach ($this->rescues($sourcePath) as $rescued) {
+				try {
+					$sourceId = $pdf->setImportSourceData($rescued);
+					return [$sourceId, $pdf->getSourcePageCount($sourceId)];
+				} catch (\Exception $stillUnreadable) {
+					$failure = $stillUnreadable;
+				}
 			}
 
-			try {
-				$sourceId = $pdf->setImportSourceData($decrypted);
-				return [$sourceId, $pdf->getSourcePageCount($sourceId)];
-			} catch (\Exception $stillUnreadable) {
-				throw $this->unreadable($stillUnreadable);
-			}
+			throw $this->unreadable($failure);
 		}
 	}
 
 	/**
-	 * The plaintext of `$sourcePath` when it is encrypted with an empty user password,
-	 * `null` in every other case - including a file that is simply gone by now.
+	 * Rewritten forms of `$sourcePath` worth trying, in the order they are worth trying.
+	 *
+	 * Two documents the parser refuses can be recovered, and they are independent
+	 * problems that one file can have at once:
+	 *
+	 * - object headers separated by something other than single spaces, which
+	 *   {@see PdfObjectHeaderNormalizer} rewrites in place; and
+	 * - encryption under an **empty user password**, which is not protection but a way
+	 *   of carrying permission flags, and which {@see PdfDecryptor} undoes. A file with
+	 *   a real password stays refused.
+	 *
+	 * Normalisation comes first because the decryptor has to parse the document to
+	 * decrypt it, and so fails on exactly the headers the normaliser repairs. Feeding it
+	 * the normalised bytes means a file with both faults is still recovered, at no cost
+	 * to a file with only one - normalize() declines on a document that never had the
+	 * fault, leaving the original bytes to be decrypted.
+	 *
+	 * @return \Generator<int, string>
 	 */
-	private function decryptEmptyPassword(string $sourcePath): ?string {
+	private function rescues(string $sourcePath): \Generator {
 		$raw = @file_get_contents($sourcePath);
+		if ($raw === false) {
+			// Gone between the import and here. Nothing to rewrite, and the import's
+			// own exception already describes a file that could not be read.
+			return;
+		}
 
-		return $raw === false ? null : (new PdfDecryptor())->decrypt($raw);
+		$normalized = (new PdfObjectHeaderNormalizer())->normalize($raw);
+		if ($normalized !== null) {
+			yield $normalized;
+		}
+
+		$decrypted = (new PdfDecryptor())->decrypt($normalized ?? $raw);
+		if ($decrypted !== null) {
+			yield $decrypted;
+		}
 	}
 
 	private function applyTextOverlay(

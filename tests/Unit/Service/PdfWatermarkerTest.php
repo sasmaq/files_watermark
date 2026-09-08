@@ -16,6 +16,7 @@ use PHPUnit\Framework\TestCase;
 class PdfWatermarkerTest extends TestCase {
 	use CompressedXrefFixture;
 	use CroppedPageFixture;
+	use ObjectHeaderWhitespaceFixture;
 	use PdfFixtures;
 	use ResourcelessPageFixture;
 
@@ -921,6 +922,40 @@ class PdfWatermarkerTest extends TestCase {
 		}
 
 		$this->assertFileDoesNotExist($dest, 'a refused render must not leave a partial file behind');
+		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
+	}
+
+	/**
+	 * A document whose object headers are separated by line feeds rather than single
+	 * spaces - valid under §7.2.2, and what Google's exporters emit for every object.
+	 *
+	 * tc-lib-pdf-parser looks for the header as a literal string and misses, which it
+	 * reads as a reference to a missing object; `/Root` then comes back as the null
+	 * object and the import fails claiming the file is encrypted, which it is not.
+	 * {@see \OCA\FilesWatermark\Service\PdfObjectHeaderNormalizer} rewrites the headers
+	 * in memory and the second import succeeds.
+	 *
+	 * The source is asserted unchanged: the repair exists to render a file, not to
+	 * correct the user's document on disk.
+	 */
+	public function testLineFeedSeparatedObjectHeadersAreWatermarked(): void {
+		$source = $this->tmpDir . '/linefeed-headers.pdf';
+		file_put_contents($source, $this->buildPdfWithHeaderSeparator("\n"));
+		$before = (string)file_get_contents($source);
+		$dest = $this->tmpDir . '/out.pdf';
+
+		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
+
+		$this->assertFileExists($dest);
+		$this->assertStringContainsString(
+			'Alice',
+			$this->drawnText($dest, $this->pageContent($dest)),
+			'the watermark text never reached the page',
+		);
+
+		// The page came through as content, not as a blank sheet with an overlay on it.
+		$this->assertSame(1, $this->readPageCount($dest));
+
 		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
 	}
 
