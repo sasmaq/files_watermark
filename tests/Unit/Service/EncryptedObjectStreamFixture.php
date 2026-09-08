@@ -153,13 +153,40 @@ trait EncryptedObjectStreamFixture {
 	}
 
 	/**
-	 * Ciphertext escaped for a literal `(...)` string.
+	 * Ciphertext escaped for a literal `(...)` string, the way a real producer escapes it.
 	 *
-	 * Random bytes contain parentheses and backslashes, and a fixture that pasted them
-	 * in raw would produce a file no parser could read - which would look like a
-	 * decryptor bug rather than a fixture one.
+	 * Everything outside printable ASCII goes out as a three-digit octal escape. That is
+	 * belt and braces for two different reasons, and the first one is a bug this fixture
+	 * already had.
+	 *
+	 * **An end-of-line byte cannot be protected with a backslash.** A backslash before a
+	 * real CR or LF is a *line continuation* in PDF syntax - it means "this string carries
+	 * on, and neither byte is part of it" - so escaping `\r` that way deletes it instead of
+	 * preserving it. A raw CR is no better: a conforming reader normalises raw CR and CRLF
+	 * inside a literal string to a single LF. Only `\r` (backslash, letter r) or an octal
+	 * escape survives, and this fixture used to emit the first form. Ciphertext is random,
+	 * so roughly one run in eight produced a `0x0D` somewhere in the IV and the string came
+	 * back empty - a test that failed on the machine that drew the unlucky bytes and passed
+	 * everywhere else.
+	 *
+	 * **It also makes the escaping deterministic in what it exercises.** Random bytes
+	 * always contain something unprintable, so `PdfDecryptor::unescapeLiteral()` now takes
+	 * its octal path on every run rather than only when the ciphertext happened to contain
+	 * a parenthesis.
 	 */
 	private static function escapeLiteral(string $bytes): string {
-		return (string)preg_replace('/([\\\\()\r])/', '\\\\$1', $bytes);
+		$escaped = '';
+		foreach (str_split($bytes) as $byte) {
+			$code = ord($byte);
+			$escaped .= match (true) {
+				$byte === '\\' => '\\\\',
+				$byte === '(' => '\\(',
+				$byte === ')' => '\\)',
+				$code < 0x20, $code > 0x7E => sprintf('\\%03o', $code),
+				default => $byte,
+			};
+		}
+
+		return $escaped;
 	}
 }
