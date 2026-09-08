@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Migration;
 
 use Closure;
-use OCA\FilesWatermark\Service\PdfFlattener;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\Types;
 use OCP\Migration\IOutput;
@@ -14,6 +13,11 @@ use OCP\Migration\SimpleMigrationStep;
 /**
  * `flatten_pdf` / `flatten_dpi` - rebuild watermarked PDF pages as bitmaps, so the overlay
  * cannot be stripped.
+ *
+ * `flatten_dpi` has since been retired again by {@see Version1007Date20260908120000}: the
+ * render resolution is a constant of {@see \OCA\FilesWatermark\Service\PdfFlattener}
+ * rather than a setting. This step still adds it, because the chain has to keep converging
+ * from every state the app has shipped, and the next one drops it.
  *
  * These two columns existed once before and were dropped by the migration that removed
  * every external-binary dependency; `Version1002Date20260804120000` still drops them, from
@@ -24,7 +28,7 @@ use OCP\Migration\SimpleMigrationStep;
  * rasterising every download on an instance whose admin never saw the control.
  *
  * **Both default to off**, and off is also what an install gets where the host has no
- * `pdftoppm`: the column is only ever read through {@see PdfFlattener}, whose availability
+ * `pdftoppm`: the column is only ever read through the flattener, whose availability
  * probe decides whether the setting can be turned on at all.
  *
  * Additive and guarded like every step here; `SchemaConvergenceTest` drives the whole chain
@@ -56,9 +60,13 @@ class Version1005Date20260901120000 extends SimpleMigrationStep {
 		}
 
 		if (!$table->hasColumn('flatten_dpi')) {
+			// A literal, not the renderer's constant. `flatten_dpi` was retired by
+			// Version1007Date20260908120000, which drops it again a step later; this one
+			// stays only so the chain still converges from an instance that stopped here,
+			// and a historical step must not move when a live constant does.
 			$table->addColumn('flatten_dpi', Types::INTEGER, [
 				'notnull' => false,
-				'default' => PdfFlattener::DEFAULT_DPI,
+				'default' => 150,
 			]);
 			$changed = true;
 		}

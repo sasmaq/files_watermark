@@ -166,29 +166,24 @@ class PdfFlattenerTest extends TestCase {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * A caller cannot make the renderer produce a 20000-DPI page: that is a memory and disk
-	 * denial of service, not a quality setting. Asserted on the command line rather than on
-	 * output size, because it is the operand handed to the binary that does the damage.
+	 * Every page is rendered at the one fixed resolution, and no caller can change it.
 	 *
-	 * @dataProvider dpiProvider
+	 * The resolution was configurable once, from 72 to 600 DPI, and the reason it is not
+	 * any more is what this asserts: the operand handed to the binary is what costs the
+	 * memory and disk, so a 20000-DPI request was a denial of service wearing the clothes
+	 * of a quality setting. Asserted on the command line rather than on output size,
+	 * because the command line is where the damage would be done.
 	 */
-	public function testDpiIsClampedToTheSupportedRange(int $requested, int $expected): void {
+	public function testEveryPageIsRenderedAtTheFixedResolution(): void {
 		$this->fakeRenderer();
-		$source = $this->sourcePdf(['Clamp']);
+		$source = $this->sourcePdf(['One', 'Two']);
 
-		$this->flattener()->flatten($source, $this->tmpDir . '/clamped.pdf', $requested);
+		$this->flattener()->flatten($source, $this->tmpDir . '/fixed.pdf');
 
-		$this->assertStringContainsString("-r $expected ", $this->rendererCalls()[0]);
-	}
-
-	/** @return array<string, array{int, int}> */
-	public static function dpiProvider(): array {
-		return [
-			'in range' => [200, 200],
-			'absurdly high' => [20000, PdfFlattener::MAX_DPI],
-			'below the floor' => [10, PdfFlattener::MIN_DPI],
-			'negative' => [-1, PdfFlattener::MIN_DPI],
-		];
+		$this->assertSame(150, PdfFlattener::RENDER_DPI, 'the documented resolution changed');
+		foreach ($this->rendererCalls() as $call) {
+			$this->assertStringContainsString('-r ' . PdfFlattener::RENDER_DPI . ' ', $call);
+		}
 	}
 
 	public function testPageCeilingIsEnforced(): void {

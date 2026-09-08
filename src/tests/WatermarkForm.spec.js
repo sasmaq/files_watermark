@@ -416,24 +416,16 @@ describe('WatermarkForm', () => {
 			expect(wrapper.text()).toContain('Tamper resistance')
 		})
 
-		it('defaults to off, with no resolution slider until it is on', async () => {
+		it('defaults to off, and offers no resolution control when it is on', async () => {
+			// The resolution is fixed in the flattener now. Turning the switch on must not
+			// bring a slider back with it.
 			const wrapper = await mountFlatten()
 			expect(wrapper.vm.form.flattenPdf).toBe(false)
-			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(false)
 
 			await wrapper.find('.wm-flatten-toggle input').setValue(true)
 			expect(wrapper.vm.form.flattenPdf).toBe(true)
-			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(true)
-		})
-
-		it('bounds the resolution slider by the range the server reports', async () => {
-			const wrapper = await mountFlatten({
-				modelValue: { flattenPdf: true },
-				flattenDpiRange: { min: 100, max: 400 },
-			})
-			const slider = wrapper.find('#wm-flatten-dpi')
-			expect(slider.attributes('min')).toBe('100')
-			expect(slider.attributes('max')).toBe('400')
+			expect(wrapper.find('#wm-flatten-dpi').exists()).toBe(false)
+			expect(wrapper.text()).not.toContain('DPI')
 		})
 
 		it('opens the advanced options when the stored policy already flattens', () => {
@@ -469,13 +461,13 @@ describe('WatermarkForm', () => {
 			expect((await mountFlatten()).text()).toContain('the ordinary watermarked PDF')
 		})
 
-		it('sends both fields on save', async () => {
-			const wrapper = await mountFlatten({ modelValue: { flattenPdf: true, flattenDpi: 300 } })
+		it('sends the switch on save, and no resolution with it', async () => {
+			const wrapper = await mountFlatten({ modelValue: { flattenPdf: true } })
 			await wrapper.find('.wm-save').trigger('click')
 
 			const [payload] = wrapper.emitted('save')[0]
 			expect(payload.flattenPdf).toBe(true)
-			expect(payload.flattenDpi).toBe(300)
+			expect(payload.flattenDpi).toBeUndefined()
 		})
 
 		it('leaves the stored setting alone when the block is hidden', async () => {
@@ -483,13 +475,12 @@ describe('WatermarkForm', () => {
 			// setting comes back intact if the package does.
 			const wrapper = await mountFlatten({
 				flattenAvailable: false,
-				modelValue: { flattenPdf: true, flattenDpi: 300 },
+				modelValue: { flattenPdf: true },
 			})
 			await wrapper.find('.wm-save').trigger('click')
 
 			const [payload] = wrapper.emitted('save')[0]
 			expect(payload.flattenPdf).toBe(true)
-			expect(payload.flattenDpi).toBe(300)
 		})
 	})
 

@@ -143,8 +143,6 @@ OC.L10N.register(
         "The text layer is destroyed: no selection, copy, search or screen-reader access. Files also grow several times larger.": "تتلف طبقة النص: فلا تحديد ولا نسخ ولا بحث ولا وصول لقارئ الشاشة. كما تكبر الملفات أضعافا.",
         "Security note: the only feature that runs an external program, and it costs noticeably more CPU, memory and disk per download.": "ملاحظة أمنية: الميزة الوحيدة التي تشغل برنامجا خارجيا، وتستهلك قدرا أكبر من المعالجة والذاكرة والقرص في كل تنزيل.",
         "A page that cannot be rebuilt falls back to the ordinary watermarked PDF; a download is never refused for this.": "الصفحة التي يتعذر إعادة بنائها تعود إلى ملف PDF الموسوم المعتاد؛ ولا يرفض التنزيل بسبب ذلك أبدا.",
-        "Render resolution": "دقة التصيير",
-        "150 suits text documents; raise it for detailed scans.": "150 تناسب المستندات النصية؛ ارفعها للمسوحات التفصيلية.",
         "Flattened PDFs need the poppler-utils package on the server. Install it, or leave flattening off.": "تسطيح ملفات PDF يحتاج إلى حزمة poppler-utils على الخادم. ثبتها، أو اترك التسطيح معطلا."
     },
 "nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);");

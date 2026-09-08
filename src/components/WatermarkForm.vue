@@ -323,20 +323,6 @@
 							{{ t('files_watermark', 'A page that cannot be rebuilt falls back to the ordinary watermarked PDF; a download is never refused for this.') }}
 						</small>
 					</div>
-					<div v-if="form.flattenPdf" class="wm-field">
-						<label for="wm-flatten-dpi">{{ t('files_watermark', 'Render resolution') }}</label>
-						<div class="wm-inline">
-							<input id="wm-flatten-dpi"
-								v-model.number="form.flattenDpi"
-								type="range"
-								:min="flattenDpiRange.min"
-								:max="flattenDpiRange.max"
-								step="6"
-								class="wm-range">
-							<span class="wm-inline__val">{{ form.flattenDpi }} DPI</span>
-						</div>
-						<small class="wm-help">{{ t('files_watermark', '150 suits text documents; raise it for detailed scans.') }}</small>
-					</div>
 				</section>
 			</div>
 
@@ -501,7 +487,6 @@ const props = defineProps({
 	 * a control that cannot be honoured is worse than no control.
 	 */
 	flattenAvailable: { type: Boolean, default: false },
-	flattenDpiRange: { type: Object, default: () => ({ min: 72, max: 600 }) },
 })
 
 const emit = defineEmits(['save', 'update:modelValue'])
@@ -530,7 +515,6 @@ const DEFAULTS = {
 	// Off, matching the column. The server refuses it outright on a host with no
 	// rasteriser, so it can only ever be turned on where it can be honoured.
 	flattenPdf: false,
-	flattenDpi: 150,
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })

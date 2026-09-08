@@ -75,7 +75,6 @@ class ApiController extends Controller {
 		return new DataResponse([
 			'configs' => array_map(fn (WatermarkConfig $c) => $c->jsonSerialize(), $configs),
 			'flattenAvailable' => $this->pdfFlattener->isAvailable(),
-			'flattenDpiRange' => ['min' => PdfFlattener::MIN_DPI, 'max' => PdfFlattener::MAX_DPI],
 		]);
 	}
 
@@ -118,7 +117,6 @@ class ApiController extends Controller {
 		bool $watermarkInternalShares = false,
 		bool $watermarkExternalShares = false,
 		bool $flattenPdf = false,
-		int $flattenDpi = PdfFlattener::DEFAULT_DPI,
 		?int $id = null,
 	): DataResponse {
 
@@ -265,11 +263,7 @@ class ApiController extends Controller {
 		// stored state left behind when one is switched off again.
 		$config->setWatermarkInternalShares($watermarkInternalShares);
 		$config->setWatermarkExternalShares($watermarkExternalShares);
-		// Clamped rather than validated: an out-of-range DPI is a slider the browser sent
-		// badly, not a policy an admin can have meant, and the renderer treats it as a
-		// resource ceiling - 20000 DPI is a denial of service, not a quality setting.
 		$config->setFlattenPdf($flattenPdf);
-		$config->setFlattenDpi(PdfFlattener::clampDpi($flattenDpi));
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));
 
 		if ($id !== null) {

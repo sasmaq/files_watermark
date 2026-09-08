@@ -37,8 +37,6 @@ use OCP\AppFramework\Db\Entity;
  * @method void setWatermarkExternalShares(bool $watermarkExternalShares)
  * @method bool getFlattenPdf()
  * @method void setFlattenPdf(bool $flattenPdf)
- * @method int getFlattenDpi()
- * @method void setFlattenDpi(int $flattenDpi)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -107,8 +105,6 @@ class WatermarkConfig extends Entity {
 	 * and with it selection, search and screen-reader access.
 	 */
 	protected bool $flattenPdf = false;
-	/** Render resolution for {@see $flattenPdf}, in dots per inch. */
-	protected int $flattenDpi = 150;
 	protected string $createdAt = '';
 	protected string $updatedAt = '';
 
@@ -120,7 +116,6 @@ class WatermarkConfig extends Entity {
 		$this->addType('watermarkInternalShares', 'boolean');
 		$this->addType('watermarkExternalShares', 'boolean');
 		$this->addType('flattenPdf', 'boolean');
-		$this->addType('flattenDpi', 'integer');
 	}
 
 	/** Returns the allowed MIME types as an array, or all supported types if not set. */
@@ -148,7 +143,6 @@ class WatermarkConfig extends Entity {
 			'watermarkInternalShares' => $this->watermarkInternalShares,
 			'watermarkExternalShares' => $this->watermarkExternalShares,
 			'flattenPdf' => $this->flattenPdf,
-			'flattenDpi' => $this->flattenDpi,
 			'createdAt' => $this->createdAt,
 			'updatedAt' => $this->updatedAt,
 		];
