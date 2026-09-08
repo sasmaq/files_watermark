@@ -54,7 +54,6 @@ describe('AdminSettings', () => {
 			data: {
 				configs: [GLOBAL_CONFIG],
 				flattenAvailable: true,
-				flattenDpiRange: { min: 100, max: 400 },
 			},
 		}))
 		const wrapper = mount(AdminSettings)
@@ -62,7 +61,6 @@ describe('AdminSettings', () => {
 
 		const form = wrapper.findComponent(WatermarkForm)
 		expect(form.props('flattenAvailable')).toBe(true)
-		expect(form.props('flattenDpiRange')).toEqual({ min: 100, max: 400 })
 	})
 
 	it('treats a response that says nothing about flattening as unavailable', async () => {

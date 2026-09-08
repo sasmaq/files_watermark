@@ -266,10 +266,10 @@ class ApiControllerConfigTest extends TestCase {
 		$data = $this->controller->getConfig()->getData();
 
 		$this->assertSame($available, $data['flattenAvailable']);
-		$this->assertSame(
-			['min' => PdfFlattener::MIN_DPI, 'max' => PdfFlattener::MAX_DPI],
-			$data['flattenDpiRange'],
-		);
+
+		// The render resolution is a constant of the flattener now, so the form has no
+		// range to render and must not be handed one.
+		$this->assertArrayNotHasKey('flattenDpiRange', $data);
 	}
 
 	public function testFlatteningIsStoredWhenTheHostHasARenderer(): void {
@@ -280,12 +280,10 @@ class ApiControllerConfigTest extends TestCase {
 			textTemplate: '{username}',
 			imagePath: null,
 			flattenPdf: true,
-			flattenDpi: 300,
 		);
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
 		$this->assertTrue($response->getData()['flattenPdf']);
-		$this->assertSame(300, $response->getData()['flattenDpi']);
 	}
 
 	/**
@@ -321,19 +319,18 @@ class ApiControllerConfigTest extends TestCase {
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
 		$this->assertFalse($response->getData()['flattenPdf']);
-		$this->assertSame(PdfFlattener::DEFAULT_DPI, $response->getData()['flattenDpi']);
 	}
 
 	/**
-	 * An out-of-range DPI is a slider the browser sent badly, not a policy anyone can have
-	 * meant - and at the top end it is a resource attack rather than a quality setting.
+	 * A resolution posted by an old form - or by anything else - is ignored rather than
+	 * stored.
 	 *
-	 * @testWith [20000, 600]
-	 *           [1, 72]
-	 *           [-5, 72]
-	 *           [150, 150]
+	 * The setting is gone, and the browser holding a cached bundle is the ordinary way a
+	 * removed field keeps being sent for a while. It must not reappear in the saved policy
+	 * or in what comes back, which is what a forgotten `$flattenDpi` parameter left on the
+	 * signature would do.
 	 */
-	public function testTheRenderResolutionIsClamped(int $sent, int $expected): void {
+	public function testAPostedRenderResolutionIsIgnored(): void {
 		$this->pdfFlattener->method('isAvailable')->willReturn(true);
 
 		$response = $this->controller->saveConfig(
@@ -341,34 +338,10 @@ class ApiControllerConfigTest extends TestCase {
 			textTemplate: '{username}',
 			imagePath: null,
 			flattenPdf: true,
-			flattenDpi: $sent,
-		);
-
-		$this->assertSame($expected, $response->getData()['flattenDpi']);
-	}
-
-	/**
-	 * The resolution is stored whether or not flattening is on.
-	 *
-	 * A host that loses `poppler-utils` hides the whole block, so the form keeps posting
-	 * back what it was given and the column keeps its value - which is what lets the setting
-	 * come back intact if the package does. Clearing it here would silently reset every such
-	 * install to 150 on the next unrelated save.
-	 */
-	public function testTheResolutionIsStoredEvenWithFlatteningOff(): void {
-		$this->pdfFlattener->method('isAvailable')->willReturn(false);
-
-		$response = $this->controller->saveConfig(
-			type: 'text',
-			textTemplate: '{username}',
-			imagePath: null,
-			flattenPdf: false,
-			flattenDpi: 300,
 		);
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
-		$this->assertFalse($response->getData()['flattenPdf']);
-		$this->assertSame(300, $response->getData()['flattenDpi']);
+		$this->assertArrayNotHasKey('flattenDpi', $response->getData());
 	}
 
 	/** Off unless asked for, so an upgrade watermarks nothing it did not watermark before. */

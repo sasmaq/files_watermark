@@ -101,19 +101,17 @@ class WatermarkConfigTest extends TestCase {
 		$data = (new WatermarkConfig())->jsonSerialize();
 
 		$this->assertArrayHasKey('flattenPdf', $data);
-		$this->assertArrayHasKey('flattenDpi', $data);
 		$this->assertFalse($data['flattenPdf'], 'flattening must be off until an admin asks');
-		$this->assertSame(150, $data['flattenDpi']);
+
+		// The render resolution is a constant of the flattener, not a stored setting, so
+		// it must not reappear in what the settings page is handed.
+		$this->assertArrayNotHasKey('flattenDpi', $data);
 	}
 
-	public function testJsonSerializeCarriesTheFlatteningPairAsSet(): void {
+	public function testJsonSerializeCarriesFlatteningAsSet(): void {
 		$config = new WatermarkConfig();
 		$config->setFlattenPdf(true);
-		$config->setFlattenDpi(300);
 
-		$data = $config->jsonSerialize();
-
-		$this->assertTrue($data['flattenPdf']);
-		$this->assertSame(300, $data['flattenDpi']);
+		$this->assertTrue($config->jsonSerialize()['flattenPdf']);
 	}
 }

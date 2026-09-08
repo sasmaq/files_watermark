@@ -18,7 +18,6 @@
 				:saved="saved"
 				:save-error="saveError"
 				:flatten-available="flattenAvailable"
-				:flatten-dpi-range="flattenDpiRange"
 				@save="save" />
 
 			<section class="watermark-log">
@@ -65,7 +64,6 @@ const config = ref({})
 // Whether the server has a PDF rasteriser, and the range it will accept. Both come from
 // the config endpoint - the answer is a property of the host, not of the saved policy.
 const flattenAvailable = ref(false)
-const flattenDpiRange = ref({ min: 72, max: 600 })
 // Closed on every load rather than remembered: this is history, not a working view, and an
 // admin who left it open once should not pay for the fetch on every visit afterwards.
 const logOpen = ref(false)
@@ -85,9 +83,6 @@ onMounted(async () => {
 		// Drives whether the flattening block is rendered at all: the server only reports
 		// true when it actually has a rasteriser it is allowed to run.
 		flattenAvailable.value = res.data?.flattenAvailable === true
-		if (res.data?.flattenDpiRange) {
-			flattenDpiRange.value = res.data.flattenDpiRange
-		}
 	} catch (e) {
 		// A 404 just means no config exists yet - show the form with defaults
 		if (e?.response?.status !== 404) {

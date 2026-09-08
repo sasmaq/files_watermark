@@ -768,7 +768,7 @@ class WatermarkService {
 
 		$flattened = $tmpPath . '_flat';
 		try {
-			$this->pdfFlattener->flatten($tmpPath, $flattened, $config->getFlattenDpi());
+			$this->pdfFlattener->flatten($tmpPath, $flattened);
 			// Silenced because the failure is handled below and reported with more context
 			// than the PHP warning carries; an unsilenced one would also land in the log as
 			// an error on a path that recovers.

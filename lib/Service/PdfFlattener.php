@@ -31,8 +31,8 @@ use Psr\Log\LoggerInterface;
  *    falls back to the ordinary overlay-watermarked PDF ({@see WatermarkService}). The
  *    feature is additive from end to end.
  *  - **Only this one command line, and it is fully escaped.** No user-supplied string
- *    reaches the shell: the arguments are two temp paths this app created and two integers
- *    it clamped.
+ *    reaches the shell: the arguments are two temp paths this app created, a page number it
+ *    counted, and a resolution that is a constant of this class.
  * ---------------------------------------------------------------------------
  *
  * What it does and does not buy: an overlay can be dropped with `qpdf` or `mutool`, or
@@ -53,9 +53,18 @@ class PdfFlattener {
 	/** Rasteriser binary, looked up on PATH rather than assumed from the distro. */
 	public const RENDERER = 'pdftoppm';
 
-	public const DEFAULT_DPI = 150;
-	public const MIN_DPI = 72;
-	public const MAX_DPI = 600;
+	/**
+	 * Resolution every page is rasterised at, in dots per inch.
+	 *
+	 * Fixed rather than configurable. It was a slider once, and the range it offered was
+	 * the problem: the low end produced pages an admin would not have accepted had they
+	 * seen one, and the high end multiplied the cost of a feature that already rebuilds
+	 * every page on every fetch - at 600 DPI a long scan is a denial of service dressed
+	 * as a quality setting. 150 is what the help text recommended and what the default
+	 * always was; it is the resolution at which body text stays sharp on screen and in
+	 * ordinary print, which is the whole of what this feature has to do.
+	 */
+	public const RENDER_DPI = 150;
 
 	/**
 	 * Ceilings on the work one flatten may do, in the spirit of
@@ -99,7 +108,7 @@ class PdfFlattener {
 	 * @throws \RuntimeException if the renderer is missing, the document exceeds the
 	 *                           ceilings, or any page fails to render
 	 */
-	public function flatten(string $sourcePath, string $destPath, int $dpi = self::DEFAULT_DPI): void {
+	public function flatten(string $sourcePath, string $destPath): void {
 		$binary = $this->resolveBinary();
 		if ($binary === null) {
 			throw new \RuntimeException(
@@ -116,8 +125,6 @@ class PdfFlattener {
 				sprintf('Cannot flatten PDF: %d bytes exceeds the %d byte ceiling.', $bytes, self::MAX_BYTES),
 			);
 		}
-
-		$dpi = self::clampDpi($dpi);
 
 		// Page geometry comes from the source so the rebuild is not assumed to be A4 -
 		// mixed-size and landscape documents have to survive the round-trip. Points, so the
@@ -163,7 +170,7 @@ class PdfFlattener {
 
 		try {
 			foreach ($sizes as $page => $size) {
-				$rendered = $this->renderPage($binary, $sourcePath, $page, $dpi, $workDir);
+				$rendered = $this->renderPage($binary, $sourcePath, $page, $workDir);
 
 				try {
 					$out->addPage([
@@ -229,11 +236,6 @@ class PdfFlattener {
 		@rmdir($workDir);
 	}
 
-	/** The render resolution actually used for `$dpi`, clamped to the supported range. */
-	public static function clampDpi(int $dpi): int {
-		return max(self::MIN_DPI, min(self::MAX_DPI, $dpi));
-	}
-
 	/**
 	 * Directories the renderer may read from. Everything in play is a temp copy, and
 	 * supplying this replaces the library's defaults rather than adding to them - see the
@@ -287,13 +289,13 @@ class PdfFlattener {
 	 *   instead of being split into two;
 	 * - both paths are absolute and inside temp directories this app created, so neither can
 	 *   begin with `-` and be read as an option, and both are quoted;
-	 * - `$dpi` and `$page` are ints, already clamped and counted respectively, and are
+	 * - the resolution is a constant of this class and `$page` is a counted int, both
 	 *   formatted with `%d`.
 	 *
 	 * Nothing a user supplies - filename, watermark text, display name - reaches this string.
 	 * The *file* the renderer opens is of course user content; see the class docblock.
 	 */
-	private function renderPage(string $binary, string $sourcePath, int $page, int $dpi, string $workDir): string {
+	private function renderPage(string $binary, string $sourcePath, int $page, string $workDir): string {
 		// Inside this flatten's own 0700 directory, so no other local account can create,
 		// replace or symlink the name the renderer is about to write.
 		$prefix = $workDir . '/page-' . $page;
@@ -302,7 +304,7 @@ class PdfFlattener {
 		$command = sprintf(
 			'%s -png -r %d -f %d -l %d -singlefile %s %s 2>&1',
 			escapeshellarg($binary),
-			$dpi,
+			self::RENDER_DPI,
 			$page,
 			$page,
 			escapeshellarg($sourcePath),

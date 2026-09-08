@@ -9,6 +9,7 @@ use OCA\FilesWatermark\Migration\Version1003Date20260806120000;
 use OCA\FilesWatermark\Migration\Version1004Date20260806140000;
 use OCA\FilesWatermark\Migration\Version1005Date20260901120000;
 use OCA\FilesWatermark\Migration\Version1006Date20260903120000;
+use OCA\FilesWatermark\Migration\Version1007Date20260908120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -71,12 +72,13 @@ class SchemaConvergenceTest extends TestCase {
 		// earlier step has already built.
 		'watermark_internal_shares',
 		'watermark_external_shares',
-		// 1005. These two are the interesting pair: an instance old enough to have run 1001
-		// arrives *carrying* them, 1002 drops them, and 1005 adds them back - so the column
-		// order only matches a fresh install because the drop happens first. An added-then-
-		// dropped column that survived would show up here as an ordering difference.
+		// 1005, less what 1007 took back. `flatten_pdf` is the interesting one: an instance
+		// old enough to have run 1001 arrives *carrying* it, 1002 drops it, and 1005 adds it
+		// back - so the column order only matches a fresh install because the drop happens
+		// first. An added-then-dropped column that survived would show up here as an
+		// ordering difference, which is exactly what `flatten_dpi` would be if 1007 missed
+		// any path: added by 1005 on every one of them, and dropped again immediately.
 		'flatten_pdf',
-		'flatten_dpi',
 	];
 
 	/**
@@ -226,7 +228,14 @@ class SchemaConvergenceTest extends TestCase {
 		);
 	}
 
-	public function testFlatteningColumnsAreReinstatedOnUpgrade(): void {
+	/**
+	 * `flatten_pdf` comes back; `flatten_dpi` does not.
+	 *
+	 * Both are added by 1005 on every path, and 1007 drops the resolution again - so an
+	 * instance that arrives carrying the pair, one that never had them, and one that had
+	 * them dropped by 1002 all have to finish with the switch and without the number.
+	 */
+	public function testTheFlatteningSwitchIsReinstatedButNotTheResolution(): void {
 		$schema = new FakeSchema();
 		$this->preCreateTables($schema, ['flatten_pdf', 'flatten_dpi']);
 
@@ -234,13 +243,10 @@ class SchemaConvergenceTest extends TestCase {
 
 		$table = $schema->getTable('watermark_config');
 		$this->assertContains('flatten_pdf', $table->columnNames());
-		$this->assertContains('flatten_dpi', $table->columnNames());
-		// Appended by 1005, not the columns the instance arrived with: a surviving pair
-		// would still sit where the pre-1007 seed put them, ahead of `log_delivery`.
-		$this->assertSame(
-			['flatten_pdf', 'flatten_dpi'],
-			array_slice($table->columnNames(), -2),
-		);
+		$this->assertNotContains('flatten_dpi', $table->columnNames());
+		// Appended by 1005, not the column the instance arrived with: a survivor would
+		// still sit where the seed put it, ahead of `log_delivery`.
+		$this->assertSame(['flatten_pdf'], array_slice($table->columnNames(), -1));
 	}
 
 	/**
@@ -379,6 +385,7 @@ class SchemaConvergenceTest extends TestCase {
 		(new Version1004Date20260806140000())->changeSchema($output, $closure, []);
 		(new Version1005Date20260901120000())->changeSchema($output, $closure, []);
 		(new Version1006Date20260903120000())->changeSchema($output, $closure, []);
+		(new Version1007Date20260908120000())->changeSchema($output, $closure, []);
 	}
 
 	/**

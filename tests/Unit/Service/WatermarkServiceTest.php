@@ -564,7 +564,7 @@ class WatermarkServiceTest extends TestCase {
 	public function testFlatteningRunsAfterTheOverlayWhenThePolicyAsksForIt(): void {
 		// Order matters: rasterising before the overlay would capture a clean page and
 		// leave the watermark as a removable layer on top of it.
-		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true, 200));
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true));
 		$calls = [];
 		$this->pdfWatermarker->method('apply')
 			->willReturnCallback(static function (string $src, string $dest) use (&$calls): void {
@@ -574,7 +574,6 @@ class WatermarkServiceTest extends TestCase {
 		$this->pdfFlattener->method('isAvailable')->willReturn(true);
 		$this->pdfFlattener->expects($this->once())
 			->method('flatten')
-			->with($this->anything(), $this->anything(), 200)
 			->willReturnCallback(static function (string $src, string $dest) use (&$calls): void {
 				$calls[] = 'flatten';
 				file_put_contents($dest, '%PDF-flattened');
@@ -725,18 +724,15 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	/**
-	 * The DPI travels from the stored policy to the flattener unchanged.
+	 * The flattener is handed a source and a destination and nothing else.
 	 *
-	 * It is the one flattening value that is not a boolean, and the path it takes - column,
-	 * entity, service, renderer argument - has three places to drop it and end up rendering
-	 * at the default while the settings page shows something else.
-	 *
-	 * @testWith [72]
-	 *           [150]
-	 *           [600]
+	 * The render resolution used to travel with them, from column to entity to argument.
+	 * It is now {@see \OCA\FilesWatermark\Service\PdfFlattener::RENDER_DPI}, and this
+	 * pins the call shape so a resolution argument cannot quietly reappear on the path
+	 * without the signature being reconsidered.
 	 */
-	public function testTheConfiguredResolutionReachesTheFlattener(int $dpi): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true, $dpi));
+	public function testTheFlattenerIsCalledWithSourceAndDestinationOnly(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->flattenConfig(true));
 		$this->pdfWatermarker->method('apply')
 			->willReturnCallback(static function (string $src, string $dest): void {
 				file_put_contents($dest, '%PDF-overlaid');
@@ -744,7 +740,7 @@ class WatermarkServiceTest extends TestCase {
 		$this->pdfFlattener->method('isAvailable')->willReturn(true);
 		$this->pdfFlattener->expects($this->once())
 			->method('flatten')
-			->with($this->anything(), $this->anything(), $dpi)
+			->with($this->isType('string'), $this->isType('string'))
 			->willReturnCallback(static function (string $src, string $dest): void {
 				file_put_contents($dest, '%PDF-flattened');
 			});
@@ -753,10 +749,9 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	/** A PDF policy, optionally asking for flattening. */
-	private function flattenConfig(bool $flatten, int $dpi = 150): WatermarkConfig {
+	private function flattenConfig(bool $flatten): WatermarkConfig {
 		$config = $this->config();
 		$config->setFlattenPdf($flatten);
-		$config->setFlattenDpi($dpi);
 		return $config;
 	}
 
