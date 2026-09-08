@@ -29,7 +29,10 @@ namespace OCA\FilesWatermark\Service;
  *  - the output document the renderer assembles before it is written out
  *
  * So peak sits somewhere around 4-6 × N for a PDF, against a `memory_limit` that is 512M
- * on a stock Nextcloud. 64 MiB of source is already the pessimistic end of comfortable
+ * on a stock Nextcloud. An **encrypted** source costs about the same again on top, because
+ * {@see PdfDecryptor} parses the file a second time and assembles a plaintext copy before
+ * the renderer sees any of it - but only for a file the ordinary import has already
+ * refused, so the two passes never hold their object graphs at the same moment. 64 MiB of source is already the pessimistic end of comfortable
  * there, which is why the number is not the round 256 MiB {@see ArchiveLimits} uses: that
  * one bounds a temp *filesystem*, and disk is far cheaper than a worker's heap.
  *

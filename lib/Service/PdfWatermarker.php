@@ -25,10 +25,12 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
  * modern producers emit.
  *
  * Pure PHP, and deliberately so: this app spawns no processes. Documents the parser
- * will not open - anything encrypted, including files locked with an empty password
- * purely to set permission flags - are refused here and skipped by the caller. An
- * external rewriter (`qpdf --decrypt`) used to rescue that case and was removed with
- * the rest of the binary dependencies.
+ * will not open are refused here and skipped by the caller - with one exception, which
+ * {@see PdfDecryptor} handles: a file encrypted under an **empty user password**, which
+ * is not protection but a way of carrying permission flags, is decrypted in memory and
+ * rendered. A file with a real password stays refused. An external rewriter
+ * (`qpdf --decrypt`) used to cover the first case and was removed with the rest of the
+ * binary dependencies; the replacement is a library this app already depended on.
  *
  * Two things about this library are unlike TCPDF and easy to get wrong:
  *
@@ -240,10 +242,19 @@ class PdfWatermarker {
 	/**
 	 * Register `$sourcePath` for import and return its id and page count.
 	 *
-	 * Every parse failure is final. There is no rescue pass: the app spawns no
-	 * processes, so a document tc-lib-pdf cannot open - encrypted, or damaged beyond
-	 * its tolerance - is refused here and the trigger's own policy takes over (skip
-	 * plus an audit row for the in-place triggers, deny for `on_share`).
+	 * There is exactly one rescue pass, and it is not a process: a document encrypted
+	 * under an empty user password is rewritten in memory by {@see PdfDecryptor} and
+	 * imported from there. Everything else that fails to parse is refused, and the
+	 * trigger's own policy takes over (skip plus an audit row for the in-place
+	 * triggers, deny for `on_share`).
+	 *
+	 * The rescue runs only after the ordinary import has failed, so the common path -
+	 * an unencrypted file - never pays for it. The decryptor re-reads and re-parses the
+	 * source, which is the price of leaving tc-lib-pdf's own import untouched.
+	 *
+	 * The **original** failure is what gets reported when the rescue does not apply.
+	 * A decryptor that declines says only "not my case"; the import's own exception is
+	 * the one that says why the file could not be read.
 	 *
 	 * @return array{0: string, 1: int} source id and page count
 	 */
@@ -252,8 +263,28 @@ class PdfWatermarker {
 			$sourceId = $pdf->setImportSourceFile($sourcePath);
 			return [$sourceId, $pdf->getSourcePageCount($sourceId)];
 		} catch (\Exception $cause) {
-			throw $this->unreadable($cause);
+			$decrypted = $this->decryptEmptyPassword($sourcePath);
+			if ($decrypted === null) {
+				throw $this->unreadable($cause);
+			}
+
+			try {
+				$sourceId = $pdf->setImportSourceData($decrypted);
+				return [$sourceId, $pdf->getSourcePageCount($sourceId)];
+			} catch (\Exception $stillUnreadable) {
+				throw $this->unreadable($stillUnreadable);
+			}
 		}
+	}
+
+	/**
+	 * The plaintext of `$sourcePath` when it is encrypted with an empty user password,
+	 * `null` in every other case - including a file that is simply gone by now.
+	 */
+	private function decryptEmptyPassword(string $sourcePath): ?string {
+		$raw = @file_get_contents($sourcePath);
+
+		return $raw === false ? null : (new PdfDecryptor())->decrypt($raw);
 	}
 
 	private function applyTextOverlay(

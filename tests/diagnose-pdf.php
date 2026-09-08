@@ -26,6 +26,7 @@ if ($loader instanceof \Composer\Autoload\ClassLoader) {
 
 use Com\Tecnick\Pdf\Parser\Parser;
 use OCA\FilesWatermark\Db\WatermarkConfig;
+use OCA\FilesWatermark\Service\PdfDecryptor;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 
 $source = $argv[1] ?? '';
@@ -132,7 +133,7 @@ if (preg_match('~/Producer\s*\(([^)]{0,80})~', $raw, $m) === 1) {
 echo 'structure: ' . (str_contains($raw, '/Type /XRef') || str_contains($raw, '/Type/XRef')
 	? 'cross-reference stream' : 'classic xref table')
 	. (str_contains($raw, '/ObjStm') ? ', object streams' : '')
-	. (str_contains($raw, '/Encrypt') ? ', ENCRYPTED' : '')
+	. encryptionNote($raw)
 	. "\n\n";
 
 $config = new WatermarkConfig();
@@ -220,3 +221,21 @@ echo $problems === 0
 	. "         renders blank, the cause is in how it is *drawn*, not in what was copied -\n"
 	. "         send this output along with the file.\n"
 	: "VERDICT: $problems problem(s) across $forms page(s) - see above.\n";
+
+/**
+ * What the file's encryption, if any, means for whether it can be watermarked.
+ *
+ * "ENCRYPTED" alone stopped being a useful thing to print once {@see PdfDecryptor} landed:
+ * an empty user password is not protection and renders normally, while a real one is
+ * refused, and the two look identical from the outside. Trying the empty password is the
+ * only way to tell them apart, so that is what this reports.
+ */
+function encryptionNote(string $raw): string {
+	if (!str_contains($raw, '/Encrypt')) {
+		return '';
+	}
+
+	return (new PdfDecryptor())->decrypt($raw) === null
+		? ', ENCRYPTED (a real password - this file will be refused)'
+		: ', encrypted with an empty password (permission flags only; renders normally)';
+}

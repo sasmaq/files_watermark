@@ -55,12 +55,15 @@ Things that produce a wrong file, or say something untrue about one.
 
 - [ ] **A skipped file is silent to the end user.** An on-demand apply reports the error,
   but an `on_upload` or `on_share` file that could not be watermarked shows up only in the
-  audit log. Now narrow - only encrypted PDFs can be skipped - but still worth surfacing.
+  audit log. Narrower still now that only password-protected PDFs can be skipped, but
+  still worth surfacing.
   The trigger rework moves this, it does not close it: the failure moves from apply time to
   fetch time, where the reader is the one who needs to be told.
-- [ ] **Encrypted PDFs are refused outright**, including the empty-password
-  permission-flags case that is not real protection. Decrypting in pure PHP is possible
-  (`tc-lib-pdf-encrypt` is already a dependency) but is not wired to the import path.
+- [x] ~~**Encrypted PDFs are refused outright**, including the empty-password
+  permission-flags case that is not real protection.~~ Closed 2026-09-08 by
+  `PdfDecryptor`, in pure PHP on `tc-lib-pdf-encrypt`. All five revisions of the standard
+  security handler, object streams included. A **real** password stays refused, which is
+  policy rather than a gap.
 - [ ] **Public file-drop uploads** are watermarked by neither the inline path nor the job:
   there is no session to attribute the watermark to.
 - [ ] **A marked file's earlier versions are not marked, and go out clean.** A version is a
@@ -161,10 +164,11 @@ them.
 - [ ] ~~**A real Team folder, on an instance with `groupfolders` installed.**~~ Dropped with
   `TeamFolder` - it exists to make `on_share` honest in a folder with no owner to exempt,
   and the new model exempts nobody, so there is nothing left to verify.
-- [ ] **Encrypted / password-protected PDF** through every trigger. Sharper after the
-  rework, not milder: deny, never serve
-  clean turns "this file was skipped" into "this
-  file cannot be downloaded by anyone".
+- [ ] **Password-protected PDF** through every trigger. Sharper after the rework, not
+  milder: deny, never serve clean turns "this file was skipped" into "this file cannot be
+  downloaded by anyone". The empty-password case is no longer part of this - it renders
+  now - but it is worth confirming against a real office-suite file rather than only
+  against fixtures the app generated itself.
 - [ ] ~~**Concurrent uploads of the same path.**~~ Closed by the rework - there is no burn
   to double, `suppressFor()` is gone, and a mark is idempotent on a primary key.
 - [ ] **The two share switches, end to end.** Unit-tested on both sides - `ShareAccess`
@@ -203,7 +207,7 @@ them.
 
 | Area | Position | Open |
 | --- | --- | --- |
-| Renderers | PDF and images complete, pure PHP, PDF 1.5+ read natively. Office not started | Office pipeline, encrypted PDFs |
+| Renderers | PDF and images complete, pure PHP, PDF 1.5+ and empty-password encryption read natively. Office not started | Office pipeline |
 | Watermark content | Visible watermarks complete | Invisible metadata watermark |
 | Trigger rework | **Built.** Two triggers, a mark instead of a burn, rendered per fetch against the reader - previews included | Per-fetch render cost unmeasured, bulk `occ` mark |
 | Delivery and triggers | Single-file, archive and preview delivery on every access path; caps are `occ` settings | **The four-trigger model it describes is superseded**; Tar (core bug), file-drop uploads |

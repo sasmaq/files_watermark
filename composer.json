@@ -8,6 +8,7 @@
         "ext-bcmath": "*",
         "ext-gd": "*",
         "tecnickcom/tc-lib-pdf": "8.69.0",
+        "tecnickcom/tc-lib-pdf-encrypt": "2.9.4",
         "tecnickcom/tc-lib-pdf-parser": "3.14.3",
         "tecnickcom/tc-lib-unicode": "3.0.3"
     },

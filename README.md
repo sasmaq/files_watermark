@@ -84,18 +84,25 @@ that state, and a rasterise that fails at download time delivers the ordinary wa
 PDF and logs why. A download is never refused because of it. See
 [Tamper resistance](#tamper-resistance-flattened-pdfs) below.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
 - **PDF 1.5+ documents with a compressed cross-reference table are watermarked normally**,
   with no configuration. Most modern producers emit these, including whatever wrote two of
   the three sample PDFs Nextcloud places in every new account. The renderer reads them
   natively.
-- **Encrypted PDFs are skipped.** The renderer declines every encrypted document, and that
-  includes files "encrypted" with an empty password purely to set permission flags, which
-  are not really protected and open without prompting. Such a file is left exactly as it
-  was, an entry is written to the audit log, and an on-demand apply returns an error naming
-  it. Nothing is corrupted and no unwatermarked copy is served in place of a watermarked
-  one - the watermark simply does not get applied.
+- **PDFs "encrypted" with an empty password are watermarked normally.** These are not
+  protected files: the empty string is the password, so every reader opens them without
+  prompting, and the encryption is there only to carry permission flags such as "do not
+  print". Office suites and scanner firmware emit them constantly. The renderer decrypts
+  such a document in memory and watermarks it like any other. The output is a plain
+  unencrypted PDF - watermarking produces a new document, so the source's advisory flags
+  do not carry over.
+- **Password-protected PDFs are skipped.** A document with a real user password is
+  refused: the app never guesses a password and never uses the owner entry as a bypass.
+  Such a file is left exactly as it was, an entry is written to the audit log, and an
+  on-demand apply returns an error naming it. Nothing is corrupted and no unwatermarked
+  copy is served in place of a watermarked one - the watermark simply does not get
+  applied.
 
 The watermark is a real content stream, so **the text layer survives**: selection, copy,
 search and screen-reader access all keep working. The user's file is never modified.
