@@ -324,14 +324,15 @@ Rasterised flattening existed for tamper resistance and was **removed** - see
     inherited `/Resources` and `/MediaBox`, object streams, compressed and array content
     streams, indirect `/Length`, nested form XObjects, DCTDecode / predictor / SMask / indexed
     / CMYK images, `/UserUnit`, transparency groups, and multi-page sources
-- **Encrypted PDFs are refused**, and that is now the whole of the gap - including the
-  empty-password, permission-flags-only case that is not real protection. `qpdf --decrypt`
-  used to rescue those; it went with the [external
-  binaries](#no-external-binaries). Decrypting in pure PHP is possible in principle
-  (`tc-lib-pdf-encrypt` is already a dependency) but is not wired to the import path
+- **Password-protected PDFs are refused**, and that is now the whole of the gap. The
+  empty-password, permission-flags-only case - which is not protection at all - is
+  decrypted and watermarked; see [Empty-password
+  encryption](#empty-password-encryption-pdfdecryptor). A document somebody actually
+  locked stays locked, and deliberately: the decryptor authenticates with the empty string
+  and never reaches for the owner password as a bypass
 - The skip is honest but **silent to the end user**: an on-demand apply reports the error,
   yet an `on_upload` or `on_share` file that cannot be watermarked is only visible in the audit
-  log. Much narrower now that only encrypted files can be skipped, but still worth surfacing
+  log. Narrower still now that only genuinely locked files can be skipped, but worth surfacing
 
 ### PDF (`PdfWatermarker`)
 
@@ -342,7 +343,8 @@ particular came through unchanged.
 
 - Text overlay tiled across every page of a multi-page document
 - Image / logo overlay
-- Encrypted and password-protected PDFs fail gracefully (throw + skip + log)
+- Password-protected PDFs fail gracefully (throw + skip + log); empty-password encryption
+  is decrypted in memory and watermarked
 - **Tile geometry rebuilt after the watermark turned out to be illegible.** Two separate
   faults, and the visible one was not the one the code blamed:
   - TCPDF reads a **negative** `SetX`/`SetY` as an offset from the *opposite* page edge -
@@ -356,6 +358,69 @@ particular came through unchanged.
   - the five existing tests all passed throughout, because every one of them asserted only
     that a valid *n*-page PDF came out. Rendering a page to an image and **looking at it** is
     now the minimum bar for believing anything about output geometry
+
+### Empty-password encryption (`PdfDecryptor`) {#empty-password-encryption-pdfdecryptor}
+
+*2026-09-08.* Closes the last gap the [external-binary removal](#no-external-binaries) left
+open, and closes it with a library that was already in `vendor/`.
+
+**The case.** A PDF encrypted under an **empty user password** is not protected. The empty
+string is the password, so every reader opens it without prompting; the encryption exists
+to carry the permission flags in `/P` - "do not print", "do not copy" - which are advisory
+bits a viewer chooses to honour, not a lock. Office suites and scanner firmware emit these
+constantly. To a parser, though, such a file is simply encrypted, and tc-lib-pdf's importer
+refuses it along with every genuinely locked one.
+
+`qpdf --decrypt` used to rescue this and went with the rest of the binaries. The
+replacement is `tecnickcom/tc-lib-pdf-encrypt`, a dependency of tc-lib-pdf that the app had
+been carrying all along and using only to *write* encrypted files in test fixtures. Its
+`Decrypt` class supplies key derivation and the per-object ciphers; what it does not do -
+and what `PdfDecryptor` is - is walk a parsed document, decrypt every string and stream,
+and serialise the result back into a well-formed file.
+
+**What is supported.** The standard security handler in all five of its revisions: RC4-40
+(`/V 1`), RC4-128 (`/V 2`), AES-128 (`/V 4 /CFM /AESV2`) and AES-256 in both R5 and R6.
+`/Identity` crypt filters, `/EncryptMetadata false`, and cross-reference streams with
+object streams all round-trip. The public-key handler (`/Filter /Adobe.PubSec`) is not
+supported and cannot be: it needs a recipient's private key, which no server-side
+watermarker has.
+
+**What is refused, on purpose.** A real user password. The decryptor authenticates with the
+empty string and nothing else - it never guesses, and never tries the string as the *owner*
+password to bypass permissions, which `Decrypt::authenticate()` would happily do if asked.
+Permission flags are dropped from the output, which is the honest consequence of
+watermarking at all: the result is a new document, and its flags would be the renderer's
+rather than the source's.
+
+**Where it runs.** Only after `setImportSourceFile()` has already failed, so an
+unencrypted file never pays for the second parse. When the decryptor declines, the
+*importer's* original exception is what gets reported - a decryptor that says "not my case"
+has nothing useful to add about why a file could not be read.
+
+#### Three things that were not obvious
+
+- **Objects inside an object stream must not be decrypted individually.** PDF 32000-1
+  §7.6.2 says strings in an object stream are covered by the encryption of the stream
+  itself and are never enciphered a second time. That is what makes the rewrite tractable:
+  decrypting the `/ObjStm` payload decrypts everything in it, so the compressed
+  cross-reference entries can be copied across verbatim - same container, same index - and
+  no object inside one is ever unpacked, rewritten or renumbered. Applying the cipher again
+  would produce noise in a file that still opens, which is the kind of corruption nobody
+  notices for months. `testStringsInsideAnObjectStreamAreDecryptedOnlyOnce` is the pin
+- **The output has to be a cross-reference *stream*, not a table.** A classic `xref` table
+  has no way to say "index 3 of object stream 42", so a compressed document cannot be
+  described by one. Offsets move anyway the moment AES strips a 16-byte IV from each
+  payload, so the file is reassembled rather than patched; object numbers are preserved so
+  no reference needs rewriting
+- **Two library defects had to be worked around without forking it.** `/P` is a signed
+  32-bit value written negative by almost every producer, and `Compute` renders it with
+  `sprintf('%032b')`, which on 64-bit PHP yields 64 digits and slices the wrong four bytes
+  - fixed by passing the two's-complement equivalent. And algorithm 2 step (f) appends
+  `FF FF FF FF` to the key's hash input for `/EncryptMetadata false` documents from
+  revision 4 on, a step `Decrypt` omits; since derivation concatenates password, `/O`,
+  permissions and file id, appending those four bytes to the *file id* produces the
+  identical hash input. tc-lib-pdf's own writer skips step (f) too, so both salts are
+  tried - conformant first
 
 ### Flattened (rasterised) PDFs - removed, then reinstated {#flattened-rasterised-pdfs-removed}
 
@@ -2540,17 +2605,19 @@ count used to depend on the developer's laptop.
 | Removed | Was used for | Consequence |
 | --- | --- | --- |
 | ~~`PdfFlattener` + `pdftoppm`~~ | Rasterising pages so the watermark could not be stripped | **Back as of 2026-09-01**, optional and probed. See [Flattened PDFs](#flattened-rasterised-pdfs-removed) |
-| `PdfNormalizer` + `qpdf` | `--decrypt` on files locked with an empty password | **Empty-password encrypted PDFs are now skipped** rather than watermarked |
+| `PdfNormalizer` + `qpdf` | `--decrypt` on files locked with an empty password | Skipped for a while; **now decrypted in pure PHP** by `PdfDecryptor`, so the capability is back without the binary |
 | `BinaryLocator` | Probing `PATH` for both of the above | Nothing left to probe |
 
 Neither loss is invisible, and neither is being papered over:
 
 - **Encrypted PDFs.** tc-lib-pdf declines every encrypted document, including the
   permission-flags-only case that is not real protection - a reader opens those without
-  ever prompting. `qpdf --decrypt` used to recover them. Now they take the ordinary
-  skip-plus-audit path. Pinned by `testEncryptedPdfIsRefusedCleanly`, which covers both a
-  real password and an empty one, and asserts the refusal is *clean*: no destination
-  written, source byte-identical
+  ever prompting. `qpdf --decrypt` used to recover them, and for a time nothing did.
+  **Closed as of 2026-09-08** by `PdfDecryptor`, in pure PHP; see [Empty-password
+  encryption](#empty-password-encryption-pdfdecryptor). What remains refused is a document
+  with a real password, and that is a policy rather than a gap - pinned by
+  `testPasswordProtectedPdfIsRefusedCleanly`, which asserts the refusal is *clean*: no
+  destination written, source byte-identical
 - **Tamper resistance.** There is no pure-PHP replacement, because rasterising a PDF means
   bundling a PDF interpreter. That is still true, which is why the feature came back as an
   *optional* external binary rather than as PHP: on a host without `poppler-utils` the
@@ -2568,7 +2635,9 @@ Neither loss is invisible, and neither is being papered over:
 - **No `exec()` anywhere, including fixtures.** The encrypted-PDF fixtures were built by
   shelling out to `qpdf --encrypt`; they now use tc-lib-pdf's own encryption support
   (`Com\Tecnick\Pdf\Encrypt\Encrypt`), so the test suite spawns nothing either. A test
-  helper that shells out is still a process spawn in the repository
+  helper that shells out is still a process spawn in the repository. The same package's
+  `Decrypt` is what later closed the empty-password gap, which is the argument for the
+  migration in miniature: the capability was there in the dependency tree all along
 - **Two platform requirements left**, `ext-bcmath` (the PDF renderer) and `ext-gd` (the
   image renderer), both declared in `composer.json` *and* `appinfo/info.xml` so Composer
   refuses to resolve and Nextcloud refuses to enable the app without them, instead of
@@ -2623,17 +2692,19 @@ fixtures built with `qpdf`:
 | --- | --- | --- |
 | plain PDF 1.7 | reads | imports |
 | PDF 1.6, object streams + compressed xref | `CrossReferenceException` code 267 | **imports** |
-| empty user password (permission flags only) | refuses | refuses (`ImportUnsupportedFeatureException`) |
-| real user password | refuses | refuses |
+| empty user password (permission flags only) | refuses | refuses (`ImportUnsupportedFeatureException`), **decrypted by `PdfDecryptor` since 2026-09-08** |
+| real user password | refuses | refuses, and stays refused by policy |
 
 A full round-trip - `setImportSourceFile` → `importPage` → `page->add()` →
 `useImportedPage` → `getOutPDFString` - placed the imported page at 210×297 and `pdftotext`
 still returned its text, so the import is a Form XObject and the text layer survives.
 
-**What this does not buy:** tc-lib-pdf refuses *all* encrypted documents, including the
-empty-password permission-flag case. The normalizer was kept for exactly that, narrowed to
-decryption (step 5) - and then **deleted** when external binaries were removed altogether,
-so that gap is now simply open. See [No external binaries](#no-external-binaries).
+**What this did not buy, at the time:** tc-lib-pdf's *importer* refuses all encrypted
+documents, including the empty-password permission-flag case. The normalizer was kept for
+exactly that, narrowed to decryption (step 5) - and then **deleted** when external binaries
+were removed altogether, leaving the gap open. It was closed later, and in the same
+dependency tree: see [Empty-password
+encryption](#empty-password-encryption-pdfdecryptor).
 
 ### Sequencing {#migration-plan}
 

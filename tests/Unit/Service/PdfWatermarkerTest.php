@@ -850,46 +850,78 @@ class PdfWatermarkerTest extends TestCase {
 	}
 
 	/**
-	 * Encrypted PDFs are refused, and the refusal has to be *clean*: the same
-	 * RuntimeException a corrupt file raises, no destination written, the user's file
-	 * untouched. `WatermarkService` turns that into a skip plus an audit row, so a
+	 * A PDF locked with an **empty** user password is watermarked like any other.
+	 *
+	 * Such a file is not protected. The empty string is the password, so every reader
+	 * opens it without prompting; the encryption is there to carry the permission flags
+	 * in `/P` - "do not print", "do not copy" - which are advisory bits a viewer chooses
+	 * to honour. Office suites and scanner firmware emit these by the thousand, and to a
+	 * parser they look exactly like a document nobody has the password to.
+	 *
+	 * This used to be rescued by shelling out to `qpdf --decrypt`, and when the external
+	 * binaries went, the rescue went with them and these files became unwatermarkable.
+	 * {@see \OCA\FilesWatermark\Service\PdfDecryptor} brings the case back in pure PHP,
+	 * through a library tc-lib-pdf already depends on. The assertion is on the rendered
+	 * *content*, because a decryptor that dropped every content stream would still
+	 * produce a file with the right number of pages.
+	 *
+	 * @dataProvider encryptionModeProvider
+	 */
+	public function testEmptyPasswordEncryptedPdfIsWatermarked(int $mode): void {
+		$source = $this->tmpDir . '/permission-flags.pdf';
+		$this->writeEncryptedPdf($source, '', $mode, 'Permission flags only');
+		$dest = $this->tmpDir . '/out.pdf';
+
+		$this->watermarker->apply($source, $dest, $this->makeConfig('text'), ['username' => 'saleh']);
+
+		$this->assertFileExists($dest);
+		$this->assertStringContainsString(
+			'saleh',
+			$this->drawnText($dest, $this->pageContent($dest)),
+			'the watermark text never reached the page',
+		);
+		$this->assertStringContainsString(
+			'(Permission flags only)',
+			implode("\n", $this->inflatedStreams((string)file_get_contents($dest))),
+			'the source page was lost somewhere in the decryption',
+		);
+
+		// Still a content-stream overlay rather than a rasterisation, so the output is
+		// itself importable - and no longer encrypted.
+		$this->assertSame(1, $this->readPageCount($dest));
+	}
+
+	/**
+	 * A PDF with a real user password is refused, and the refusal has to be *clean*: the
+	 * same RuntimeException a corrupt file raises, no destination written, the user's
+	 * file untouched. `WatermarkService` turns that into a skip plus an audit row, so a
 	 * partial failure here would deliver a half-written document.
 	 *
-	 * Both fixtures matter. A real user password is protection the app has no business
-	 * bypassing. An **empty** user password is not protection at all - it only sets
-	 * permission flags, and a reader opens the file without ever prompting - but it is
-	 * refused just the same, because the parser declines every encrypted document.
-	 * That case used to be rescued by shelling out to `qpdf --decrypt`; removing the
-	 * external binaries removed the rescue with it, which is the trade this test pins.
+	 * This is the boundary the empty-password support must not blur. The decryptor
+	 * authenticates with the empty string and nothing else - it never guesses, and never
+	 * reaches for the owner password as a bypass - so a document somebody actually locked
+	 * stays locked, whichever cipher locked it.
 	 *
 	 * The fixtures are built with the renderer's own encryption support rather than an
 	 * external tool, so this suite spawns no processes either.
 	 *
-	 * @dataProvider encryptedPdfProvider
+	 * @dataProvider encryptionModeProvider
 	 */
-	public function testEncryptedPdfIsRefusedCleanly(string $userPassword, string $label): void {
+	public function testPasswordProtectedPdfIsRefusedCleanly(int $mode): void {
 		$source = $this->tmpDir . '/encrypted.pdf';
-		$this->writeEncryptedPdf($source, $userPassword);
+		$this->writeEncryptedPdf($source, 's3cret', $mode);
 		$before = (string)file_get_contents($source);
 		$dest = $this->tmpDir . '/out.pdf';
 
 		try {
 			$this->watermarker->apply($source, $dest, $this->makeConfig('text'), []);
-			$this->fail("Expected an encrypted PDF ($label) to be refused.");
+			$this->fail('Expected a password-protected PDF to be refused.');
 		} catch (\RuntimeException $e) {
 			$this->assertStringContainsString('Cannot process PDF', $e->getMessage());
 		}
 
 		$this->assertFileDoesNotExist($dest, 'a refused render must not leave a partial file behind');
 		$this->assertSame($before, (string)file_get_contents($source), 'the source PDF was modified');
-	}
-
-	/** @return array<string, array{string, string}> */
-	public static function encryptedPdfProvider(): array {
-		return [
-			'real user password' => ['s3cret', 'real password'],
-			'empty user password' => ['', 'permission flags only'],
-		];
 	}
 
 	private function makeConfig(string $type): WatermarkConfig {

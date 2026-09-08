@@ -103,12 +103,20 @@ trait PdfFixtures {
 	 * An empty `$userPassword` is the permission-flags-only case: not real protection,
 	 * since a reader opens it without prompting, but still an encrypted document as far
 	 * as any parser is concerned.
+	 *
+	 * `$mode` selects the cipher, using the library's own numbering: 0 is RC4-40, 1
+	 * RC4-128, 2 AES-128, 3 AES-256 R5 and 4 AES-256 R6. The default is AES-128, which
+	 * is what a contemporary office suite emits.
+	 *
+	 * `$text` is drawn on the page so a test can prove the *content* survived the round
+	 * trip and not merely the page count - a decryptor that produced a blank page of the
+	 * right size would otherwise pass.
 	 */
-	private function writeEncryptedPdf(string $path, string $userPassword): void {
+	private function writeEncryptedPdf(string $path, string $userPassword, int $mode = 2, string $text = ''): void {
 		$encrypt = new Encrypt(
 			enabled: true,
 			file_id: md5($path),
-			mode: 2,
+			mode: $mode,
 			permissions: ['modify', 'copy'],
 			user_pass: $userPassword,
 			owner_pass: 'owner-pass',
@@ -120,7 +128,39 @@ trait PdfFixtures {
 			objEncrypt: $encrypt,
 		);
 		$pdf->addPage();
+
+		if ($text !== '') {
+			$font = $pdf->font->insert($pdf->pon, 'helvetica', '', 12);
+			$pdf->page->addContent($font['out']);
+			$pdf->page->addContent($pdf->getTextCell($text, 20, 20, self::A4_WIDTH - 40, 20, drawcell: false));
+		}
+
 		file_put_contents($path, $pdf->getOutPDFString());
+	}
+
+	/**
+	 * The cipher modes {@see writeEncryptedPdf} understands, as a data provider.
+	 *
+	 * All five are exercised wherever encryption is under test, because the decryptor
+	 * takes a different path through key derivation for each: RC4 against AES, a
+	 * per-object key against a document-wide one, and R5's plain SHA-256 against R6's
+	 * iterated hash. A test that only covered AES-128 would leave four of them unproven.
+	 *
+	 * The two RC4 modes make `Encrypt` emit an `E_USER_DEPRECATED`, which is correct and
+	 * is not about this app: writing RC4 is deprecated because it is broken, while
+	 * *reading* it is exactly what a watermarker meets in a decade-old scanned file. The
+	 * deprecation comes from the fixture writer, never from the decryptor.
+	 *
+	 * @return array<string, array{int}>
+	 */
+	public static function encryptionModeProvider(): array {
+		return [
+			'RC4-40' => [0],
+			'RC4-128' => [1],
+			'AES-128' => [2],
+			'AES-256 R5' => [3],
+			'AES-256 R6' => [4],
+		];
 	}
 
 	private function newPdfDocument(): Tcpdf {
