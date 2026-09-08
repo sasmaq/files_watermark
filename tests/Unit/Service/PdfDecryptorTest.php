@@ -204,6 +204,36 @@ class PdfDecryptorTest extends TestCase {
 		$this->assertStringContainsString('(' . self::OBJECT_STREAM_TEXT . ')', $this->decodedStreams($plaintext));
 	}
 
+	/**
+	 * Every byte value survives being written as an escaped literal string and read back.
+	 *
+	 * The round-trip above proves this for whatever bytes the cipher happened to produce
+	 * on the day, which is not the same thing: ciphertext is random, so a hole in the
+	 * escaping shows up as a test that fails on roughly one run in eight and passes
+	 * everywhere else. That is exactly what happened - {@see
+	 * EncryptedObjectStreamFixture::escapeLiteral()} used to protect a carriage return
+	 * with a backslash, which in PDF syntax is a *line continuation* and deletes the byte
+	 * rather than preserving it, so the string came back empty whenever the random IV
+	 * contained a `0x0D`. Enumerating all 256 values turns that from luck into a fact.
+	 *
+	 * Reflection because `unescapeLiteral()` is private and should stay that way - it is
+	 * an implementation detail of reading one token, not an API. The suite already reaches
+	 * for private members this way where the alternative is exposing something for the
+	 * tests' benefit alone.
+	 */
+	public function testEveryByteSurvivesTheEscapedLiteralRoundTrip(): void {
+		$allBytes = implode('', array_map('chr', range(0, 255)));
+
+		$unescape = new \ReflectionMethod(PdfDecryptor::class, 'unescapeLiteral');
+		$unescape->setAccessible(true);
+
+		$this->assertSame(
+			$allBytes,
+			$unescape->invoke(null, self::escapeLiteral($allBytes)),
+			'a byte was lost or altered between escaping and unescaping a literal string',
+		);
+	}
+
 	/** Every decoded stream in `$pdf`, concatenated, for content assertions. */
 	private function decodedStreams(string $pdf): string {
 		$decoded = '';
