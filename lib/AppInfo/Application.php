@@ -19,6 +19,7 @@ use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\PdfFontPath;
 use OCA\FilesWatermark\Service\ShareAccess;
+use OCA\FilesWatermark\Service\ShareRecipient;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -29,6 +30,7 @@ use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\Preview\BeforePreviewFetchedEvent;
+use OCP\Share\IManager as IShareManager;
 use OCP\Util;
 use Psr\Container\ContainerInterface;
 
@@ -200,6 +202,13 @@ class Application extends App implements IBootstrap {
 		$context->registerService(ShareAccess::class, static fn (
 			ContainerInterface $c,
 		): ShareAccess => new ShareAccess($c->get(IUserSession::class)), true);
+
+		// Shared for the same reason again: PublicShareContextMiddleware notes the share
+		// token on it and WatermarkService reads it back when it builds the placeholders,
+		// later in the same request.
+		$context->registerService(ShareRecipient::class, static fn (
+			ContainerInterface $c,
+		): ShareRecipient => new ShareRecipient($c->get(IShareManager::class)), true);
 	}
 
 	/**

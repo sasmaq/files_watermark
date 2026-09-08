@@ -176,7 +176,31 @@ Cypress.Commands.add('wmUser', (uid, password = 'e2e-Password-1') => {
 })
 
 /**
- * Share a path, either with a user (`shareType` 0) or as a public link (3).
+ * Set an account's email address, or clear it with `''`.
+ *
+ * A watermark's `{email}` reads from the user backend, so a spec asserting what that
+ * token renders has to put an address there first - a fresh Nextcloud account has none,
+ * and an empty token would make "the copy does not name the recipient" pass for the
+ * wrong reason.
+ */
+Cypress.Commands.add('wmSetEmail', (uid, email) => {
+	cy.task('nc:ocs', {
+		...admin(),
+		method: 'PUT',
+		path: `/cloud/users/${uid}`,
+		form: { key: 'email', value: email },
+	}).then((response) => {
+		expect(
+			response.json?.ocs?.meta?.statuscode,
+			`set email for ${uid} - HTTP ${response.status}`,
+		).to.be.oneOf([100, 200])
+	})
+})
+
+/**
+ * Share a path, either with a user (`shareType` 0) or as a public link (3). A **share by
+ * email** is type 4 with the address as `shareWith`: a link share addressed to one
+ * recipient, which is what lets a watermark name them.
  *
  * Returns the OCS share data, so link specs can read `token` and `url`.
  */

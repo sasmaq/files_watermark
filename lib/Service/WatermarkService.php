@@ -111,6 +111,7 @@ class WatermarkService {
 		private ImageLimits $imageLimits,
 		private ApplyLimits $applyLimits,
 		private ShareAccess $shareAccess,
+		private ShareRecipient $shareRecipient,
 		private IL10N $l,
 		private InstanceTimeZone $timeZone,
 	) {
@@ -1142,15 +1143,25 @@ class WatermarkService {
 		$user = $actor ?? $this->readerIdentity($file);
 		$now = new \DateTimeImmutable('now', $this->timeZone->get());
 
+		// A copy going out through a share by email can name the address it was sent to,
+		// which is the one anonymous reader this app knows by name. Only when no actor was
+		// named: an explicit actor is a caller saying who this watermark is for, and a
+		// background write that passes one has no request share context to consult anyway.
+		$recipient = $actor === null ? $this->shareRecipient->email($file) : null;
+
 		return $this->scrubPlaceholders([
 			// Two different identities, and the difference matters in a watermark. The
 			// account name is the uid: unique, stable, and what an admin greps the audit
 			// log or the user list for. The display name is what a human recognises, and
 			// is neither unique nor fixed - a user can change it, and two people can share
 			// one. Both are available under the name that describes them.
+			//
+			// The recipient of a mail share has neither: they have no account, so the two
+			// name tokens keep naming whoever published the file. Only the address is
+			// known, and only the address is replaced.
 			'username' => $user?->getUID() ?? 'Unknown',
 			'displayname' => $user?->getDisplayName() ?? 'Unknown',
-			'email' => $user?->getEMailAddress() ?? '',
+			'email' => $recipient ?? $user?->getEMailAddress() ?? '',
 			// In the instance's timezone rather than PHP's, which Nextcloud pins to UTC -
 			// see {@see InstanceTimeZone}. Both read the same instant: a template using both
 			// tokens must not be able to show a date from one day and a time from another,

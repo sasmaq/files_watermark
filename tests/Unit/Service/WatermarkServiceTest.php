@@ -18,6 +18,7 @@ use OCA\FilesWatermark\Service\InstanceTimeZone;
 use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\ShareAccess;
+use OCA\FilesWatermark\Service\ShareRecipient;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -60,6 +61,7 @@ class WatermarkServiceTest extends TestCase {
 	private ImageLimits&MockObject $imageLimits;
 	private ApplyLimits&MockObject $applyLimits;
 	private ShareAccess&MockObject $shareAccess;
+	private ShareRecipient&MockObject $shareRecipient;
 	private InstanceTimeZone&MockObject $timeZone;
 	private WatermarkService $service;
 
@@ -87,6 +89,9 @@ class WatermarkServiceTest extends TestCase {
 		// Owner access unless a test says otherwise: an unstubbed mock answers false to
 		// both questions, which is exactly "not a share".
 		$this->shareAccess = $this->createMock(ShareAccess::class);
+		// Not a share by email unless a test says otherwise: an unstubbed mock answers
+		// null, which is "this fetch names nobody the share knows about".
+		$this->shareRecipient = $this->createMock(ShareRecipient::class);
 		// Fixed, so a `{date}` assertion cannot depend on where the suite is run. What the
 		// zone resolves *from* is InstanceTimeZoneTest's business.
 		$this->timeZone = $this->createMock(InstanceTimeZone::class);
@@ -106,6 +111,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->imageLimits,
 			$this->applyLimits,
 			$this->shareAccess,
+			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
 		);
@@ -344,6 +350,7 @@ class WatermarkServiceTest extends TestCase {
 			$limits,
 			$this->applyLimits,
 			$this->shareAccess,
+			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
 		);
@@ -876,6 +883,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->imageLimits,
 			$this->applyLimits,
 			$this->shareAccess,
+			$this->shareRecipient,
 			$this->l10n(),
 			$timeZone,
 		);
@@ -954,6 +962,59 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertSame('alice@example.org', $captured['email']);
 		$this->assertSame('report.pdf', $captured['filename']);
 		$this->assertSame(date('Y-m-d'), $captured['date']);
+	}
+
+	/**
+	 * A copy going out through a **share by email** carries the address it was sent to.
+	 *
+	 * This is the one anonymous reader the app can name. Without it `{email}` falls back to
+	 * the identity the fetch resolved to - for a link visitor that is the file's owner - so
+	 * the copy that could have named its recipient instead named the person who sent it.
+	 */
+	public function testAMailShareStampsTheAddressItWasSentTo(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn(
+			$this->user('owner', 'The Owner', 'owner@example.org'),
+		);
+		$this->shareRecipient->method('email')->willReturn('reader@example.org');
+
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile('application/pdf')));
+
+		$this->assertSame('reader@example.org', $captured['email']);
+
+		// Only the address. A mail-share recipient has no account, so the two name tokens
+		// keep naming whoever published the file rather than inventing an identity.
+		$this->assertSame('owner', $captured['username']);
+		$this->assertSame('The Owner', $captured['displayname']);
+	}
+
+	/** Every other kind of fetch keeps the identity's own address. */
+	public function testANonMailShareKeepsTheReadersOwnAddress(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn(
+			$this->user('asmith3', 'Alice Smith', 'alice@example.org'),
+		);
+		$this->shareRecipient->method('email')->willReturn(null);
+
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile('application/pdf')));
+
+		$this->assertSame('alice@example.org', $captured['email']);
 	}
 
 	/**
@@ -1253,6 +1314,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->imageLimits,
 			$applyLimits,
 			$this->shareAccess,
+			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
 		);
