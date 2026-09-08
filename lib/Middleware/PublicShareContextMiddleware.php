@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Middleware;
 
 use OCA\FilesWatermark\Service\ShareAccess;
+use OCA\FilesWatermark\Service\ShareRecipient;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Middleware;
 use OCP\AppFramework\PublicShareController;
+use OCP\IRequest;
 
 /**
  * Tells {@see ShareAccess} that this request is a public-link fetch, on the routes that
@@ -51,6 +53,8 @@ class PublicShareContextMiddleware extends Middleware {
 
 	public function __construct(
 		private ShareAccess $shareAccess,
+		private ShareRecipient $shareRecipient,
+		private IRequest $request,
 	) {
 	}
 
@@ -61,8 +65,22 @@ class PublicShareContextMiddleware extends Middleware {
 	 * fetch is a share. A flag raised afterwards would be raised for nobody.
 	 */
 	public function beforeController(Controller $controller, string $methodName): void {
-		if ($controller instanceof PublicShareController) {
-			$this->shareAccess->notePublicRequest();
+		if (!($controller instanceof PublicShareController)) {
+			return;
+		}
+
+		$this->shareAccess->notePublicRequest();
+
+		// The token is read off the *request*, not off the controller, even though
+		// `PublicShareController::getToken()` exists. That getter returns whatever core's
+		// own PublicShareMiddleware last set, and nothing orders that middleware ahead of
+		// this one - on the runs where it has not gone first the property is unset and the
+		// string return type turns a missing token into a TypeError. `getParam('token')` is
+		// where core reads it from in the first place, and it answers the same whoever
+		// runs first.
+		$token = $this->request->getParam('token');
+		if (is_string($token)) {
+			$this->shareRecipient->noteShareToken($token);
 		}
 	}
 }

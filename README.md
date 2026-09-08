@@ -19,6 +19,11 @@ document is whoever uploaded it rather than whoever walked out with it.
   - `{displayname}` is the name shown in Nextcloud (*John Doe*); `{username}` is the account
     name used to sign in (*john.doe*). Display names are neither unique nor permanent, so use
     the account name when the watermark has to identify exactly one account
+  - `{email}` is normally the address of whoever is fetching the file. On a copy delivered
+    through a **share by email** it is the address the share was sent to, so a document
+    mailed to an outside reader names that reader rather than the colleague who sent it.
+    Ordinary public links are unchanged - they were sent to nobody in particular, so there
+    is no recipient to name and `{email}` keeps falling back to the publisher
   - `{date}` and `{datetime}` are rendered in the instance's timezone - `default_timezone`
     in `config.php`, the same setting the rest of Nextcloud dates by. Set it, or the
     watermark reads UTC: Nextcloud pins PHP's own timezone to UTC while it boots, whatever
