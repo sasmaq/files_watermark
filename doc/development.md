@@ -914,6 +914,49 @@ every `on_share` deny goes through a failed render.
 - `*_src`, any partial output, and the temp dir are cleaned up when a render throws
 - `WatermarkServiceTest` pins it - neither the source copy nor its directory survives
 
+### The response described the stored file, not the one that went out {#sync-client-metadata}
+
+Reported as: the **Windows desktop client with VFS enabled cannot download a watermarked
+file**. The cause is not in the render. `DownloadInterceptorPlugin` swaps the response *body*
+for a freshly rendered copy, but every piece of metadata a client validates that body against
+still described the original. Reproduced against the Docker instance with a marked 11 745-byte
+PDF:
+
+| | PROPFIND advertises | GET delivers |
+| --- | --- | --- |
+| size | `11745` | `37326` |
+| checksum | `SHA1:70368e7f…` | bytes hash to `403154c6…`, header said `SHA1:70368e7f…` |
+| etag | `"d1d807dc…"` | *no ETag header at all* |
+
+A browser saves whatever arrives and reads none of these, which is why this survived for as
+long as the Files app was the only thing downloading.
+
+Two of the three are now fixed, in `DownloadInterceptorPlugin::afterGet`:
+
+- **`OC-Checksum` now describes the delivered bytes.** It is added by core's
+  `FilesPlugin::httpGet`, which listens on `afterMethod:GET` - an event that still fires after
+  our `method:GET` returns `false` - and reads `$node->getChecksum()`. It cannot be pre-empted
+  from `httpGet` because core uses `addHeader`, which *appends*: setting it early sends the
+  header twice rather than winning. Hence a second listener on the same event at priority
+  `200`, past core's default `100`, using `setHeader`.
+- **`ETag` is now sent, and reports the *stored* file's version.** Sabre's `CorePlugin` sets it
+  while serving a body, and returning `false` is exactly what skips it. It deliberately is
+  *not* a hash of the delivered bytes: `{datetime}` means no two renders of one file are
+  alike, so a content-derived etag would change on every fetch and the client would read each
+  one as a fresh server-side change and re-download forever.
+
+**The size mismatch remains, and it is the one that breaks VFS.** The client sizes its CfAPI
+placeholder from PROPFIND and hydration then overflows it. Fixing it means knowing the
+rendered length *before* the GET, which means materialising a per-reader copy and reporting
+its size, etag and checksum - see {#open-3}. An `oc_watermark_rendition` table
+(`file_id, uid, signature, state, size, etag, checksum, store_name, frozen_at, attempts`) from
+an earlier, uncommitted attempt at this still exists in the dev database; `frozen_at` is where
+that attempt met the `{datetime}` determinism problem.
+
+One inconsistency is knowingly left: the `oc:checksums` PROPFIND property still reports the
+stored file's checksum while the GET reports the delivered one. Discovery compares by etag
+rather than by checksum, so this is not believed to be load-bearing.
+
 ### Permissions
 
 - `applyWatermark` checks readability and updateability before processing

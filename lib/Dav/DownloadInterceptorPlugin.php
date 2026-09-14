@@ -43,6 +43,19 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 
 	private ?Server $server = null;
 
+	/**
+	 * The copy this request streamed, and the version identifier of the file it came from -
+	 * set only when {@see httpGet} handled the download, and consumed by {@see afterGet}.
+	 *
+	 * Carried on the instance rather than recomputed because `afterGet` would otherwise have
+	 * to resolve the node and the mark a second time to answer a question this request has
+	 * already answered. One plugin instance serves one request, and a GET is dispatched once
+	 * within it, so there is no second download to confuse this with.
+	 *
+	 * @var ?array{path: string, etag: string}
+	 */
+	private ?array $served = null;
+
 	public function __construct(
 		private WatermarkService $watermarkService,
 		private IRootFolder $rootFolder,
@@ -57,6 +70,11 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		// Sabre still runs `afterMethod` and flushes our response via `sendResponse`.
 		// (A false from `beforeMethod:GET` returns before `sendResponse`, sending 0 bytes.)
 		$server->on('method:GET', [$this, 'httpGet'], 90);
+		// And again *after* core has had its say. `FilesPlugin::httpGet` listens on this
+		// same event at the default priority of 100, so a larger number here is what puts
+		// {@see afterGet} last and lets it overrule what core wrote. See that method for
+		// what needs overruling and why it cannot be set up front in `httpGet`.
+		$server->on('afterMethod:GET', [$this, 'afterGet'], 200);
 	}
 
 	/**
@@ -107,6 +125,11 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		// Delete the temp copy once the response has been flushed to the client.
 		register_shutdown_function(fn () => $this->cleanup($tmpPath));
 
+		// Tell `afterGet` there is a substituted body to describe. The etag is read here,
+		// from the node this request already resolved, because it has to be the *stored*
+		// file's - see `afterGet` for why the delivered bytes must not name themselves.
+		$this->served = ['path' => $tmpPath, 'etag' => (string)$file->getEtag()];
+
 		// Status 200 with the full body deliberately ignores any Range header: the
 		// watermarked bytes differ from the original, so byte offsets into the
 		// source are meaningless and a partial response would be incoherent.
@@ -129,6 +152,72 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		$response->setBody($stream);
 
 		return false;
+	}
+
+	/**
+	 * Re-describes a substituted body, after core has finished describing the original one.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE BYTES WERE SWAPPED; THE METADATA DESCRIBING THEM WAS NOT.
+	 *
+	 * A browser saves whatever arrives and never looks at these headers, which is why this
+	 * went unnoticed for as long as the Files app was the only thing downloading. A **sync
+	 * client checks**, and every check was against the wrong file:
+	 *
+	 *  - `OC-Checksum` is added by core's `FilesPlugin::httpGet` on `afterMethod:GET` - which
+	 *    still runs after our `method:GET` returned false - from `$node->getChecksum()`, the
+	 *    *stored* file's. The client hashes what it received, compares, and rejects the
+	 *    download as corrupt. This cannot be pre-empted in `httpGet`: core uses `addHeader`,
+	 *    which appends, so setting it early sends the header twice instead of winning. Hence
+	 *    a second hook at a priority that runs last, and `setHeader`, which replaces.
+	 *  - **No `ETag` at all.** Sabre's `CorePlugin` sets it while serving a body, and
+	 *    returning false is what skips it. A DAV GET without one leaves the client no
+	 *    version to record against what it just stored.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The etag deliberately reports the **stored** file's version, not a hash of the bytes
+	 * actually sent. A watermark carries `{datetime}`, so no two renders of one file are
+	 * identical and a content-derived etag would differ on every fetch - the client would
+	 * read that as "changed again on the server" and re-download forever. The etag answers
+	 * which *version of the file* this is, and that is the version PROPFIND named; the
+	 * per-reader rendering is not a new version of it.
+	 *
+	 * The checksum goes the other way and describes the bytes on the wire, because that is
+	 * the only claim a client can verify for itself - and a correct one is worth more than
+	 * no header at all, which would simply switch the integrity check off.
+	 *
+	 * **This does not make the response wholly coherent, and is not meant to.** PROPFIND
+	 * still advertises the stored file's *size* while a longer body arrives, which is what
+	 * breaks Windows VFS hydration: the client sizes its placeholder from PROPFIND and the
+	 * render overflows it. Fixing that means knowing the rendered length before the GET -
+	 * a materialised per-reader copy - and is a larger change than this one.
+	 */
+	public function afterGet(RequestInterface $request, ResponseInterface $response): void {
+		if ($this->served === null) {
+			return;
+		}
+
+		$served = $this->served;
+		// Consumed, so a second pass over this instance cannot re-stamp a body it did not
+		// substitute.
+		$this->served = null;
+
+		$checksum = @hash_file('sha1', $served['path']);
+		if ($checksum !== false) {
+			$response->setHeader('OC-Checksum', 'SHA1:' . $checksum);
+		} elseif ($response->getHeader('OC-Checksum') !== null) {
+			// The hash failed, so the only honest options are a header describing bytes that
+			// did not go out, or none. Core's describes the original and would fail every
+			// client-side check; removing it costs the check and passes.
+			$response->removeHeader('OC-Checksum');
+		}
+
+		if ($served['etag'] !== '') {
+			// `OCP\Files\Node::getEtag()` hands back the bare cache value; the header and the
+			// `{DAV:}getetag` property PROPFIND answers with are both the quoted form, and
+			// they have to be the same string for the client to match one against the other.
+			$response->setHeader('ETag', '"' . trim($served['etag'], '"') . '"');
+		}
 	}
 
 	/**

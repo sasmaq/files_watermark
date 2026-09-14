@@ -91,10 +91,15 @@ class DownloadInterceptorPluginTest extends TestCase {
 	}
 
 	/** A DAV file node wrapping an OCP file with the given mime/name. */
-	private function davFile(string $mime = 'application/pdf', string $name = 'report.pdf'): DavFile {
+	private function davFile(
+		string $mime = 'application/pdf',
+		string $name = 'report.pdf',
+		string $etag = 'abc123',
+	): DavFile {
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn($mime);
 		$file->method('getName')->willReturn($name);
+		$file->method('getEtag')->willReturn($etag);
 
 		$davFile = $this->createMock(DavFile::class);
 		$davFile->method('getNode')->willReturn($file);
@@ -331,6 +336,106 @@ class DownloadInterceptorPluginTest extends TestCase {
 			->willReturn('/nonexistent/nc_watermark_gone/copy.pdf');
 
 		$this->assertTrue($this->plugin()->httpGet($this->request(), new Response()));
+	}
+
+	/**
+	 * Core stamps the *stored* file's checksum on `afterMethod:GET`, over a body that is no
+	 * longer the stored file. A sync client hashes what arrived, compares, and calls the
+	 * download corrupt - so the header has to end up describing the bytes that went out.
+	 */
+	public function testChecksumDescribesTheDeliveredBytesNotTheStoredFile(): void {
+		$davFile = $this->davFile();
+		$tmpPath = $this->renderedCopy();
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+
+		$plugin->httpGet($request, $response);
+		// What core's FilesPlugin does at priority 100, before we get our turn at 200.
+		$response->addHeader('OC-Checksum', 'SHA1:' . sha1('THE-STORED-ORIGINAL'));
+		$plugin->afterGet($request, $response);
+
+		$this->assertSame(
+			'SHA1:' . sha1('WATERMARKED-BYTES'),
+			$response->getHeader('OC-Checksum'),
+		);
+		// `addHeader` appends rather than replaces, which is the whole reason this cannot be
+		// set up front in httpGet: the stored file's value must be gone, not merely joined.
+		$this->assertCount(1, $response->getHeaderAsArray('OC-Checksum'));
+	}
+
+	/**
+	 * The etag names the *version of the file*, and that is the version PROPFIND advertised.
+	 * Hashing the delivered bytes instead would change it on every fetch - `{datetime}` makes
+	 * no two renders alike - and the client would read each one as a fresh server-side change
+	 * and download forever.
+	 */
+	public function testEtagReportsTheStoredVersionRatherThanTheRender(): void {
+		$davFile = $this->davFile(etag: 'deadbeef');
+		$tmpPath = $this->renderedCopy();
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+
+		$plugin->httpGet($request, $response);
+		$plugin->afterGet($request, $response);
+
+		// Quoted, because that is the form `{DAV:}getetag` reports and the two are compared
+		// against each other.
+		$this->assertSame('"deadbeef"', $response->getHeader('ETag'));
+	}
+
+	/** A download nobody substituted must be described by core alone. */
+	public function testAfterGetLeavesAnUnwatermarkedDownloadAlone(): void {
+		$davFile = $this->davFile();
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+
+		$this->assertTrue($plugin->httpGet($request, $response));
+
+		$response->addHeader('OC-Checksum', 'SHA1:' . sha1('THE-STORED-ORIGINAL'));
+		$plugin->afterGet($request, $response);
+
+		$this->assertSame('SHA1:' . sha1('THE-STORED-ORIGINAL'), $response->getHeader('OC-Checksum'));
+		$this->assertNull($response->getHeader('ETag'));
+	}
+
+	/**
+	 * Registration order, asserted by letting a stand-in for core run at its real priority
+	 * and checking who got the last word - the priority number itself is not readable back
+	 * off the emitter, and the ordering is the thing that actually matters.
+	 */
+	public function testAfterGetOverrulesCoreRatherThanRacingIt(): void {
+		$davFile = $this->davFile();
+		$tmpPath = $this->renderedCopy();
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+		$plugin->httpGet($request, $response);
+
+		// FilesPlugin::httpGet listens here at the default priority of 100.
+		$this->server->on('afterMethod:GET', static function () use ($response): void {
+			$response->addHeader('OC-Checksum', 'SHA1:' . sha1('THE-STORED-ORIGINAL'));
+		}, 100);
+		$this->server->emit('afterMethod:GET', [$request, $response]);
+
+		$this->assertSame('SHA1:' . sha1('WATERMARKED-BYTES'), $response->getHeader('OC-Checksum'));
 	}
 
 	public function testRegistersOnMethodGetAheadOfCorePlugin(): void {
