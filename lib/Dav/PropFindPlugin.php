@@ -5,13 +5,20 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Dav;
 
 use OCA\DAV\Connector\Sabre\Directory;
+use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\DAV\Connector\Sabre\Node;
 use OCA\Files_Trashbin\Sabre\ITrash;
+use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkMark;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
+use OCA\FilesWatermark\Db\WatermarkRendition;
+use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\IUserSession;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Sabre\DAV\ICollection;
 use Sabre\DAV\INode;
 use Sabre\DAV\PropFind;
@@ -60,6 +67,15 @@ class PropFindPlugin extends ServerPlugin {
 	private array $cache = [];
 
 	/**
+	 * file id => the reader's standing reservation, for one listing. Null until primed, which
+	 * is the difference that matters: an empty array means "this listing was asked about and
+	 * none of it is reserved", and null means "nobody has asked yet, go and look".
+	 *
+	 * @var ?array<int, WatermarkRendition>
+	 */
+	private ?array $reservationCache = null;
+
+	/**
 	 * @param ?WatermarkService $watermarkService when given, the property answers the wider
 	 *                                            question this plugin's *public* instance has to answer - see
 	 *                                            {@see willBeWatermarked}. Null on the authenticated server, where a mark is
@@ -72,6 +88,8 @@ class PropFindPlugin extends ServerPlugin {
 		private WatermarkMarkMapper $markMapper,
 		private ?WatermarkService $watermarkService = null,
 		private ?IUserSession $userSession = null,
+		private ?DeliveryReservation $reservation = null,
+		private LoggerInterface $logger = new NullLogger(),
 	) {
 	}
 
@@ -80,6 +98,11 @@ class PropFindPlugin extends ServerPlugin {
 	}
 
 	public function propFind(PropFind $propFind, INode $node): void {
+		// Before anything about badges: the length and version this download will really
+		// have. Unlike the two properties below it is not something the client asked this
+		// app for - it is core's own answer, corrected.
+		$this->advertiseReservation($propFind, $node);
+
 		$requested = $propFind->getRequestedProperties();
 		$wantsWatermarked = in_array(self::WATERMARKED_PROPERTY, $requested, true);
 		$wantsLocked = in_array(self::LOCKED_PROPERTY, $requested, true);
@@ -109,6 +132,175 @@ class PropFindPlugin extends ServerPlugin {
 			$propFind->handle(self::LOCKED_PROPERTY, function () use ($fileId): string {
 				return $this->isLocked($fileId) ? '1' : '0';
 			});
+		}
+	}
+
+	/**
+	 * Replace the length and version core reports with the ones the download will have.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE LISTING IS WHERE A SYNC CLIENT LEARNS HOW BIG A FILE IS.
+	 *
+	 * Core answers `{DAV:}getcontentlength` from the stored file. For a marked file that is
+	 * the wrong number - the download is rendered on the way out and is longer - and the
+	 * Windows client with virtual files acts on it before anything can correct it: it sizes
+	 * its placeholder from this answer, and hydration then writes past the end of it.
+	 *
+	 * So a file that has a reserved length is advertised at that length, and
+	 * {@see DownloadInterceptorPlugin} pads the render up to meet it. The two numbers come
+	 * from one row, which is what stops them disagreeing.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The etag has to move with it. A client that has already cached "this file is 11745
+	 * bytes, etag X" will not re-read the length while the etag still says X, so the
+	 * reservation carries its own - a digest of the stored etag *and* the reserved length -
+	 * and the moment a file gains or revises a reservation, the version it is offered under
+	 * changes and the client comes back to look.
+	 *
+	 * `set()` rather than `handle()`: core has already answered both, and `handle()` declines
+	 * to touch a property that is no longer unset.
+	 *
+	 * Silent on the public-link server, which has no reader to have made a promise to - see
+	 * {@see DownloadInterceptorPlugin::__construct}.
+	 */
+	private function advertiseReservation(PropFind $propFind, INode $node): void {
+		if ($this->reservation === null || $this->userSession === null || $this->watermarkService === null) {
+			return;
+		}
+
+		// Nothing to correct unless the length is actually being asked for. This is the one
+		// property worth testing: a client that wants the size wants the etag with it, and
+		// one that wants neither is not about to download anything.
+		if ($propFind->getStatus('{DAV:}getcontentlength') === null) {
+			return;
+		}
+
+		$uid = $this->userSession->getUser()?->getUID() ?? '';
+		if ($uid === '') {
+			$this->bail('no session user', $propFind, $node);
+			return;
+		}
+
+		$config = $this->watermarkService->resolveConfig();
+
+		// A directory listing arrives here before its children do, which is the moment to
+		// fetch all of their reservations - and all of their marks - at once rather than one
+		// query per row. The marks are batched here as well as in `propFind` because the two
+		// callers are independent: a sync client asks for the length without ever asking for
+		// the badge, so nothing else would have primed them.
+		if ($node instanceof Directory && $propFind->getDepth() !== 0) {
+			$this->cacheListing($node);
+			$this->primeReservations($node->getNode(), $uid, $config);
+			return;
+		}
+
+		if (!($node instanceof DavFile)) {
+			return;
+		}
+
+		$file = $node->getNode();
+		if (!($file instanceof File)) {
+			return;
+		}
+
+		$fileId = $node->getId();
+		if ($fileId === null || !$this->willBeWatermarked($fileId, $node)) {
+			// **A reservation outlives the mark that caused it**, and this is what stops that
+			// mattering. Taking the watermark off a file makes its download the stored bytes
+			// again, at the stored length - but the row measured while it *was* marked is
+			// still there and still matches on file and policy, because neither changed.
+			// Advertising from it would promise a padded length for a download that is now
+			// the plain original. The mark is the thing that decides, so the mark is asked.
+			return;
+		}
+
+		$reserved = $this->reservationFor($file, $uid, $config);
+		if ($reserved === null) {
+			// Never measured, or measured for a version of this file or policy that has moved
+			// on. Core's answer stands, and the next download re-measures.
+			$this->bail('no valid reservation', $propFind, $node, [
+				'cachePrimed' => $this->reservationCache !== null,
+				'cacheSize' => $this->reservationCache === null ? -1 : count($this->reservationCache),
+			]);
+			return;
+		}
+
+		$propFind->set('{DAV:}getcontentlength', (string)$reserved->getReservedSize(), 200);
+		$propFind->set('{DAV:}getetag', '"' . $reserved->getEtag() . '"', 200);
+
+		// The other half of the pair {@see DownloadInterceptorPlugin::trace} records. A
+		// client that opens nothing may be failing here rather than on the download, and
+		// the difference is not visible from the download side alone.
+		$this->logger->debug('files_watermark: advertising a reserved length', [
+			'path' => $file->getPath(),
+			'storedSize' => $file->getSize(),
+			'advertisedSize' => $reserved->getReservedSize(),
+			'advertisedEtag' => $reserved->getEtag(),
+			'uid' => $uid,
+		]);
+	}
+
+	/**
+	 * Why a *watermarked* file was left with core's answer, at debug level.
+	 *
+	 * Deliberately narrow. An earlier version of this logged every node it declined, which
+	 * buried the one interesting case - a file that will be watermarked and still has no
+	 * length to promise - under a line for every ordinary file in every listing. The cases
+	 * that fire for unmarked files and for property sets that never asked about length are
+	 * the normal path, not a diagnosis.
+	 *
+	 * It earns its place because the bug it was written for was a sync client and a `curl`
+	 * getting different answers to what looked like the same request, and nothing about that
+	 * was visible from outside.
+	 *
+	 * @param array<string, mixed> $context
+	 */
+	private function bail(string $why, PropFind $propFind, INode $node, array $context = []): void {
+		$this->logger->debug('files_watermark: not advertising - ' . $why, array_merge([
+			'node' => $propFind->getPath(),
+			'class' => $node::class,
+			'depth' => $propFind->getDepth(),
+			'requested' => implode(',', $propFind->getRequestedProperties()),
+		], $context));
+	}
+
+	/**
+	 * One query for a whole listing's reservations.
+	 *
+	 * A failure here is not worth propagating: the cache stays empty, every row falls back to
+	 * its own lookup, and the listing still renders.
+	 */
+	private function primeReservations(Folder $folder, string $uid, WatermarkConfig $config): void {
+		$filesById = [];
+		foreach ($folder->getDirectoryListing() as $child) {
+			if ($child instanceof File) {
+				$filesById[$child->getId()] = $child;
+			}
+		}
+
+		try {
+			$this->reservationCache = $this->reservation?->currentForListing($filesById, $uid, $config) ?? [];
+		} catch (\Throwable) {
+			$this->reservationCache = [];
+		}
+	}
+
+	/**
+	 * $file's reservation, from the listing's batch where there was one.
+	 *
+	 * A primed cache is trusted completely - a miss in it means the batch asked about this id
+	 * and found nothing, so asking again would be the same query for the same answer.
+	 */
+	private function reservationFor(File $file, string $uid, WatermarkConfig $config): ?WatermarkRendition {
+		if ($this->reservationCache !== null) {
+			return $this->reservationCache[$file->getId()] ?? null;
+		}
+
+		try {
+			return $this->reservation?->current($file, $uid, $config);
+		} catch (\Throwable) {
+			// A listing must render whatever this says.
+			return null;
 		}
 	}
 

@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Migration\Version1004Date20260806140000;
 use OCA\FilesWatermark\Migration\Version1005Date20260901120000;
 use OCA\FilesWatermark\Migration\Version1006Date20260903120000;
 use OCA\FilesWatermark\Migration\Version1007Date20260908120000;
+use OCA\FilesWatermark\Migration\Version1008Date20260915120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -86,6 +87,18 @@ class SchemaConvergenceTest extends TestCase {
 	 * table 1003 has already built, so a fresh install and an upgraded one only match if the
 	 * additions stay additions.
 	 */
+	/** Ordered as `Version1008Date20260915120000` creates them. */
+	private const EXPECTED_RENDITION_COLUMNS = [
+		'id',
+		'file_id',
+		'uid',
+		'signature',
+		'reserved_size',
+		'etag',
+		'created_at',
+		'updated_at',
+	];
+
 	private const EXPECTED_MARK_COLUMNS = [
 		'id',
 		'file_id',
@@ -188,6 +201,22 @@ class SchemaConvergenceTest extends TestCase {
 			self::EXPECTED_MARK_COLUMNS,
 			$schema->getTable('watermark_mark')->columnNames(),
 			'watermark_mark did not converge on the expected columns',
+		);
+
+		$this->assertTrue(
+			$schema->hasTable('watermark_rendition'),
+			'watermark_rendition is missing - without it no download has a promised length',
+		);
+		$this->assertSame(
+			self::EXPECTED_RENDITION_COLUMNS,
+			$schema->getTable('watermark_rendition')->columnNames(),
+			'watermark_rendition did not converge on the expected columns',
+		);
+		$this->assertContains(
+			'wm_rendition_file_uid_idx',
+			$schema->getTable('watermark_rendition')->indexNames(),
+			'the reservation table needs its unique (file_id, uid) index - two workers measuring '
+				. 'the same file for the same reader at once is ordinary, and the index is what settles it',
 		);
 	}
 
@@ -386,6 +415,7 @@ class SchemaConvergenceTest extends TestCase {
 		(new Version1005Date20260901120000())->changeSchema($output, $closure, []);
 		(new Version1006Date20260903120000())->changeSchema($output, $closure, []);
 		(new Version1007Date20260908120000())->changeSchema($output, $closure, []);
+		(new Version1008Date20260915120000())->changeSchema($output, $closure, []);
 	}
 
 	/**

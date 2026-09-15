@@ -6,10 +6,15 @@ namespace OCA\FilesWatermark\Dav;
 
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\Files_Trashbin\Sabre\ITrash;
+use OCA\FilesWatermark\Service\DeliveryPadder;
+use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
 use OCP\Files\IRootFolder;
+use OCP\IUserSession;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Sabre\DAV\Exception\Forbidden;
 use Sabre\DAV\Exception\NotFound;
 use Sabre\DAV\INode;
@@ -56,9 +61,22 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	 */
 	private ?array $served = null;
 
+	/**
+	 * The last three are absent on the public-link server, which builds this by hand.
+	 *
+	 * A reservation is a promise made to *a reader* about a file in their own listing, and a
+	 * public link has neither - no uid to measure for, and a `PropFindPlugin` with no session
+	 * to advertise a reserved length to. Measuring there would pad downloads against a
+	 * promise nothing ever made, which is the one arrangement worse than not padding at all.
+	 * Virtual files never reach that server either, so there is nothing to fix there.
+	 */
 	public function __construct(
 		private WatermarkService $watermarkService,
 		private IRootFolder $rootFolder,
+		private ?DeliveryReservation $reservation = null,
+		private ?DeliveryPadder $padder = null,
+		private ?IUserSession $userSession = null,
+		private LoggerInterface $logger = new NullLogger(),
 	) {
 	}
 
@@ -87,6 +105,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		}
 
 		if ($this->isHeadRequest($request)) {
+			$this->trace('deferring a HEAD to core', $request);
 			return true;
 		}
 
@@ -108,11 +127,13 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			// hand the clean original to exactly the reader the mark exists to name, so the
 			// download is refused instead. The cause is already in the log; the client gets
 			// a 403 rather than a file that looks fine and identifies nobody.
+			$this->trace('refusing: the render failed', $request, ['reason' => $e->getMessage()]);
 			throw new Forbidden($e->getMessage(), 0, $e);
 		}
 
 		if ($tmpPath === null) {
 			// Not marked: nothing to do, and core serves the file as it is stored.
+			$this->trace('not watermarked, leaving to core', $request, ['path' => $file->getPath()]);
 			return true;
 		}
 
@@ -125,17 +146,24 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		// Delete the temp copy once the response has been flushed to the client.
 		register_shutdown_function(fn () => $this->cleanup($tmpPath));
 
-		// Tell `afterGet` there is a substituted body to describe. The etag is read here,
-		// from the node this request already resolved, because it has to be the *stored*
-		// file's - see `afterGet` for why the delivered bytes must not name themselves.
-		$this->served = ['path' => $tmpPath, 'etag' => (string)$file->getEtag()];
+		[$length, $etag] = $this->fitToReservation($file, $tmpPath);
+
+		$this->trace('serving a watermarked copy', $request, [
+			'path' => $file->getPath(),
+			'storedSize' => $file->getSize(),
+			'sentSize' => $length,
+			'sentEtag' => $etag,
+		]);
+
+		// Tell `afterGet` there is a substituted body to describe.
+		$this->served = ['path' => $tmpPath, 'etag' => $etag];
 
 		// Status 200 with the full body deliberately ignores any Range header: the
 		// watermarked bytes differ from the original, so byte offsets into the
 		// source are meaningless and a partial response would be incoherent.
 		$response->setStatus(200);
 		$response->setHeader('Content-Type', $file->getMimeType());
-		$response->setHeader('Content-Length', (string)filesize($tmpPath));
+		$response->setHeader('Content-Length', (string)$length);
 		if (!($node instanceof ITrash)) {
 			// **The trashbin names its own downloads.** `TrashbinPlugin` adds a
 			// Content-Disposition on `afterMethod:GET` - which still runs after we return
@@ -218,6 +246,116 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			// they have to be the same string for the client to match one against the other.
 			$response->setHeader('ETag', '"' . trim($served['etag'], '"') . '"');
 		}
+	}
+
+	/**
+	 * Record what a client asked for and what it was given, at debug level.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE SYNC CLIENT IS THE ONE CALLER WHOSE SIDE OF THE CONVERSATION IS INVISIBLE.
+	 *
+	 * A browser that cannot open a download says so on screen. A sync client decides in
+	 * private: it compares what a listing promised against what arrived, and when the two
+	 * disagree it retries, or gives up, or leaves a placeholder unfilled - and the *server*
+	 * sees nothing wrong, because from here every one of those requests succeeded.
+	 *
+	 * Three separate defects on this path were each found by reasoning backwards from a
+	 * client that "could not download", with no way to confirm any of them from the server.
+	 * This exists so the next one is read rather than deduced: it records the half of the
+	 * exchange the server can see, including the request headers that decide the client's
+	 * behaviour and are otherwise nowhere in the log.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * Debug level, so it costs nothing until an administrator turns it on
+	 * (`occ log:manage --level debug`) and is not something a busy instance pays for.
+	 *
+	 * @param array<string, mixed> $context
+	 */
+	private function trace(string $message, RequestInterface $request, array $context = []): void {
+		$this->logger->debug('files_watermark: ' . $message, array_merge([
+			// What the client asked for. `Range` is here because this plugin answers a
+			// ranged request with the whole file, which is a difference from core worth
+			// being able to see; the agent, because behaviour differs by client and the
+			// log otherwise cannot tell a browser from a sync run.
+			'method' => $request->getMethod(),
+			'uri' => $request->getPath(),
+			'range' => $request->getHeader('Range') ?? '-',
+			'agent' => $request->getHeader('User-Agent') ?? '-',
+		], $context));
+	}
+
+	/**
+	 * Make the rendered copy match the length that was promised for it, if one was.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * WHY A DOWNLOAD HAS A LENGTH TO LIVE UP TO.
+	 *
+	 * PROPFIND answered this client some time ago with a length, and with virtual files on
+	 * Windows that answer has already been spent: the client sized its placeholder from it,
+	 * and hydration writes into a buffer of exactly that size. A body of any other length
+	 * fails - not as a mismatch the client reports, but as a write past the end of an
+	 * allocation.
+	 *
+	 * So the render is padded up to the promised length rather than sent at its own
+	 * ({@see DeliveryPadder}), and the promise is a number measured from an earlier render
+	 * and kept in the reservation table ({@see DeliveryReservation}).
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **The first download of a newly marked file is the one that cannot be padded**, because
+	 * nothing has measured it yet. It is served at its own length and the measurement is
+	 * taken from it, which leaves a sync client one failed attempt that fixes itself: the
+	 * next PROPFIND carries both the reserved length and a changed etag, so the client comes
+	 * back, and that download fits. A browser never notices either way, which is why this
+	 * serves the file rather than refusing it while the reservation is cold.
+	 *
+	 * A render that overshoots its reservation - or lands under it by less than the format's
+	 * smallest legal filler - takes the same path as a cold one: re-measured, served as it
+	 * is, correct on the next fetch.
+	 *
+	 * @return array{0: int, 1: string} the Content-Length to send and the etag to send with it
+	 */
+	private function fitToReservation(File $file, string $tmpPath): array {
+		$rendered = (int)filesize($tmpPath);
+		$storedEtag = (string)$file->getEtag();
+
+		if ($this->reservation === null || $this->padder === null || $this->userSession === null) {
+			// The public-link server - see the constructor.
+			return [$rendered, $storedEtag];
+		}
+
+		$uid = $this->userSession->getUser()?->getUID() ?? '';
+		if ($uid === '') {
+			// No reader to measure for, so no promise to keep and the old behaviour stands.
+			return [$rendered, $storedEtag];
+		}
+
+		// The format actually rendered, which is not always the one the *name* claims - a
+		// marked file renamed to a different extension still renders as what its bytes are.
+		// See {@see WatermarkService::deliveryMime}.
+		$mime = $this->watermarkService->deliveryMime($file) ?? $file->getMimeType();
+		$config = $this->watermarkService->resolveConfig();
+
+		$reservation = $this->reservation->current($file, $uid, $config);
+		if ($reservation !== null) {
+			$promised = $reservation->getReservedSize();
+			if ($this->padder->padTo($tmpPath, $promised, $mime)) {
+				return [$promised, $reservation->getEtag()];
+			}
+			// The reservation no longer fits this render. Falling through re-measures it.
+		}
+
+		$reserved = $this->reservation->record($file, $uid, $config, $rendered, $mime);
+		if ($reserved === null) {
+			// Nothing could be promised - an unpaddable format, or the row would not write.
+			// The download is still correct, just as unpredictable in length as before.
+			return [$rendered, $storedEtag];
+		}
+
+		// Deliberately the *stored* etag rather than the one just reserved: this body is not
+		// the reserved length, so it must not go out labelled as though it were. The next
+		// PROPFIND advertises the new etag, and the client fetches again to get a body that
+		// matches it.
+		return [$rendered, $storedEtag];
 	}
 
 	/**
