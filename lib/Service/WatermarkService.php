@@ -114,6 +114,7 @@ class WatermarkService {
 		private ShareRecipient $shareRecipient,
 		private IL10N $l,
 		private InstanceTimeZone $timeZone,
+		private ?DeliveryReservation $reservation = null,
 	) {
 	}
 
@@ -158,6 +159,7 @@ class WatermarkService {
 		}
 
 		$this->recordLog($file, $trigger, $config, $user);
+		$this->measureForDelivery($file, $config);
 
 		return true;
 	}
@@ -246,6 +248,7 @@ class WatermarkService {
 		}
 
 		$this->recordLog($target, self::TRIGGER_INHERITED, $this->resolveConfig());
+		$this->measureForDelivery($target, $this->resolveConfig());
 
 		return true;
 	}
@@ -672,6 +675,78 @@ class WatermarkService {
 	 * @return array{0: string, 1: WatermarkConfig} the temp path and the config the render
 	 *                                              resolved to (callers need its id for the audit row)
 	 */
+	/**
+	 * Render the file once, now, so its download has a promised length before anyone asks.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE ALTERNATIVE IS THAT THE FIRST OPEN OF EVERY MARKED FILE FAILS.
+	 *
+	 * A reservation is what lets PROPFIND advertise the length a watermarked download will
+	 * really have ({@see DeliveryReservation}). Measured lazily - on the first download - it
+	 * arrives one fetch too late: discovery has already published the *stored* length, a
+	 * Windows client has already sized its virtual-file placeholder from it, and the first
+	 * hydration fails with `The cloud operation is invalid` before the measurement exists.
+	 * It self-corrects on the next sync, which is no comfort to the person looking at the
+	 * error.
+	 *
+	 * Marking is the right moment because it is the first moment: the file is not yet
+	 * advertised as watermarked to anybody, so there is no wrong number in flight to correct.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **Measured for the owner, and rendered as the owner.** The reservation is per reader
+	 * because the watermark draws the reader's own name and the name's length moves the
+	 * output's size, so a measurement is only good for the person it was rendered for. The
+	 * owner is the one whose sync client holds the file; a share recipient opening it for the
+	 * first time is still measured lazily, and still costs one self-correcting failure.
+	 *
+	 * **Best-effort in every direction.** Nothing here may turn marking a file into an error:
+	 * the lazy path this pre-empts is still there and still works, so a failure costs the
+	 * first-open glitch and nothing more. The file is known to be within the render ceilings
+	 * already - {@see assertMarkable} enforced them a moment ago, which is what stands in for
+	 * a size guard here - so the cost is bounded by the same policy that allowed the mark.
+	 */
+	private function measureForDelivery(File $file, WatermarkConfig $config): void {
+		if ($this->reservation === null) {
+			return;
+		}
+
+		$owner = $file->getOwner() ?? $this->userSession->getUser();
+		$uid = $owner?->getUID();
+		if ($uid === null || $uid === '') {
+			return;
+		}
+
+		$tmpPath = null;
+		try {
+			$mime = $this->deliveryMime($file);
+			if ($mime === null) {
+				return;
+			}
+
+			[$tmpPath] = $this->renderToTemp($file, $config, $owner, $mime);
+
+			$rendered = @filesize($tmpPath);
+			if ($rendered === false || $rendered === 0) {
+				// A render that produced nothing to count is not a measurement. Promising a
+				// length from it would be worse than having none.
+				return;
+			}
+
+			$this->reservation->record($file, $uid, $config, $rendered, $mime);
+		} catch (\Throwable $e) {
+			$this->logger->info('files_watermark: could not measure a delivery length at mark time', [
+				'exception' => $e,
+				'path' => $file->getPath(),
+			]);
+		} finally {
+			// This render exists only to be counted; nothing is served from it.
+			if ($tmpPath !== null && file_exists($tmpPath)) {
+				@unlink($tmpPath);
+				@rmdir(dirname($tmpPath));
+			}
+		}
+	}
+
 	private function renderToTemp(File $file, WatermarkConfig $config, ?IUser $actor = null, ?string $mime = null): array {
 		$mime ??= $file->getMimeType();
 		$this->assertSupported($mime, $file);

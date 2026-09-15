@@ -945,17 +945,173 @@ Two of the three are now fixed, in `DownloadInterceptorPlugin::afterGet`:
   alike, so a content-derived etag would change on every fetch and the client would read each
   one as a fresh server-side change and re-download forever.
 
-**The size mismatch remains, and it is the one that breaks VFS.** The client sizes its CfAPI
-placeholder from PROPFIND and hydration then overflows it. Fixing it means knowing the
-rendered length *before* the GET, which means materialising a per-reader copy and reporting
-its size, etag and checksum - see {#open-3}. An `oc_watermark_rendition` table
-(`file_id, uid, signature, state, size, etag, checksum, store_name, frozen_at, attempts`) from
-an earlier, uncommitted attempt at this still exists in the dev database; `frozen_at` is where
-that attempt met the `{datetime}` determinism problem.
+The size was fixed separately, and differently - see {#reserved-lengths} below.
 
 One inconsistency is knowingly left: the `oc:checksums` PROPFIND property still reports the
 stored file's checksum while the GET reports the delivered one. Discovery compares by etag
 rather than by checksum, so this is not believed to be load-bearing.
+
+### Promising a length before the download exists {#reserved-lengths}
+
+The remaining mismatch was the size, and it is the one that actually broke virtual files: the
+client sizes its CfAPI placeholder from PROPFIND, and hydration then writes past the end of
+it. Correcting a header cannot reach this - PROPFIND has to have been *right in the first
+place*, about a download that had not happened yet.
+
+Two ways to make the advertised length true were on the table:
+
+- **Materialise the render.** Keep a rendered copy per (file × reader) and report its length.
+  Exact, but the watermark's `{datetime}` has to freeze at render time, because the bytes have
+  to be known before the GET. This is what the abandoned `oc_watermark_rendition` table
+  (`state`, `store_name`, `frozen_at`, `attempts`) was for, and `frozen_at` is where it met
+  that problem.
+- **Reserve a length and pad to it.** Keep rendering live per download; record one measured
+  render's length *plus slack*, advertise that, and pad each later render to hit it exactly.
+
+The second was chosen, because the timestamp had to stay live. Only its digits move between
+renders, which shifts the compressed output by a few bytes, so slack of `max(4096, 2%)`
+absorbs it many times over.
+
+`watermark_rendition` therefore stores a number and no bytes: `file_id`, `uid`, `signature`,
+`reserved_size`, `etag`. {@see DeliveryReservation} decides what it means,
+{@see DeliveryPadder} makes each render fit it, `PropFindPlugin::advertiseReservation`
+publishes it and `DownloadInterceptorPlugin::fitToReservation` honours it.
+
+**Each format is padded through a hole it defines itself**, never by appending wherever it is
+convenient:
+
+| Format | Where the filler goes | Why not simply append |
+| --- | --- | --- |
+| PDF | a `%` comment *before* the final `%%EOF` | readers want `%%EOF` within the last 1024 bytes; filler after it pushes the marker out of that window |
+| PNG | a private ancillary chunk (`wmPd`) before `IEND` | PNG is a chunk stream, and skipping unknown ancillary chunks is a decoder requirement rather than a tolerance |
+| JPEG | after the `FFD9` end marker | the marker already says where the image stops |
+| WebP | after the RIFF payload, **leaving the RIFF length alone** | the length field is what keeps the filler outside the file it describes |
+
+Verified against poppler: a padded PDF rasterises to a byte-identical PNG. `DeliveryPadderTest`
+compares every pixel of each padded image against the original rather than only checking that
+it still decodes.
+
+**The first download of a newly marked file cannot be padded**, because nothing has measured
+it yet. It is served at its own length and the measurement is taken from it, so a sync client
+gets one failed attempt that fixes itself - the next PROPFIND carries both the reserved length
+and a changed etag, the client comes back, and that download fits. A browser never notices.
+Observed against the Docker instance, which is the whole behaviour in three requests:
+
+```text
+cycle 1 (cold)  PROPFIND len=11745  GET len=37315  -> mismatch, measurement taken
+cycle 2         PROPFIND len=41411  GET len=41411  -> match
+cycle 3         PROPFIND len=41411  GET len=41411  -> match, etag unchanged
+```
+
+That third line is the one worth keeping: a reservation whose etag moved on every fetch would
+converge and then re-download forever.
+
+### The reservation nobody re-read {#etag-refresh}
+
+With the lengths agreeing on both sides, a live Windows client still failed to open a
+watermarked file - `The cloud operation is invalid` - and the server log showed why it could
+not be found from here: **every request succeeded**.
+
+```text
+00:47:44  SERVE  Library.jpg  stored=2170375  sent=544607   ← cold, reservation recorded
+00:47:46  SERVE  Library.jpg  stored=2170375  sent=555500   ← padded to the reservation
+00:48:58  SERVE  Library.jpg  stored=2170375  sent=555500   ← and again, and again
+```
+
+Delivery was perfect. What is missing from that excerpt is the point: no `advertising a
+reserved length` line, ever. The client was never re-reading the listing.
+
+**Marking a file writes to this app's tables and nothing else.** Nextcloud's file cache is
+untouched, so the file's etag does not move - and therefore neither does its *folder's*. A
+sync client's discovery is driven entirely by folder etags: it sees an unchanged folder,
+declines to descend, and goes on using the child sizes it cached the first time it looked,
+which are the stored sizes. It then allocates a placeholder at the stored size, the transfer
+does not fill it, and Windows rejects the operation. Every retry re-reads the same cached
+metadata, so it never converges.
+
+Confirmed by changing one file's etag by hand and watching a live client, within seconds,
+re-list the folder, publish both reserved lengths for the first time, fetch once, and stop:
+
+```text
+00:50:33  ADVERTISE  Birdie.jpg   stored=593508   -> 312552
+00:50:34  ADVERTISE  Library.jpg  stored=2170375  -> 555500
+          (no further downloads of either file)
+```
+
+{@see DeliveryReservation::bumpEtag} now does that as part of recording a reservation. **The
+etag moves and the mtime deliberately does not** - propagating with the file's existing
+modification time still gives every ancestor folder a fresh etag, which is all the client
+needs, without dating the file forward. A watermark is not an edit.
+
+The ordering is load-bearing: the bump happens *before* the row is written, and the row is
+written against the etag the bump produced. Recording against the old one would leave every
+download finding its own reservation stale, re-measuring, bumping again, and the file
+re-downloading forever.
+
+### Measuring at mark time, so the first open works {#mark-time-measurement}
+
+Measured lazily - on the first download - a reservation arrives one fetch too late. Discovery
+has already published the *stored* length, the client has already sized its placeholder from
+it, and the first open fails with the same `The cloud operation is invalid` before any
+measurement exists. It self-corrects on the next sync, which is no comfort to the person
+looking at the error dialog.
+
+{@see WatermarkService::measureForDelivery} now renders once when the mark is placed. Marking
+is the right moment because it is the *first* moment: the file is not yet advertised as
+watermarked to anybody, so there is no wrong number in flight to correct. Verified on a file
+whose very first PROPFIND and very first GET were both its first:
+
+```text
+FIRST PROPFIND : len=41411  etag="193968820ab4980f90c84357ec27d562"
+FIRST GET      : len=41411  etag="193968820ab4980f90c84357ec27d562"
+```
+
+**Measured for the owner, and rendered as the owner**, because the reservation is per reader -
+the watermark draws the reader's own name and its length moves the output's size. The owner is
+whose sync client holds the file. A *share recipient* opening it for the first time is still
+measured lazily and still costs one self-correcting failure; closing that too would mean
+dropping the per-reader dimension and reserving enough slack for any name, which inflates
+every download.
+
+It is best-effort in every direction: a failed render logs and returns, and the lazy path it
+pre-empts is untouched and still works. No size guard is needed because there already is one -
+`assertMarkable` enforced the render ceilings a moment earlier, so the cost here is bounded by
+the same policy that allowed the mark. The one real cost is `on_upload`, which marks every
+upload and therefore now renders every upload.
+
+**Deploying this needs PHP's opcache flushed, and that is not a footnote.** The first live test
+against a real Windows client failed with the fix already installed: `occ upgrade` had run and
+`occ app:list` reported the new version, but Apache was still executing cached bytecode for
+`PropFindPlugin`, so PROPFIND went on reporting the stored length while the download was
+already being padded to the reserved one. The two halves of the pair have to be loaded
+together or they contradict each other, and the symptom is exactly the bug the pair fixes.
+`systemctl restart php-fpm` (or the web server) after deploying; the server log shows
+`advertising a reserved length` once the new code is really running.
+
+What that failure looked like from the server, and what it looks like fixed:
+
+```text
+Birdie.jpg   storedSize: 593508   sentSize: 312552   ← re-encoded JPEG, *smaller* than stored
+             8 GETs in 4 minutes, identical every time, no matching "advertising" line
+             ... web server reloaded ...
+             PROPFIND now advertises 312552; the client fetched it once and stopped
+```
+
+Worth keeping because of how it reads: every request succeeded, nothing was logged as an
+error, and the client simply kept asking. A sync client disagreeing with a listing looks like
+silence from here - which is what {@see DownloadInterceptorPlugin::trace} exists to break.
+
+Two things deliberately *do not* get a reservation. The **public-link server** has no reader to
+measure for and no session for `PropFindPlugin` to advertise to, so measuring there would pad
+downloads against a promise nothing published - and virtual files never reach it. And a file
+whose **mark has been removed** is checked for before a reservation is used: the row outlives
+the mark and still matches on file and policy, because neither changed, so `willBeWatermarked`
+is asked and the stored length is reported again.
+
+Staleness otherwise needs no hook. `signature` digests the stored etag and the whole resolved
+config, so editing the file or the policy retires the row on sight; nothing depends on an
+invalidation event having fired. Rows for deleted files are harmless and currently accumulate -
+a prune command in the shape of `PruneLog` is the obvious home for that and is not written.
 
 ### Permissions
 

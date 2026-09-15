@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Db\WatermarkMark;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCA\FilesWatermark\Service\ApplyLimits;
+use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\FileTooLargeException;
 use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
@@ -63,6 +64,7 @@ class WatermarkServiceTest extends TestCase {
 	private ShareAccess&MockObject $shareAccess;
 	private ShareRecipient&MockObject $shareRecipient;
 	private InstanceTimeZone&MockObject $timeZone;
+	private DeliveryReservation&MockObject $reservation;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -97,6 +99,8 @@ class WatermarkServiceTest extends TestCase {
 		$this->timeZone = $this->createMock(InstanceTimeZone::class);
 		$this->timeZone->method('get')->willReturn(new \DateTimeZone('UTC'));
 
+		$this->reservation = $this->createMock(DeliveryReservation::class);
+
 		$this->service = new WatermarkService(
 			$this->configMapper,
 			$this->logMapper,
@@ -114,6 +118,65 @@ class WatermarkServiceTest extends TestCase {
 			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
+			$this->reservation,
+		);
+	}
+
+	/**
+	 * Marking has to leave a promised length behind it, because the *first* fetch is already
+	 * too late: discovery publishes the stored length, a Windows client sizes its
+	 * virtual-file placeholder from it, and the first open fails before any lazy measurement
+	 * can happen.
+	 */
+	public function testMarkingMeasuresTheDeliveryLengthForTheOwner(): void {
+		$owner = $this->createMock(IUser::class);
+		$owner->method('getUID')->willReturn('owner-uid');
+		$file = $this->file('application/pdf', 42, '%PDF-1.4 original', 1024, $owner);
+
+		$this->markMapper->method('mark')->willReturn(true);
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->pdfWatermarker->method('apply')
+			->willReturnCallback(static function (string $src, string $dest): void {
+				file_put_contents($dest, '%PDF-overlaid');
+			});
+
+		// For the owner - whose sync client holds the file - not for whoever clicked Apply.
+		$this->reservation->expects($this->once())
+			->method('record')
+			->with($file, 'owner-uid', $this->anything(), $this->greaterThan(0), 'application/pdf');
+
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	/** A file that was already marked places nothing, so there is nothing new to measure. */
+	public function testReMarkingAnAlreadyMarkedFileMeasuresNothing(): void {
+		$file = $this->file();
+		$this->markMapper->method('mark')->willReturn(false);
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+
+		$this->reservation->expects($this->never())->method('record');
+
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	/**
+	 * The measurement is an optimisation over the lazy path, never a precondition for it.
+	 * A render that throws here must still leave the file marked - the download measures it
+	 * lazily exactly as it did before.
+	 */
+	public function testAFailedMeasurementStillMarksTheFile(): void {
+		$owner = $this->createMock(IUser::class);
+		$owner->method('getUID')->willReturn('owner-uid');
+		$file = $this->file('application/pdf', 42, '%PDF-1.4 original', 1024, $owner);
+
+		$this->markMapper->method('mark')->willReturn(true);
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->pdfWatermarker->method('apply')
+			->willThrowException(new \RuntimeException('renderer exploded'));
+
+		$this->assertTrue(
+			$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND),
+			'a file must end up marked whether or not its length could be measured',
 		);
 	}
 

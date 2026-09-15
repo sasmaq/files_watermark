@@ -8,13 +8,19 @@ use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\Files_Trashbin\Sabre\ITrash;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
+use OCA\FilesWatermark\Db\WatermarkRendition;
+use OCA\FilesWatermark\Service\DeliveryPadder;
+use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
+use OCP\IUser;
+use OCP\IUserSession;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 use Sabre\DAV\Exception\Forbidden;
 use Sabre\DAV\Exception\NotFound;
 use Sabre\DAV\IFile;
@@ -31,6 +37,8 @@ class DownloadInterceptorPluginTest extends TestCase {
 	private WatermarkService&MockObject $watermarkService;
 	private IRootFolder&MockObject $rootFolder;
 	private Tree&MockObject $tree;
+	private DeliveryReservation&MockObject $reservation;
+	private IUserSession&MockObject $userSession;
 	private Server $server;
 
 	/** @var string[] temp files to clean up (the plugin defers its own to shutdown) */
@@ -41,6 +49,15 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->watermarkService = $this->createMock(WatermarkService::class);
 		$this->rootFolder = $this->createMock(IRootFolder::class);
 		$this->tree = $this->createMock(Tree::class);
+		$this->reservation = $this->createMock(DeliveryReservation::class);
+
+		// A signed-in reader by default: the reservation path only runs for one, and the
+		// public-link server (which has none) is its own case below.
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$this->userSession = $this->createMock(IUserSession::class);
+		$this->userSession->method('getUser')->willReturn($user);
+
 		$this->server = new Server();
 		$this->server->tree = $this->tree;
 	}
@@ -56,9 +73,25 @@ class DownloadInterceptorPluginTest extends TestCase {
 	}
 
 	private function plugin(): DownloadInterceptorPlugin {
-		$plugin = new DownloadInterceptorPlugin($this->watermarkService, $this->rootFolder);
+		$plugin = new DownloadInterceptorPlugin(
+			$this->watermarkService,
+			$this->rootFolder,
+			$this->reservation,
+			// The real padder: what it does to a file is the point of these tests, and it
+			// has no collaborators of its own worth standing in for.
+			new DeliveryPadder(new NullLogger()),
+			$this->userSession,
+		);
 		$plugin->initialize($this->server);
 		return $plugin;
+	}
+
+	/** A standing reservation of $size bytes under $etag. */
+	private function reservationOf(int $size, string $etag = 'wm-etag'): WatermarkRendition {
+		$rendition = new WatermarkRendition();
+		$rendition->setReservedSize($size);
+		$rendition->setEtag($etag);
+		return $rendition;
 	}
 
 	/**
@@ -436,6 +469,151 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->server->emit('afterMethod:GET', [$request, $response]);
 
 		$this->assertSame('SHA1:' . sha1('WATERMARKED-BYTES'), $response->getHeader('OC-Checksum'));
+	}
+
+	/** A structurally real PDF standing in for a render, so padding has somewhere to go. */
+	private function renderedPdf(): string {
+		$body = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		$body .= "trailer\n<< /Size 2 >>\nstartxref\n9\n%%EOF\n";
+
+		$dir = sys_get_temp_dir() . '/nc_watermark_test_' . uniqid('', true);
+		mkdir($dir);
+		$path = $dir . '/copy.pdf';
+		file_put_contents($path, $body);
+		$this->tmpFiles[] = $path;
+		return $path;
+	}
+
+	/**
+	 * The case the whole reservation mechanism exists for: a client that was told a length
+	 * by PROPFIND gets a body of exactly that length, whatever this particular render weighed.
+	 */
+	public function testAStandingReservationIsPaddedUpToAndAnnouncedAsThePromisedLength(): void {
+		$davFile = $this->davFile();
+		$tmpPath = $this->renderedPdf();
+		$promised = filesize($tmpPath) + 5000;
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+		$this->watermarkService->method('deliveryMime')->willReturn('application/pdf');
+		$this->reservation->method('current')->willReturn($this->reservationOf($promised));
+		// Nothing is re-measured when the promise still fits.
+		$this->reservation->expects($this->never())->method('record');
+
+		$response = new Response();
+		$this->plugin()->httpGet($this->request(), $response);
+
+		$this->assertSame((string)$promised, $response->getHeader('Content-Length'));
+		$this->assertSame($promised, filesize($tmpPath), 'the body itself must be the promised length');
+	}
+
+	public function testAPaddedDownloadIsLabelledWithTheReservationsEtag(): void {
+		$davFile = $this->davFile(etag: 'stored-etag');
+		$tmpPath = $this->renderedPdf();
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+		$this->watermarkService->method('deliveryMime')->willReturn('application/pdf');
+		$this->reservation->method('current')
+			->willReturn($this->reservationOf(filesize($tmpPath) + 5000, 'reserved-etag'));
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+		$plugin->httpGet($request, $response);
+		$plugin->afterGet($request, $response);
+
+		// The etag PROPFIND advertises for a reserved file is the reservation's, so the
+		// download has to answer under the same one or the client sees a mismatch.
+		$this->assertSame('"reserved-etag"', $response->getHeader('ETag'));
+	}
+
+	/**
+	 * Nothing has measured this file yet, so there is no length to live up to. The body goes
+	 * out as rendered - a browser is perfectly happy - and the measurement is taken so the
+	 * *next* fetch has a promise to keep.
+	 */
+	public function testAColdReservationServesTheRenderAndMeasuresItForNextTime(): void {
+		$davFile = $this->davFile(etag: 'stored-etag');
+		$tmpPath = $this->renderedPdf();
+		$rendered = filesize($tmpPath);
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+		$this->watermarkService->method('deliveryMime')->willReturn('application/pdf');
+		$this->reservation->method('current')->willReturn(null);
+		$this->reservation->expects($this->once())
+			->method('record')
+			->with($davFile->getNode(), 'alice', $this->anything(), $rendered, 'application/pdf')
+			->willReturn($rendered + 4096);
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+		$plugin->httpGet($request, $response);
+		$plugin->afterGet($request, $response);
+
+		$this->assertSame((string)$rendered, $response->getHeader('Content-Length'));
+		$this->assertSame($rendered, filesize($tmpPath), 'a cold download must not be padded');
+		// And crucially *not* the etag just reserved: this body is not the reserved length,
+		// so labelling it with that etag would tell the client a lie it would act on.
+		$this->assertSame('"stored-etag"', $response->getHeader('ETag'));
+	}
+
+	/**
+	 * A render can outgrow the promise made from an earlier one. Serving it padded is
+	 * impossible and serving it as though it fit would be a lie, so the promise is revised.
+	 */
+	public function testARenderOverItsReservationIsRemeasuredRatherThanForced(): void {
+		$davFile = $this->davFile(etag: 'stored-etag');
+		$tmpPath = $this->renderedPdf();
+		$rendered = filesize($tmpPath);
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+		$this->watermarkService->method('deliveryMime')->willReturn('application/pdf');
+		// A promise from back when this file rendered smaller.
+		$this->reservation->method('current')->willReturn($this->reservationOf($rendered - 20));
+		$this->reservation->expects($this->once())
+			->method('record')
+			->willReturn($rendered + 4096);
+
+		$response = new Response();
+		$this->plugin()->httpGet($this->request(), $response);
+
+		$this->assertSame((string)$rendered, $response->getHeader('Content-Length'));
+		$this->assertSame($rendered, filesize($tmpPath), 'the file must be left as rendered');
+	}
+
+	/**
+	 * The public-link server has no reader to measure for, and virtual files never reach it.
+	 * Asking the reservation table anything there would be a query with nothing to do.
+	 */
+	public function testAPublicDownloadWithNoReaderSkipsReservationsEntirely(): void {
+		$davFile = $this->davFile(etag: 'stored-etag');
+		$tmpPath = $this->renderedPdf();
+
+		$userSession = $this->createMock(IUserSession::class);
+		$userSession->method('getUser')->willReturn(null);
+
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($tmpPath);
+		$this->reservation->expects($this->never())->method('current');
+		$this->reservation->expects($this->never())->method('record');
+
+		$plugin = new DownloadInterceptorPlugin(
+			$this->watermarkService,
+			$this->rootFolder,
+			$this->reservation,
+			new DeliveryPadder(new NullLogger()),
+			$userSession,
+		);
+		$plugin->initialize($this->server);
+
+		$response = new Response();
+		$plugin->httpGet($this->request(), $response);
+
+		$this->assertSame((string)filesize($tmpPath), $response->getHeader('Content-Length'));
 	}
 
 	public function testRegistersOnMethodGetAheadOfCorePlugin(): void {
