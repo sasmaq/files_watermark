@@ -2,7 +2,7 @@
 
 This folder is for developers adding the watermark feature to the Nextcloud clients: the
 Windows desktop client, the Android app and the iOS app. It describes what the
-`files_watermark` server app (2.0.x, Nextcloud 32) exposes to a client, what a client has to
+`files_watermark` server app (1.8.x, Nextcloud 31) exposes to a client, what a client has to
 do with it, and what a client must not do.
 
 | File | Covers |
@@ -415,14 +415,14 @@ That would put Apply and Remove into stock clients, with limits:
 - Entries are filtered by MIME type only, so both actions appear on every supported file, and
   the server's answer ("already watermarked", "only the owner…") does the gating.
 - It draws no badge.
-- This app is pinned to Nextcloud 32 (`max-version="32"`), and the API is documented from 33.
+- This app is pinned to Nextcloud 31 (`max-version="31"`), and the API is documented from 33.
 
 It's worth adding when the app moves to Nextcloud 33. It doesn't replace the client work in
 this folder.
 
 ## 7. Test setup and shared checks
 
-`docker compose up` in this repository starts Nextcloud 32 with the app enabled at
+`docker compose up` in this repository starts Nextcloud 31 with the app enabled at
 `http://localhost:8080` (user `admin`, password `admin`). Point a debug build of the client at
 it. Emulators and devices need the host's LAN address, which has to be a trusted domain:
 
