@@ -39,6 +39,27 @@ jobs:
       - name: Lint
         run: composer lint
 
+  audit:
+    runs-on: ubuntu-latest
+
+    # `--locked` audits composer.lock directly, so like the syntax job this needs no
+    # composer install. Dev dependencies are included: they never ship, but they do
+    # run in CI and on developer machines.
+    name: Composer audit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Audit dependencies
+        run: composer audit --locked --no-interaction
+
   coding-standard:
     runs-on: ubuntu-latest
 

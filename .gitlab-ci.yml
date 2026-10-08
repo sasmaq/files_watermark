@@ -99,6 +99,16 @@ php:lint:
   script:
     - composer lint
 
+# `--locked` audits composer.lock directly, so like the syntax job this needs no
+# composer install and no extensions. Dev dependencies are included: they never ship,
+# but they do run in CI and on developer machines.
+php:audit:
+  extends: .php
+  variables:
+    PHP_EXTENSIONS: "@composer"
+  script:
+    - composer audit --locked --no-interaction
+
 # The Nextcloud coding standard is version-independent, so one PHP version is enough -
 # unlike the syntax job, which is what catches version-specific parse errors. Pinned to
 # the lowest supported version to share the composer cache with the 8.2 PHPUnit job.

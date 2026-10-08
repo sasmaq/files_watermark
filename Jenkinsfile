@@ -63,6 +63,23 @@ pipeline {
 					}
 				}
 
+				stage('Composer audit') {
+					// `--locked` audits composer.lock directly, so like the syntax stages
+					// this needs no composer install. Dev dependencies are included: they
+					// never ship, but they do run in CI and on developer machines.
+					agent {
+						dockerfile {
+							dir 'ci'
+							filename 'php.Dockerfile'
+							additionalBuildArgs '--build-arg PHP_VERSION=8.2'
+							label 'docker'
+						}
+					}
+					steps {
+						sh 'composer audit --locked --no-interaction'
+					}
+				}
+
 				stage('Coding standard') {
 					// The Nextcloud coding standard is version-independent, so one PHP
 					// version is enough - unlike the syntax stages, which are what catch
