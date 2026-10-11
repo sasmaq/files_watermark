@@ -62,6 +62,33 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	private ?array $served = null;
 
 	/**
+	 * Whether this GET is for a file this app can watermark - set by {@see httpGet} whether or
+	 * not the file is marked, and consumed by {@see afterGet}.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * AN UNMARKED FILE IS A FILE THAT MAY BE MARKED LATER.
+	 *
+	 * Core answers a clean download with `Last-Modified` and an `ETag` but no `Cache-Control`,
+	 * and a browser given that is free to guess a lifetime for it - a tenth of the file's age -
+	 * and reuse it without asking. A PDF last edited a month ago is reused for three days. The
+	 * Viewer's PDF handler loads the bare DAV URL, which has no version in it to change, so
+	 * marking such a file did nothing anybody could see: the Viewer went on showing the clean
+	 * copy it already held, while every request that did reach the server was watermarked.
+	 *
+	 * Marking already moves the file's etag ({@see DeliveryReservation::record}), so all that
+	 * is missing is the question. `no-cache` lets the browser keep its copy but makes it
+	 * revalidate on every use: an unchanged file costs a 304, a newly marked one fails the
+	 * `If-None-Match` and the render goes out. Previews never needed this - the Viewer and the
+	 * file list put the etag in the preview URL, so a moved etag is already a new address.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The watermarked copy gets the same header. It carries no `Last-Modified` and so is
+	 * revalidated already, but saying so outright costs nothing, and `private` keeps a copy that
+	 * names its reader out of any shared cache.
+	 */
+	private bool $revalidate = false;
+
+	/**
 	 * The last three are absent on the public-link server, which builds this by hand.
 	 *
 	 * A reservation is a promise made to *a reader* about a file in their own listing, and a
@@ -119,6 +146,8 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		if ($file === null) {
 			return true;
 		}
+
+		$this->revalidate = $this->watermarkService->isSupported($file->getMimeType());
 
 		try {
 			$tmpPath = $this->watermarkService->watermarkForDownload($file);
@@ -221,6 +250,12 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	 * a materialised per-reader copy - and is a larger change than this one.
 	 */
 	public function afterGet(RequestInterface $request, ResponseInterface $response): void {
+		if ($this->revalidate) {
+			// Consumed like `served` below, and for the same reason. See `$revalidate`.
+			$this->revalidate = false;
+			$response->setHeader('Cache-Control', 'private, no-cache');
+		}
+
 		if ($this->served === null) {
 			return;
 		}

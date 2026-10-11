@@ -14,6 +14,7 @@ use OCP\AppFramework\Http\Response;
 use OCP\Files\File;
 use OCP\Files\SimpleFS\ISimpleFile;
 use OCP\IPreview;
+use OCP\IRequest;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -36,6 +37,9 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 	private IPreview&MockObject $preview;
 	private WatermarkPreviewMiddleware $middleware;
 
+	/** @var array<string, string> the preview request's query string */
+	private array $params = [];
+
 	protected function setUp(): void {
 		parent::setUp();
 
@@ -44,12 +48,17 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 		$this->context = new PreviewRequestContext();
 		$this->watermarkService = $this->createMock(WatermarkService::class);
 		$this->preview = $this->createMock(IPreview::class);
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParam')->willReturnCallback(
+			fn (string $key, mixed $default = null): mixed => $this->params[$key] ?? $default,
+		);
 
 		$this->middleware = new WatermarkPreviewMiddleware(
 			$this->context,
 			$this->watermarkService,
 			$this->preview,
 			$this->createMock(LoggerInterface::class),
+			$request,
 		);
 	}
 
@@ -169,6 +178,68 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 		$original = new Response(Http::STATUS_NOT_MODIFIED);
 
 		$this->assertSame($original, $this->afterController($original));
+	}
+
+	/** What core and Photos send with a clean preview: keep it a day, never ask again. */
+	private function coresCleanResponse(int $status = Http::STATUS_OK): Response {
+		$response = new Response($status);
+		$response->addHeader('Cache-Control', 'private, max-age=86400, immutable');
+		$response->addHeader('Expires', 'Tue, 13 Oct 2026 21:00:00 GMT');
+		return $response;
+	}
+
+	/**
+	 * Photos opens the Viewer on `/apps/photos/api/v1/preview/{id}?x=2048&y=2048`. Nothing in
+	 * that address changes when the file is marked, so an `immutable` clean preview from
+	 * before the mark was shown for a day after it.
+	 */
+	public function testAnUnversionedCleanPreviewOfAWatermarkableFileMustBeRevalidated(): void {
+		$this->context->record($this->createMock(File::class), 2048, 2048, false);
+		$this->preview->expects($this->never())->method('getPreview');
+		$this->params = ['x' => '2048', 'y' => '2048'];
+
+		$original = $this->coresCleanResponse();
+		$response = $this->afterController($original);
+
+		// Core's response, body and all - only how long it may be kept has changed.
+		$this->assertSame($original, $response);
+		$headers = $response->getHeaders();
+		$this->assertSame('private, no-cache', $headers['Cache-Control']);
+		$this->assertArrayNotHasKey('Expires', $headers);
+	}
+
+	/** @return array<string, array{string}> */
+	public static function versionParamProvider(): array {
+		return [
+			'the Viewer and the Photos grid' => ['etag'],
+			'core and the older Photos views' => ['c'],
+			'the Files list' => ['v'],
+		];
+	}
+
+	/**
+	 * A URL carrying the etag changes when the file is marked, so `immutable` is honest there
+	 * and is kept - otherwise every thumbnail of a Photos timeline revalidates on every visit.
+	 *
+	 * @dataProvider versionParamProvider
+	 */
+	public function testAVersionedCleanPreviewKeepsCoresCaching(string $param): void {
+		$this->context->record($this->createMock(File::class), 256, 256, false);
+		$this->params = ['x' => '256', $param => '65f4e7'];
+
+		$headers = $this->afterController($this->coresCleanResponse())->getHeaders();
+
+		$this->assertSame('private, max-age=86400, immutable', $headers['Cache-Control']);
+	}
+
+	/** A 304 has no lifetime of its own to correct; the stored response keeps the one it was given here. */
+	public function testANotModifiedCleanPreviewIsLeftAlone(): void {
+		$this->context->record($this->createMock(File::class), 2048, 2048, false);
+
+		$original = $this->coresCleanResponse(Http::STATUS_NOT_MODIFIED);
+		$headers = $this->afterController($original)->getHeaders();
+
+		$this->assertSame('private, max-age=86400, immutable', $headers['Cache-Control']);
 	}
 
 	public function testANonOkResponseIsLeftAlone(): void {

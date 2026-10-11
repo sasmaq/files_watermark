@@ -1435,11 +1435,67 @@ design, because neither is a preview that escaped it:
   file's id - so no revision of a marked file is marked. It is not a preview problem: a
   version *download* resolves to the same node and is clean for the same reason. Trashbin is
   fine, because a move preserves the file id.
-- **The browser's own cache outlives the mark.** Core serves the clean preview with
-  `max-age=86400, immutable`, so a thumbnail fetched before a file was marked is reused for
-  a day without revalidating - and marking looks like it did nothing. Ours are `no-store`,
-  so the window is only ever "before the mark", and a hard refresh ends it. It leaks nothing
-  that was not already served to that browser, which is why it is a note rather than a fix.
+- **The browser's own cache outlives the mark** - now only in the Files list. Core serves
+  the clean preview with `max-age=86400, immutable`, so a preview whose URL does not change
+  is reused for a day without revalidating. The URL carries the file's etag, and marking
+  moves the etag ([below](#browser-cache-after-marking)), so the Viewer - which re-reads the
+  file before opening it - gets a new address and a stamped preview. The Files list does not
+  re-read: its node keeps the etag it was listed with, so its thumbnail stays clean until the
+  folder reloads. It leaks nothing that was not already served to that browser.
+
+### The Viewer showed the clean copy after marking {#browser-cache-after-marking}
+
+Reported as "I applied the watermark and the Viewer still shows the original", while every
+request that reached the server was watermarked. The request never reached it.
+
+**The Viewer's PDF handler loads the bare DAV URL** (`files_pdfviewer` passes
+`this.source ?? this.davPath` to pdf.js), with no version in it. Core answers a clean DAV GET
+with `Last-Modified` and an `ETag` and **no `Cache-Control`**, which lets a browser pick its
+own lifetime - a tenth of the file's age - and reuse the response without asking. A file last
+edited a month ago is reused for three days. Images escape this only because the Viewer shows
+them as a preview whose URL carries the etag; when that preview fails it falls back to the
+same bare DAV URL.
+
+The etag half was already in place: recording the mark-time reservation bumps the stored
+etag ({@see DeliveryReservation::record}). Only the question was missing, so
+`DownloadInterceptorPlugin::afterGet` now sends `Cache-Control: private, no-cache` on every
+GET of a file this app can watermark, clean or not. The browser keeps its copy and
+revalidates it on each use:
+
+```text
+clean GET, file a month old   200  Last-Modified: 11 Sep  Cache-Control: private, no-cache
+If-None-Match, unchanged      304
+POST /api/v1/apply
+If-None-Match, same etag      200  watermarked bytes, new ETag
+text/plain GET                200  no Cache-Control (core's, untouched)
+```
+
+The cost is one conditional request per open, answered by Sabre's precondition check before
+any of this app's code runs. Copies already cached before this shipped keep their guessed
+lifetime until it runs out or the browser is hard-refreshed.
+
+**Photos had the same problem on the preview path.** Core and Photos serve previews
+`private, max-age=86400, immutable`, which is only honest when the URL changes with the file.
+Most callers put the etag in it (`etag=`, `c=`, `v=`), but Photos opens the Viewer on
+`/apps/photos/api/v1/preview/{id}?x=2048&y=2048` and its album, face and place covers carry no
+version either - so a clean preview fetched there before the mark was shown for a day after.
+
+`BeforePreviewFetchedListener` now records an *unmarked* file of a supported type as well,
+unstamped, and `WatermarkPreviewMiddleware::revalidating` rewrites core's header to
+`private, no-cache` when the URL carries none of those three parameters. Versioned URLs keep
+`immutable`; a Photos timeline revalidating every thumbnail on every visit is the cost that
+avoids. The 304 is core's `NotModifiedMiddleware`, and the order is what makes this safe:
+global app middleware is registered after core's and `afterController` runs in reverse, so on
+a marked file the stamped response has replaced core's before a 304 can be decided.
+
+```text
+Photos Viewer URL, clean      200  Cache-Control: private, no-cache
+If-None-Match, unchanged      304
+Photos grid  ?etag=           200  private, max-age=86400, immutable (core's, untouched)
+core preview ?c=              200  private, max-age=86400, immutable (core's, untouched)
+POST /api/v1/apply
+If-None-Match, clean etag     200  stamped, no-store
+```
 
 ### The audit trail, and why its default flipped {#log-delivery-default}
 

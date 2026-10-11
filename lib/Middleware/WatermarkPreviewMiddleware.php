@@ -13,6 +13,7 @@ use OCP\AppFramework\Http\Response;
 use OCP\AppFramework\Middleware;
 use OCP\Files\File;
 use OCP\IPreview;
+use OCP\IRequest;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -55,15 +56,27 @@ use Psr\Log\LoggerInterface;
  */
 class WatermarkPreviewMiddleware extends Middleware {
 
+	/**
+	 * The query parameters clients put a file's etag in to make a preview URL change with the
+	 * file: `etag` (the Viewer, the Photos grid), `c` (core's own and Photos' older views) and
+	 * `v` (the Files list). Their values are never read - only whether one is there.
+	 */
+	private const VERSION_PARAMS = ['etag', 'c', 'v'];
+
 	public function __construct(
 		private PreviewRequestContext $context,
 		private WatermarkService $watermarkService,
 		private IPreview $preview,
 		private LoggerInterface $logger,
+		private IRequest $request,
 	) {
 	}
 
 	public function afterController(Controller $controller, string $methodName, Response $response): Response {
+		if ($this->context->previewsCleanCopy()) {
+			return $this->revalidating($response);
+		}
+
 		$file = $this->context->file();
 		if ($file === null) {
 			// Not a preview request, or a preview of a file that carries no mark. By far the
@@ -141,6 +154,53 @@ class WatermarkPreviewMiddleware extends Middleware {
 		$response->addHeader('Pragma', 'no-cache');
 
 		return $response;
+	}
+
+	/**
+	 * Core's clean preview of a file that is not marked *yet*, made unable to outlive a mark.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * `immutable` IS ONLY TRUE WHEN THE ADDRESS CHANGES WITH THE FILE.
+	 *
+	 * Core and Photos both serve previews with `private, max-age=86400, immutable`: keep it a
+	 * day and never ask again. Most callers make that safe by putting the file's etag in the
+	 * URL, and marking moves the etag, so a marked file is previewed at a new address that no
+	 * browser has cached. **Some callers put no version in at all.** Photos opens the Viewer
+	 * on `/apps/photos/api/v1/preview/{id}?x=2048&y=2048`, and its album, face and place
+	 * covers are the same. A clean preview fetched there before the file was marked was
+	 * reused for a day afterwards, and the photo looked as if marking had done nothing.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * So an unversioned one goes out `private, no-cache` instead: the browser keeps it but
+	 * asks every time. Asking is cheap - core's `NotModifiedMiddleware` turns a matching
+	 * `If-None-Match` into a 304, and it runs *after* this one (global app middleware is
+	 * registered last and `afterController` runs in reverse), so on a marked file the stamped
+	 * response has already replaced core's before any 304 could be decided.
+	 *
+	 * Versioned URLs keep core's header. A whole Photos timeline revalidating on every visit
+	 * is the cost this avoids, and their etag already does the job.
+	 */
+	private function revalidating(Response $response): Response {
+		if ($response->getStatus() !== Http::STATUS_OK || $this->carriesVersion()) {
+			return $response;
+		}
+
+		$response->addHeader('Cache-Control', 'private, no-cache');
+		// Core's `Expires` is a day out; `Cache-Control` already outranks it, and leaving it
+		// would only describe a lifetime the response no longer has.
+		$response->addHeader('Expires', null);
+
+		return $response;
+	}
+
+	private function carriesVersion(): bool {
+		foreach (self::VERSION_PARAMS as $param) {
+			if ((string)$this->request->getParam($param, '') !== '') {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

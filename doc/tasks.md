@@ -113,21 +113,14 @@ them.
   nothing, but two things were reasoned about rather than observed on NC 32: that
   `files_sharing` fires `BeforeTemplateRenderedEvent` for that page, and that its file list
   renders the same `[data-cy-files-list-row-fileid]` rows the badge looks for.
-- [ ] **Marking does not reach previews already in a browser's cache.** Confirmed on the
-  instance, and it is the first thing an admin reports - "I marked it and the preview has
-  no watermark", while every server route serves a watermarked one. Two facts meet:
-  core serves the clean preview with `Cache-Control: private, max-age=86400, immutable`,
-  and the cache-busting parameter the Viewer and the Files list put in the URL is the
-  **file's ETag** (`&etag=`, `&c=`). Marking writes one row in `oc_watermark_mark` and
-  deliberately touches nothing about the file, so the ETag does not move, the URL does not
-  change, and an `immutable` entry is never revalidated. A hard refresh ends it; so does
-  waiting a day.
-  - **a server-side preview-cache bust does not fix this** - the browser never asks. The
-    real options are bumping the file's ETag when it is marked (which is a filecache
-    write, not a content write, but makes every sync client re-fetch the file - arguably
-    right, since what they would re-fetch is the watermarked copy), or having the global
-    middleware downgrade `immutable` on *clean* previews of watermarkable types so marking
-    takes effect within minutes, at the cost of revalidation traffic on every thumbnail
+- [ ] **The Files list thumbnail stays clean until the folder reloads.** Marking moves the
+  file's etag and the Viewer picks that up
+  ([record](development.md#browser-cache-after-marking)), but the list builds its preview
+  URL from the etag on the node it already holds (`&v=`), and Apply/Remove emit
+  `files:node:updated` with that same stale etag. Re-reading the node after the action (one
+  PROPFIND for `getetag`) and emitting the fresh one would close it. A Photos timeline that
+  was already open when the file was marked has the same staleness, and nothing this app
+  ships runs inside Photos to fix it; reloading Photos does.
 - [ ] ~~**Hide the preserved-originals folder from search and the activity feed.**~~ Dropped
   with `OriginalStore`: the rework never writes a preserved original, so no folder appears
   to be hidden. The two core patches in [patch.md](patch.md) stay written down - they were
