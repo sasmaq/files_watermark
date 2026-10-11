@@ -337,7 +337,7 @@ class ApiController extends Controller {
 	 * not because this request would struggle.
 	 *
 	 * The rate limit is sized for what is left. 120 a minute is well above what the file
-	 * action can produce by hand - each mark needs its own modal confirmation - and still
+	 * action can produce by hand - each mark is its own click in the row menu - and still
 	 * bounds a script, which matters because this is the only route to marking from the UI.
 	 * Core's rate-limiting middleware enforces it and answers 429 before anything here runs.
 	 */

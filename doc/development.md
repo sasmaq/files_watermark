@@ -35,7 +35,7 @@ files_watermark/
 │   └── fonts/        # The bundled watermark font (see the README there)
 ├── migration/        # Database schema migration
 ├── src/              # Vue 3 frontend source
-│   ├── components/   # AdminSettings.vue, WatermarkModal.vue
+│   ├── components/   # AdminSettings.vue, WatermarkForm.vue, AuditLog.vue
 │   ├── adminSettings.js
 │   └── fileAction.js
 ├── js/               # Compiled frontend assets (generated, and committed)
@@ -1777,14 +1777,14 @@ admin, in force server-wide. Nothing here is stored without being honoured.
     app's ordinary skip path instead of a 500
 - `AuditLog.vue` - paginated table (page-size selector, prev/next) wired to
   `GET /api/v1/log`
-- `WatermarkModal.vue` - file name and estimated processing time before an on-demand apply
 - `main-admin.js` mounts the Vue 3 app in the admin content area
 
 ### File actions (`main-files.js`)
 
 - "Apply Watermark" `FileAction` in the file and context menus
   - shown for supported MIME types only, hidden for unsupported types and multi-select
-  - `exec` opens `WatermarkModal` and awaits the result; spinner on the row; list refreshed
+  - `exec` calls the apply API straight away, with no confirmation dialog; spinner on the
+    row while it runs, the outcome in a toast
   - app SVG icon plus a localized display name
   - Shown **only when the effective trigger is `on_demand`**.
     `LoadAdditionalScriptsListener` resolves the effective trigger (global → default)
@@ -1793,7 +1793,8 @@ admin, in force server-wide. Nothing here is stored without being honoured.
     same rule
 - "Remove watermark" `FileAction`, gated by the exact mirror of the Apply rule, so a row
   never offers both
-  - confirmation dialog warning that the watermarked version is discarded, destructive-styled
+  - no confirmation dialog either: the file is untouched and Apply puts the mark back, so the
+    click is the request and the outcome arrives as a toast
   - spinner while restoring; badge cleared and both actions re-evaluated via a
     `files:node:updated` emit, without a folder reload
   - a distinct restore icon, deliberately not the Apply icon
@@ -1930,7 +1931,7 @@ were missing and none of them was the badge itself:
   switch. Both directions are pinned in `PropFindPluginTest`
 
 **A separate bundle, `main-public.js`.** Everything a visitor can do there needs no account,
-so handing them `files.js` would ship two Vue modals and two file actions gated on a session
+so handing them `files.js` would ship two file actions gated on a session
 they do not have, to every visitor of every public link. The badge moved into
 `src/indicator.js`, which both entries import; `main-files.js` re-exports it so the
 authenticated side and its tests saw no change. 231 KB against 502 KB, and the public bundle
@@ -3414,7 +3415,7 @@ still missing.
   - **frequency** - `#[UserRateLimit(limit: 20, period: 60)]` on `applyWatermark()` and
     `removeWatermark()`. Core's middleware enforces it and answers 429 before the
     controller runs, so there is no code of ours on that path. 20/minute is far above what
-    the file action can produce by hand (each apply needs its own modal confirmation) and
+    the file action can produce by hand (each apply is its own click in the row menu) and
     far below what a script can
   - **magnitude** - `apply_max_bytes`, default **64 MiB**, refused with a 413 that names
     both the file's size and the ceiling so an admin knows what to set. Frequency alone
@@ -3437,8 +3438,8 @@ still missing.
     identically without them. The numbers are asserted too, not merely the attribute's
     presence: an edit to `limit: 2000` removes the bound while leaving something that reads
     like a throttle
-  - the 429 is the one failure the dialog had to learn about. It comes from core, so it
-    carries no `error` field, and the modal fell back to axios' English "Request failed
+  - the 429 is the one failure the client had to learn about. It comes from core, so it
+    carries no `error` field, and the message fell back to axios' English "Request failed
     with status code 429" on an otherwise translated page
 - **The pixel ceiling - what the byte cap could not see.** `apply_max_bytes` says almost
   nothing about an image: both engines work on an uncompressed bitmap at ~4 bytes per
@@ -4111,7 +4112,7 @@ Delivered:
   server-rendered section, a saved policy survives a reload, the preview renders the template
   rather than the raw token, and **what the form displays is what the API stored** - the one
   failure neither side can see alone
-- **File actions** (`10-files-app.cy.js`) - Apply from the row menu through the modal, the
+- **File actions** (`10-files-app.cy.js`) - Apply straight from the row menu with no dialog, the
   badge appearing without a folder reload, the two actions mirroring so a row never offers
   both, Remove restoring the original, and both actions disappearing when the effective trigger
   is not `on_demand`

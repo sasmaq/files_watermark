@@ -260,22 +260,22 @@ Compare the owner against the user id in the account's DAV URL
 The web client offers both actions for one file at a time. If you add a bulk action, send the
 calls one after another and stop at the first `429`.
 
-### Confirmation and wording
+### No confirmation, and wording
 
-The web client asks for confirmation before both actions. Reuse its strings so the feature
-reads the same on every platform. `l10n/ar.json` in this repository has the Arabic
-translations, keyed by the English text.
+The web client runs both actions as soon as they are picked, with no confirmation. Neither
+one changes the file, and each undoes the other, so there is nothing to protect against. It
+reports the outcome in a toast. Do the same, and reuse its strings so the feature reads the
+same on every platform. `l10n/ar.json` in this repository has the Arabic translations, keyed
+by the English text.
 
 | Where | String |
 | --- | --- |
 | Menu entries | `Apply watermark`, `Remove watermark` |
-| Apply dialog | Title `Apply Watermark`; `Apply watermark to: {file}`; `The file itself is not changed. From now on, every download and every preview of it carries a watermark naming whoever fetched it.` |
 | Apply result | `Watermark applied successfully.` or `This file is already watermarked.` |
-| Remove dialog | Title `Remove Watermark`; `Remove the watermark from: {file}`; `The file itself does not change. Downloads and previews of it simply stop being watermarked, and you can apply the watermark again at any time.` |
 | Remove result | `Watermark removed.` |
 | On `429` | `Too many watermark requests at once. Wait a moment and try again.` |
+| Any other error | The `error` field of the response |
 | Badge tooltip and accessibility label | `Downloads and previews of this file are watermarked` |
-| Buttons | `Apply`, `Cancel`, `Close` |
 
 The badge icon is the app's mark, `img/app.svg` (a 24×24 viewBox, single colour), with
 `img/app-dark.svg` for dark backgrounds. Convert it to each platform's vector format.

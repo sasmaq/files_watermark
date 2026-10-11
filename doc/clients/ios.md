@@ -71,7 +71,8 @@ iOS-specific inputs:
 | Status | The two new `tableMetadata` fields |
 | Not the trash, not a version, not a public link | Which screen the menu is built for |
 
-Confirm with a `UIAlertController`, using the dialog text in README section 2. Add the strings
+Call the API as soon as the action is picked, with no confirmation alert, and report the
+outcome the way the app's other file actions do, using the strings in README section 2. Add the strings
 to the app's `Localizable.strings`; the Arabic translations can be copied from `l10n/ar.json` in
 this repository.
 

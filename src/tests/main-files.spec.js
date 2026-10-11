@@ -18,9 +18,11 @@ import {
 } from '../main-files.js'
 import { __setState, __resetState } from '@nextcloud/initial-state'
 import { emit, subscribe } from '@nextcloud/event-bus'
+import { registerFileAction } from '@nextcloud/files'
+import { showError, showInfo, showSuccess } from '@nextcloud/dialogs'
 import axios from '@nextcloud/axios'
 
-// @nextcloud/files, event-bus, router, l10n and initial-state are stubbed via
+// @nextcloud/files, dialogs, event-bus, router, l10n and initial-state are stubbed via
 // jest.config moduleNameMapper.
 
 const INDICATOR_SELECTOR = '.files-watermark-indicator'
@@ -596,6 +598,129 @@ describe('main-files', () => {
 					attributeFilter: ['data-cy-files-list-row-fileid'],
 				}),
 			)
+		})
+	})
+
+	describe('the Apply and Remove actions', () => {
+		/**
+		 * The `exec` the Files app calls when the action is clicked.
+		 * @param {string} id - the registered FileAction's id
+		 * @return {Function} its exec
+		 */
+		function execOf(id) {
+			return registerFileAction.mock.calls
+				.map(([action]) => action)
+				.find((action) => action.id === id)
+				.exec
+		}
+
+		/**
+		 * A clicked file, in the shape the Files app hands to `exec`.
+		 * @param {number} watermarked - the `is-watermarked` value it was listed with
+		 * @return {object} a node-like object
+		 */
+		function clicked(watermarked) {
+			return { path: '/report.pdf', basename: 'report.pdf', fileid: 7, attributes: { 'is-watermarked': watermarked } }
+		}
+
+		/**
+		 * An axios-shaped rejection.
+		 * @param {object} response - the `error.response` the request rejects with
+		 * @return {object} the error
+		 */
+		function failure(response) {
+			return { response, message: 'Request failed with status code ' + response.status }
+		}
+
+		beforeEach(() => {
+			axios.post.mockReset()
+			showError.mockClear()
+			showInfo.mockClear()
+			showSuccess.mockClear()
+		})
+
+		// There is no confirmation in front of either action: the file itself never
+		// changes and each action is undone by the other, so the click is the request.
+		it('applies on click and badges the row', async () => {
+			axios.post.mockResolvedValueOnce({ data: { status: 'watermarked' } })
+			const file = clicked(0)
+
+			// Null, so the Files app adds no generic "done" toast of its own on top.
+			await expect(execOf('files_watermark_apply')(file)).resolves.toBeNull()
+
+			expect(axios.post).toHaveBeenCalledWith('/nc/apps/files_watermark/api/v1/apply', { path: '/report.pdf' })
+			expect(showSuccess).toHaveBeenCalledWith('Watermark applied successfully.')
+			expect(file.attributes['is-watermarked']).toBe(1)
+			expect(emit).toHaveBeenCalledWith('files:node:updated', file)
+			expect(isApplyActionEnabled([node({ fileid: 7 })])).toBe(false)
+		})
+
+		it('treats an already-watermarked file as marked, and says so', async () => {
+			axios.post.mockResolvedValueOnce({ data: { status: 'already_watermarked' } })
+			const file = clicked(0)
+
+			await execOf('files_watermark_apply')(file)
+
+			expect(showInfo).toHaveBeenCalledWith('This file is already watermarked.')
+			expect(file.attributes['is-watermarked']).toBe(1)
+		})
+
+		// The 413 is raised by this app and names both the file's size and the ceiling,
+		// so the admin reading it over the user's shoulder knows what to set.
+		it('shows the message the server sent when a file is over the size cap', async () => {
+			axios.post.mockRejectedValueOnce(failure({
+				status: 413,
+				data: { error: 'This file is too large to watermark on demand (210.4 MB; the limit is 67.1 MB).' },
+			}))
+			const file = clicked(0)
+
+			await expect(execOf('files_watermark_apply')(file)).resolves.toBeNull()
+
+			expect(showError).toHaveBeenCalledWith(expect.stringContaining('the limit is 67.1 MB'))
+			expect(file.attributes['is-watermarked']).toBe(0)
+			expect(emit).not.toHaveBeenCalledWith('files:node:updated', file)
+		})
+
+		// The 429 is raised by core's rate-limiting middleware *before* this app runs, so
+		// it carries no `error` field. Without an explicit branch the toast falls back to
+		// axios' own English "Request failed with status code 429".
+		it('explains a throttled request rather than showing the raw axios message', async () => {
+			axios.post.mockRejectedValueOnce(failure({ status: 429, data: '' }))
+
+			await execOf('files_watermark_apply')(clicked(0))
+
+			expect(showError).toHaveBeenCalledWith('Too many watermark requests at once. Wait a moment and try again.')
+		})
+
+		it('removes on click and unbadges the row', async () => {
+			axios.post.mockResolvedValueOnce({ data: { status: 'removed' } })
+			markWatermarked(7)
+			const file = clicked(1)
+
+			await expect(execOf('files_watermark_remove')(file)).resolves.toBeNull()
+
+			expect(axios.post).toHaveBeenCalledWith('/nc/apps/files_watermark/api/v1/remove', { path: '/report.pdf' })
+			expect(showSuccess).toHaveBeenCalledWith('Watermark removed.')
+			expect(file.attributes['is-watermarked']).toBe(0)
+			expect(emit).toHaveBeenCalledWith('files:node:updated', file)
+			expect(isApplyActionEnabled([node({ fileid: 7 })])).toBe(true)
+		})
+
+		// A share recipient is refused by the server, and its message is the only thing
+		// that explains a refusal on a file they can otherwise edit.
+		it('shows the server\'s refusal and keeps the badge when Remove is refused', async () => {
+			axios.post.mockRejectedValueOnce(failure({
+				status: 403,
+				data: { error: 'Only the owner of this file can remove its watermark.' },
+			}))
+			markWatermarked(7)
+			const file = clicked(1)
+
+			await execOf('files_watermark_remove')(file)
+
+			expect(showError).toHaveBeenCalledWith('Only the owner of this file can remove its watermark.')
+			expect(file.attributes['is-watermarked']).toBe(1)
+			expect(isApplyActionEnabled([node({ fileid: 7 })])).toBe(false)
 		})
 	})
 })

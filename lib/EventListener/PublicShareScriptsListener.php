@@ -30,8 +30,8 @@ use Psr\Log\LoggerInterface;
  *
  * The script it asks for is `public`, not `files`: a visitor can read the list and
  * download, and nothing else. Shipping them the Files bundle would hand every visitor of
- * every public link two Vue modals and a pair of file actions that need a session they do
- * not have. See `src/main-public.js`.
+ * every public link a pair of file actions, and the toast library behind them, that need a
+ * session they do not have. See `src/main-public.js`.
  * ---------------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------------

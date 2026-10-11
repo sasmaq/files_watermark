@@ -210,7 +210,7 @@ All endpoints require a valid Nextcloud session or app password. Admin-only endp
 
 - **Admin Settings** (`/settings/admin/watermark`) - global policy, default template, MIME/tag scope, audit log viewer.
 
-- **File Action** - context menu entry "Apply Watermark" on a single supported file; shows a preview/confirmation modal before committing.
+- **File Action** - context menu entry "Apply Watermark" on a single supported file; runs straight away, with no confirmation, and reports the outcome in a toast.
 
 Built with **Vue 3 + Composition API**, using **@nextcloud/vue** component library and **@nextcloud/axios** for API calls, consistent with Nextcloud 32 app standards.
 
@@ -263,7 +263,7 @@ overlay-watermarked PDF rather than refusing the download.
 | --- | --- | --- |
 | Unit (PHP) | PHPUnit | WatermarkService, renderers, mappers |
 | Integration (PHP) | PHPUnit + in-memory DB | API controllers, event listeners |
-| Frontend | Jest + Vue Test Utils | Settings components, file action modal |
+| Frontend | Jest + Vue Test Utils | Settings components, file actions |
 | End-to-end | Cypress (Nextcloud test infra) | Upload → watermark → download flow |
 
 ---

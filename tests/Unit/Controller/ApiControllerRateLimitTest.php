@@ -18,8 +18,8 @@ use PHPUnit\Framework\TestCase;
  * Every other test in the suite passes just as happily with the throttle gone.
  *
  * The numbers are asserted too, not merely their presence. `limit: 120, period: 60` sits
- * far above what the file action can produce by hand - each one needs its own modal
- * confirmation - and still bounds a script, and a later edit that makes it 20000 has
+ * far above what the file action can produce by hand - each one is its own click in the
+ * row menu - and still bounds a script, and a later edit that makes it 20000 has
  * removed the bound while leaving the attribute in place to suggest otherwise.
  *
  * The limit was 20 while these endpoints rendered a whole file inside the request. Both are

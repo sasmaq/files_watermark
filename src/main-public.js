@@ -8,7 +8,7 @@ import { inTestRunner, seedWatermarkedIds, startIndicator } from './indicator.js
  * WHY THIS BUNDLE EXISTS AT ALL, RATHER THAN LOADING `files.js` THERE.
  *
  * Everything a visitor can do on that page, they can do without an account: read the list
- * and download. The Files bundle carries two Vue modals, the Apply and Remove file actions
+ * and download. The Files bundle carries the Apply and Remove file actions
  * and every dependency behind them - none of which an anonymous reader can use, and all of
  * which would be shipped to every visitor of every public link on the server. This entry
  * pulls in the badge and nothing else.

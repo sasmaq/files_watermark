@@ -9,8 +9,8 @@ import { t } from '@nextcloud/l10n'
  * WHY THIS IS ITS OWN MODULE.
  *
  * Two pages draw this badge: the Files app, and the public share page a link visitor
- * lands on. The Files bundle is the wrong thing to hand a public visitor - it carries two
- * Vue modals, the Apply/Remove file actions and everything they pull in, none of which an
+ * lands on. The Files bundle is the wrong thing to hand a public visitor - it carries the
+ * Apply/Remove file actions and everything they pull in, none of which an
  * anonymous reader can use. Splitting the badge out lets `main-public.js` be the small
  * bundle that page deserves, while `main-files.js` re-exports everything here so the
  * authenticated side (and its tests) see no change.

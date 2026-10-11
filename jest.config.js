@@ -1,25 +1,28 @@
 module.exports = {
-    testEnvironment: 'jsdom',
-    transform: {
-        '^.+\\.vue$': '@vue/vue3-jest',
-        '^.+\\.js$': 'babel-jest',
-    },
-    moduleFileExtensions: ['js', 'vue', 'json'],
-    moduleNameMapper: {
-        '^@/(.*)$': '<rootDir>/src/$1',
-        '@nextcloud/auth': '<rootDir>/src/tests/__mocks__/@nextcloud/auth.js',
-        '@nextcloud/axios': '<rootDir>/src/tests/__mocks__/@nextcloud/axios.js',
-        '@nextcloud/files': '<rootDir>/src/tests/__mocks__/@nextcloud/files.js',
-        '@nextcloud/event-bus': '<rootDir>/src/tests/__mocks__/@nextcloud/event-bus.js',
-        '@nextcloud/initial-state': '<rootDir>/src/tests/__mocks__/@nextcloud/initial-state.js',
-        '@nextcloud/router': '<rootDir>/src/tests/__mocks__/@nextcloud/router.js',
-        '@nextcloud/l10n': '<rootDir>/src/tests/__mocks__/@nextcloud/l10n.js',
-        // Each @nextcloud/vue component resolves to its own stub so default
-        // imports render the right element (e.g. NcButton → real <button>).
-        // v9 import style: @nextcloud/vue/components/NcButton
-        '^@nextcloud/vue/components/(.*)$': '<rootDir>/src/tests/__mocks__/@nextcloud/vue-components/$1.js',
-        '^@nextcloud/vue$': '<rootDir>/src/tests/__mocks__/@nextcloud/vue.js',
-    },
-    testMatch: ['**/src/tests/**/*.spec.js'],
-    collectCoverage: false,
+	testEnvironment: 'jsdom',
+	transform: {
+		'^.+\\.vue$': '@vue/vue3-jest',
+		'^.+\\.js$': 'babel-jest',
+	},
+	moduleFileExtensions: ['js', 'vue', 'json'],
+	moduleNameMapper: {
+		'^@/(.*)$': '<rootDir>/src/$1',
+		// Stylesheets are for webpack; under jsdom an import of one only has to resolve.
+		'\\.css$': '<rootDir>/src/tests/__mocks__/style.js',
+		'@nextcloud/auth': '<rootDir>/src/tests/__mocks__/@nextcloud/auth.js',
+		'@nextcloud/axios': '<rootDir>/src/tests/__mocks__/@nextcloud/axios.js',
+		'^@nextcloud/dialogs$': '<rootDir>/src/tests/__mocks__/@nextcloud/dialogs.js',
+		'@nextcloud/files': '<rootDir>/src/tests/__mocks__/@nextcloud/files.js',
+		'@nextcloud/event-bus': '<rootDir>/src/tests/__mocks__/@nextcloud/event-bus.js',
+		'@nextcloud/initial-state': '<rootDir>/src/tests/__mocks__/@nextcloud/initial-state.js',
+		'@nextcloud/router': '<rootDir>/src/tests/__mocks__/@nextcloud/router.js',
+		'@nextcloud/l10n': '<rootDir>/src/tests/__mocks__/@nextcloud/l10n.js',
+		// Each @nextcloud/vue component resolves to its own stub so default
+		// imports render the right element (e.g. NcButton → real <button>).
+		// v9 import style: @nextcloud/vue/components/NcButton
+		'^@nextcloud/vue/components/(.*)$': '<rootDir>/src/tests/__mocks__/@nextcloud/vue-components/$1.js',
+		'^@nextcloud/vue$': '<rootDir>/src/tests/__mocks__/@nextcloud/vue.js',
+	},
+	testMatch: ['**/src/tests/**/*.spec.js'],
+	collectCoverage: false,
 }

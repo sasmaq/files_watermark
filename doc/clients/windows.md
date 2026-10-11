@@ -208,14 +208,14 @@ if (record.isValid() && record.isFile() && account->watermarkSupported()
 The journal doesn't store content types, so `hasWatermarkableExtension` matches `.pdf`, `.jpg`,
 `.jpeg`, `.png` and `.webp`, case-insensitively. That is also how the server derives the type.
 
-The handlers confirm with the user (README has the dialog strings), then call the API. A sketch
-using the account's authenticated network access:
+The handlers call the API straight away, with no confirmation (README section 2 explains why).
+A sketch using the account's authenticated network access:
 
 ```cpp
 void SocketApi::command_APPLY_WATERMARK(const QString &localFile, SocketListener *)
 {
     const auto fileData = FileData::get(localFile);
-    if (!fileData.folder || !confirmWatermarkAction(fileData, WatermarkAction::Apply)) {
+    if (!fileData.folder) {
         return;
     }
     sendWatermarkRequest(fileData, QStringLiteral("apply"));

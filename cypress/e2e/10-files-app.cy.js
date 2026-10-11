@@ -59,21 +59,15 @@ describe('Files app actions', () => {
 		})
 	})
 
-	it('marks the file from the modal and badges the row', () => {
+	it('marks the file straight from the menu and badges the row', () => {
 		cy.visit(`/apps/files/files?dir=/${folder}`)
 
 		openRowMenu().contains('Apply watermark').click({ force: true })
 
-		cy.contains('Apply Watermark', { timeout: 20000 }).should('exist')
-		cy.get('.modal-container, [role="dialog"]').last().within(() => {
-			cy.contains('button', 'Apply').click({ force: true })
-			// The dialog swaps its own button to Close when the apply lands, which is
-			// the client-side signal that the request came back clean.
-			cy.contains('button', 'Close', { timeout: 60000 }).click({ force: true })
-		})
-
-		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 20000 })
+		// The click is the request: no confirmation stands between the menu and the mark.
+		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 60000 })
 			.should('exist')
+		cy.get('.modal-container').should('not.exist')
 	})
 
 	it('actually marked the file, not just the row', () => {
@@ -124,15 +118,11 @@ describe('Files app actions', () => {
 	it('unmarks from the Remove action, badge and all', () => {
 		openRowMenu().contains('Remove watermark').click({ force: true })
 
-		cy.get('.modal-container, [role="dialog"]').last().within(() => {
-			// The dialog is informational rather than destructive, and says so: nothing is
-			// discarded, because the file has never been anything but what was uploaded.
-			cy.contains('The file itself does not change').should('exist')
-			cy.contains('button', 'Remove watermark').click({ force: true })
-		})
-
+		// No confirmation here either: nothing is discarded, because the file has never been
+		// anything but what was uploaded, and Apply puts the mark back.
 		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 20000 })
 			.should('not.exist')
+		cy.get('.modal-container').should('not.exist')
 
 		cy.wmDownload(`${folder}/${name}`).then((base64) => {
 			cy.task('probe:pdf', { base64 }).its('watermarked').should('be.false')

@@ -104,8 +104,9 @@ gating from README section 2. The Android-specific inputs:
 | Not the trash, not a version, not a public link | Which screen the menu is built for |
 
 Add the strings to `res/values/strings.xml` and the translations to the `values-*` folders. The
-Arabic ones can be copied from `l10n/ar.json` in this repository. Confirm with a
-`MaterialAlertDialogBuilder`, using the dialog text in README section 2.
+Arabic ones can be copied from `l10n/ar.json` in this repository. Call the API as soon as the
+action is picked, with no confirmation dialog, and report the outcome in a snackbar using the
+strings in README section 2.
 
 The call itself, off the main thread, with the account's OkHttp client (already authenticated
 with its app password). If your `android-library` version has a `PostMethod` that can add the

@@ -1,13 +1,12 @@
-import { createApp, h } from 'vue'
 import { registerFileAction, FileAction } from '@nextcloud/files'
 import { getCurrentUser } from '@nextcloud/auth'
+import { showError, showInfo, showSuccess } from '@nextcloud/dialogs'
 import { emit } from '@nextcloud/event-bus'
 import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
 import { generateUrl } from '@nextcloud/router'
-import WatermarkModal from './components/WatermarkModal.vue'
-import RemoveWatermarkModal from './components/RemoveWatermarkModal.vue'
+import '@nextcloud/dialogs/style.css'
 import {
 	DAV_WATERMARKED_PROP,
 	DAV_WATERMARK_LOCKED_PROP,
@@ -211,43 +210,48 @@ export function isRemoveActionEnabled(files, view) {
 const APP_ICON_SVG = appMarkSvg('')
 
 /**
- * Mounts WatermarkModal and returns a Promise that resolves with:
- *   true  - the file was marked
- *   null  - user cancelled before applying
+ * The message to show for a failed apply or remove.
  *
- * Keeping exec() awaiting this Promise lets Nextcloud Files show a spinner
- * on the file row and auto-refresh the file when exec resolves with true.
- * @param {string} filePath - Path of the file to watermark
- * @param {string} fileName - Display name shown in the modal
- * @return {Promise<boolean|null>} true when applied, null when cancelled
+ * A throttled request is answered by Nextcloud's rate-limiting middleware, not by this app,
+ * so it carries no `error` field to show - without this the user reads "Request failed with
+ * status code 429" in English on an otherwise translated page. Every other failure does
+ * carry one: the 413 for an oversized file names both the size and the limit, and the 403 a
+ * share recipient gets from Remove names the reason.
+ * @param {object} e - the rejected axios request
+ * @return {string} the text for the error toast
  */
-function mountModal(filePath, fileName) {
-	return new Promise((resolve) => {
-		let watermarked = false
-		const container = document.createElement('div')
-		document.body.appendChild(container)
+function requestErrorMessage(e) {
+	return e?.response?.status === 429
+		? t('files_watermark', 'Too many watermark requests at once. Wait a moment and try again.')
+		: e?.response?.data?.error ?? e?.message
+}
 
-		const app = createApp({
-			render() {
-				return h(WatermarkModal, {
-					filePath,
-					fileName,
-					onWatermarked() {
-						watermarked = true
-						resolve(true)
-					},
-					onClose() {
-						app.unmount()
-						container.remove()
-						if (!watermarked) {
-							resolve(null)
-						}
-					},
-				})
-			},
+/**
+ * Mark the file, with no dialog in front of it: the file itself does not change and Remove
+ * undoes it in one click, so a confirmation would only be one more thing to click through.
+ * The Files app shows a spinner on the row while `exec` awaits this, and the outcome
+ * arrives as a toast.
+ * @param {string} filePath - Path of the file to watermark
+ * @return {Promise<boolean>} true when the file is marked, including when it already was
+ */
+async function applyWatermark(filePath) {
+	try {
+		const res = await axios.post(generateUrl('/apps/files_watermark/api/v1/apply'), {
+			path: filePath,
 		})
-		app.mount(container)
-	})
+		// The backend reports an already-watermarked file as a benign no-op - treat it as
+		// informational, and still count it as marked so the row badge / action state
+		// catch up if the client cache was stale.
+		if (res?.data?.status === 'already_watermarked') {
+			showInfo(t('files_watermark', 'This file is already watermarked.'))
+		} else {
+			showSuccess(t('files_watermark', 'Watermark applied successfully.'))
+		}
+		return true
+	} catch (e) {
+		showError(requestErrorMessage(e))
+		return false
+	}
 }
 
 registerFileAction(new FileAction({
@@ -259,13 +263,12 @@ registerFileAction(new FileAction({
 	iconSvgInline: () => APP_ICON_SVG,
 	enabled: isApplyActionEnabled,
 	async exec(file) {
-		const result = await mountModal(file.path, file.basename)
 		// The file was just watermarked, so record its id ourselves and redraw the
 		// badge. We can't rely on the post-exec node refresh to re-deliver our custom
 		// `is-watermarked` DAV property - it often doesn't - which is why the badge
 		// used to be missing right after an apply. The set persists across the row's
 		// re-render, so the observer keeps the badge painted afterwards.
-		if (result === true) {
+		if (await applyWatermark(file.path)) {
 			markWatermarked(Number(file.fileid ?? file.id))
 			// Stamp the watermarked state onto the node itself and notify the Files
 			// app so it re-renders this row. Nextcloud memoizes a FileAction's
@@ -277,7 +280,9 @@ registerFileAction(new FileAction({
 			}
 			emit('files:node:updated', file)
 		}
-		return result
+		// Null keeps the Files app silent: the toast has already said how it went, in
+		// better words than its generic "done" / "failed".
+		return null
 	},
 }))
 
@@ -286,40 +291,26 @@ registerFileAction(new FileAction({
 const UNDO_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3Zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8H12Z"/></svg>'
 
 /**
- * Mounts RemoveWatermarkModal and returns a Promise that resolves with:
- *   true  - the mark was removed
- *   null  - user cancelled
+ * Take the mark off, so the file stops being watermarked on its way out. No dialog, for the
+ * same reason as {@see applyWatermark}: the file is untouched and Apply puts the mark back.
  * @param {string} filePath - Path of the file to unmark
- * @param {string} fileName - Display name shown in the modal
- * @return {Promise<boolean|null>} true when unmarked, null when cancelled
+ * @return {Promise<boolean>} true when the mark was removed
  */
-function mountRemoveModal(filePath, fileName) {
-	return new Promise((resolve) => {
-		let removed = false
-		const container = document.createElement('div')
-		document.body.appendChild(container)
-
-		const app = createApp({
-			render() {
-				return h(RemoveWatermarkModal, {
-					filePath,
-					fileName,
-					onRemoved() {
-						removed = true
-						resolve(true)
-					},
-					onClose() {
-						app.unmount()
-						container.remove()
-						if (!removed) {
-							resolve(null)
-						}
-					},
-				})
-			},
+async function removeWatermark(filePath) {
+	try {
+		await axios.post(generateUrl('/apps/files_watermark/api/v1/remove'), {
+			path: filePath,
 		})
-		app.mount(container)
-	})
+		showSuccess(t('files_watermark', 'Watermark removed.'))
+		return true
+	} catch (e) {
+		// The one failure worth expecting is 403: only the file's owner may remove a
+		// watermark, so a share recipient lands here. The server's message names the
+		// reason, and it is the only thing that can explain a refusal on a file the user
+		// can otherwise edit.
+		showError(requestErrorMessage(e))
+		return false
+	}
 }
 
 registerFileAction(new FileAction({
@@ -328,18 +319,17 @@ registerFileAction(new FileAction({
 	iconSvgInline: () => UNDO_ICON_SVG,
 	enabled: isRemoveActionEnabled,
 	async exec(file) {
-		const result = await mountRemoveModal(file.path, file.basename)
 		// Mirror of the apply path: drop the id, flip the node's own attribute and tell
 		// the Files app, so the badge disappears and `enabled()` re-evaluates (this
 		// action off, Apply back on) without waiting for a folder reload.
-		if (result === true) {
+		if (await removeWatermark(file.path)) {
 			unmarkWatermarked(Number(file.fileid ?? file.id))
 			if (file.attributes) {
 				file.attributes[DAV_WATERMARKED_PROP] = 0
 			}
 			emit('files:node:updated', file)
 		}
-		return result
+		return null
 	},
 }))
 
