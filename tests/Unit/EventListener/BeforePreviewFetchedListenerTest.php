@@ -57,16 +57,36 @@ class BeforePreviewFetchedListenerTest extends TestCase {
 		$this->assertSame(128, $this->context->shorterSide());
 	}
 
-	public function testAnUnmarkedFileIsNotRecorded(): void {
+	/**
+	 * An unmarked file of a type this app watermarks is recorded *unstamped*: it can be
+	 * marked later, and the middleware has to keep its clean preview from being cached past
+	 * that.
+	 */
+	public function testAnUnmarkedWatermarkableFileIsRecordedButNotStamped(): void {
 		$file = $this->file();
+		$file->method('getMimetype')->willReturn('image/jpeg');
 		$this->watermarkService->method('isDeliveryCandidate')->willReturn(false);
+		$this->watermarkService->method('isSupported')->with('image/jpeg')->willReturn(true);
 
 		$this->listener->handle($this->event($file));
 
 		$this->assertNull(
 			$this->context->file(),
-			'an unmarked file must leave the context empty, or the middleware stamps every thumbnail on the server',
+			'an unmarked file must never be offered for stamping, or the middleware stamps every thumbnail on the server',
 		);
+		$this->assertTrue($this->context->previewsCleanCopy());
+	}
+
+	public function testAFileThisAppCannotWatermarkIsNotRecorded(): void {
+		$file = $this->file();
+		$file->method('getMimetype')->willReturn('text/plain');
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(false);
+		$this->watermarkService->method('isSupported')->willReturn(false);
+
+		$this->listener->handle($this->event($file));
+
+		$this->assertNull($this->context->file());
+		$this->assertFalse($this->context->previewsCleanCopy());
 	}
 
 	/**

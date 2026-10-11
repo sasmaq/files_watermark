@@ -47,10 +47,13 @@ class BeforePreviewFetchedListener implements IEventListener {
 			return;
 		}
 
-		// Only files this app can watermark, and only marked ones. Anything else is served
+		// Marked files are stamped. Unmarked files of a type this app can watermark are
+		// recorded too, unstamped, because they can be marked tomorrow and the middleware
+		// has to stop their clean preview being cached past that. Anything else is served
 		// by core untouched, which is both correct and the cheap path - this runs on every
 		// thumbnail in every folder listing.
-		if (!$this->watermarkService->isDeliveryCandidate($node)) {
+		$stamp = $this->watermarkService->isDeliveryCandidate($node);
+		if (!$stamp && !$this->watermarkService->isSupported($node->getMimetype())) {
 			return;
 		}
 
@@ -58,6 +61,6 @@ class BeforePreviewFetchedListener implements IEventListener {
 		// clamps them to its configured maxima and to the source's own size. They are
 		// recorded as a hint for scaling the watermark, and the middleware re-measures the
 		// image it actually gets.
-		$this->context->record($node, $event->getWidth() ?? 0, $event->getHeight() ?? 0);
+		$this->context->record($node, $event->getWidth() ?? 0, $event->getHeight() ?? 0, $stamp);
 	}
 }

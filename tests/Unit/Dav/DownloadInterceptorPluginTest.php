@@ -471,6 +471,61 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->assertSame('SHA1:' . sha1('WATERMARKED-BYTES'), $response->getHeader('OC-Checksum'));
 	}
 
+	/**
+	 * The clean copy of a file that could be marked must not be reused without asking.
+	 *
+	 * Core sends it with `Last-Modified` and no `Cache-Control`, which lets a browser reuse it
+	 * for a tenth of the file's age - and the PDF viewer, loading the bare DAV URL, went on
+	 * showing it after the file was marked.
+	 */
+	public function testACleanDownloadOfAWatermarkableFileMustBeRevalidated(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
+		$this->watermarkService->method('isSupported')->with('application/pdf')->willReturn(true);
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+
+		$this->assertTrue($plugin->httpGet($request, $response));
+		$plugin->afterGet($request, $response);
+
+		$this->assertSame('private, no-cache', $response->getHeader('Cache-Control'));
+		// Still core's download in every other respect.
+		$this->assertNull($response->getHeader('ETag'));
+	}
+
+	public function testAWatermarkedDownloadMustBeRevalidatedToo(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
+		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy());
+
+		$plugin = $this->plugin();
+		$request = $this->request();
+		$response = new Response();
+
+		$plugin->httpGet($request, $response);
+		$plugin->afterGet($request, $response);
+
+		$this->assertSame('private, no-cache', $response->getHeader('Cache-Control'));
+	}
+
+	/** A file this app never watermarks keeps whatever caching core gives it. */
+	public function testAFileThatCannotBeMarkedIsLeftToCoresCaching(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->davFile('text/plain', 'notes.txt'));
+		$this->watermarkService->method('isSupported')->with('text/plain')->willReturn(false);
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+
+		$plugin = $this->plugin();
+		$request = $this->request('files/alice/notes.txt');
+		$response = new Response();
+
+		$plugin->httpGet($request, $response);
+		$plugin->afterGet($request, $response);
+
+		$this->assertNull($response->getHeader('Cache-Control'));
+	}
+
 	/** A structurally real PDF standing in for a render, so padding has somewhere to go. */
 	private function renderedPdf(): string {
 		$body = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";

@@ -37,6 +37,14 @@ class PreviewRequestContext {
 	private int $height = 0;
 
 	/**
+	 * Whether the recorded file is to be watermarked on this fetch. False for a file this app
+	 * *could* watermark but does not, here and now - it is recorded anyway, because it can be
+	 * marked later and its clean preview must not be cached past that. See
+	 * {@see \OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware::revalidating}.
+	 */
+	private bool $stamp = false;
+
+	/**
 	 * True while this app is itself asking for a preview.
 	 *
 	 * The middleware generates the clean preview by calling `IPreview::getPreview()`, which
@@ -47,13 +55,14 @@ class PreviewRequestContext {
 	private bool $generating = false;
 
 	/**
-	 * Note that this request is fetching a preview of $file at $width × $height.
+	 * Note that this request is fetching a preview of $file at $width × $height, and whether
+	 * that preview is to be watermarked.
 	 *
 	 * Only the *first* preview of a request is recorded. A request that renders several is
 	 * not something core's preview endpoints do - they serve one image - and picking the
 	 * last would mean an unrelated internal preview could displace the one being served.
 	 */
-	public function record(File $file, int $width, int $height): void {
+	public function record(File $file, int $width, int $height, bool $stamp = true): void {
 		if ($this->generating || $this->file !== null) {
 			return;
 		}
@@ -61,10 +70,17 @@ class PreviewRequestContext {
 		$this->file = $file;
 		$this->width = $width;
 		$this->height = $height;
+		$this->stamp = $stamp;
 	}
 
+	/** The file whose preview is to be watermarked, or null when there is none. */
 	public function file(): ?File {
-		return $this->file;
+		return $this->stamp ? $this->file : null;
+	}
+
+	/** Whether this request previews a file this app could watermark, and goes out clean. */
+	public function previewsCleanCopy(): bool {
+		return $this->file !== null && !$this->stamp;
 	}
 
 	/**
