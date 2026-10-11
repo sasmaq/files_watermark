@@ -187,7 +187,10 @@ class WatermarkPreviewMiddleware extends Middleware {
 
 		$response->addHeader('Cache-Control', 'private, no-cache');
 		// Core's `Expires` is a day out; `Cache-Control` already outranks it, and leaving it
-		// would only describe a lifetime the response no longer has.
+		// would only describe a lifetime the response no longer has. Null is how core's
+		// `addHeader()` deletes a header ("null will delete it"), though its `@param` says
+		// `string`; there is no other way to drop one short of rebuilding them all.
+		/** @psalm-suppress NullArgument */
 		$response->addHeader('Expires', null);
 
 		return $response;
