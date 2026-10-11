@@ -67,7 +67,10 @@ describe('Files app actions', () => {
 		// The click is the request: no confirmation stands between the menu and the mark.
 		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 60000 })
 			.should('exist')
-		cy.get('.modal-container').should('not.exist')
+		// Only a dialog of this app's counts. Core has its own: a fresh instance - which is
+		// what CI runs on - opens the first-run wizard on every page until someone dismisses
+		// it, and that is a `.modal-container` too.
+		cy.contains('.modal-container', /watermark/i).should('not.exist')
 	})
 
 	it('actually marked the file, not just the row', () => {
@@ -122,7 +125,7 @@ describe('Files app actions', () => {
 		// anything but what was uploaded, and Apply puts the mark back.
 		cy.get(`[data-cy-files-list-row-name="${name}"] .files-watermark-indicator`, { timeout: 20000 })
 			.should('not.exist')
-		cy.get('.modal-container').should('not.exist')
+		cy.contains('.modal-container', /watermark/i).should('not.exist')
 
 		cy.wmDownload(`${folder}/${name}`).then((base64) => {
 			cy.task('probe:pdf', { base64 }).its('watermarked').should('be.false')
