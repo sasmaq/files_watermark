@@ -204,10 +204,10 @@ come back stamped for the account, with `Cache-Control: no-store`.
 ## 7. Direct links and versions
 
 - Upstream uses direct links (`StreamMediaFileOperation`) only to stream audio and video. Add a
-  guard so they are never requested for PDF, JPEG, PNG or WebP files: those links serve the
-  stored file without a watermark.
-- Restoring a version is fine. If your branch can download or preview old versions, hide that
-  for watermarked files: versions are served without a watermark.
+  guard so they are never requested for PDF, JPEG, PNG or WebP files: direct links cannot be
+  watermarked, so the server answers 403 for any file it would watermark.
+- Old versions are served and previewed watermarked, like the current file, so nothing needs
+  hiding. Restoring a version is fine.
 
 ## 8. Android checks
 

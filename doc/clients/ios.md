@@ -175,11 +175,11 @@ account, with `Cache-Control: no-store`.
 
 ## 7. Direct links and versions
 
-- Direct links (NextcloudKit's `getDirectDownload`) serve the stored file without a watermark.
-  Restrict them to audio and video streaming, and never request one for a PDF, JPEG, PNG or
-  WebP file.
-- Restoring a version is fine. If your branch can download or preview old versions, hide that
-  for watermarked files: versions are served without a watermark.
+- Direct links (NextcloudKit's `getDirectDownload`) cannot be watermarked, so the server
+  answers 403 for any file it would watermark. Restrict them to audio and video streaming, and
+  never request one for a PDF, JPEG, PNG or WebP file, or the open fails.
+- Old versions are served and previewed watermarked, like the current file, so nothing needs
+  hiding. Restoring a version is fine.
 
 ## 8. iOS checks
 

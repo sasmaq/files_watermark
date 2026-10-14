@@ -159,6 +159,30 @@ class ApiControllerLogTest extends TestCase {
 		$this->assertSame(Http::STATUS_OK, $this->controller->getLog(25, 50)->getStatus());
 	}
 
+	/**
+	 * A page is bounded in both directions: no limit past {@see ApiController::MAX_LOG_PAGE}
+	 * - the table grows by a row per audited delivery - and no negative paging.
+	 *
+	 * @dataProvider provideOutOfRangePaging
+	 */
+	public function testPagingIsClampedToSaneBounds(int $limit, int $offset, int $expectedLimit, int $expectedOffset): void {
+		$this->logMapper->expects($this->once())
+			->method('findAll')
+			->with($expectedLimit, $expectedOffset)
+			->willReturn([]);
+
+		$this->controller->getLog($limit, $offset);
+	}
+
+	/** @return array<string, array{0: int, 1: int, 2: int, 3: int}> */
+	public static function provideOutOfRangePaging(): array {
+		return [
+			'a limit of millions' => [5_000_000, 0, ApiController::MAX_LOG_PAGE, 0],
+			'a zero limit' => [0, 0, 1, 0],
+			'a negative offset' => [50, -10, 50, 0],
+		];
+	}
+
 	public function testDefaultsToTheFirstHundred(): void {
 		$this->logMapper->expects($this->once())
 			->method('findAll')

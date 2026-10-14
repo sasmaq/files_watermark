@@ -46,6 +46,46 @@ class BeforePreviewFetchedListenerTest extends TestCase {
 		return new BeforePreviewFetchedEvent($node, $width, $height, false);
 	}
 
+	/**
+	 * Everything core was asked for is kept, so the middleware can ask for the same preview:
+	 * regenerating a square of the shorter side, uncropped, served the Viewer half the width
+	 * it requested and served the Files list uncropped thumbnails.
+	 */
+	public function testTheWholeRequestIsRecordedNotJustItsShorterSide(): void {
+		$file = $this->file();
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(true);
+
+		$this->listener->handle(new BeforePreviewFetchedEvent($file, 1920, 1080, true, 'cover', 'image/webp'));
+
+		$this->assertSame(1920, $this->context->width());
+		$this->assertSame(1080, $this->context->height());
+		$this->assertTrue($this->context->crop());
+		$this->assertSame('cover', $this->context->mode());
+		$this->assertSame('image/webp', $this->context->mimeType());
+	}
+
+	/**
+	 * **A version is judged by the file it is a version of.** Its own node lives under
+	 * `files_versions` with an id no mark names, so asking about it found nothing and every
+	 * version thumbnail went out clean.
+	 */
+	public function testAVersionPreviewIsDecidedByItsSourceFile(): void {
+		$source = $this->file();
+		$versionNode = $this->file();
+		$versionNode->method('getMimetype')->willReturn('application/pdf');
+		$this->context->noteVersionSource($source);
+
+		$this->watermarkService->method('isDeliveryCandidate')
+			->willReturnCallback(static fn ($node): bool => $node === $source);
+
+		$this->listener->handle($this->event($versionNode));
+
+		// The version's own node is what gets re-rendered; the source is what the watermark
+		// is about.
+		$this->assertSame($versionNode, $this->context->file());
+		$this->assertSame($source, $this->context->subject());
+	}
+
 	public function testRecordsAMarkedFile(): void {
 		$file = $this->file();
 		$this->watermarkService->method('isDeliveryCandidate')->with($file)->willReturn(true);

@@ -13,6 +13,7 @@ use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
@@ -42,6 +43,8 @@ class ApiControllerImageTest extends TestCase {
 		$this->groupManager = $this->createMock(IGroupManager::class);
 		$this->imageStore = $this->createMock(WatermarkImageStore::class);
 		$this->configMapper = $this->createMock(WatermarkConfigMapper::class);
+		// A fresh install: no policy saved yet, so a save without an id inserts one.
+		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException(''));
 
 		$this->controller = new ApiController(
 			'files_watermark',
@@ -188,6 +191,7 @@ class ApiControllerImageTest extends TestCase {
 
 	public function testSaveConfigAcceptsAnUploadedReference(): void {
 		$this->login('admin', isAdmin: true);
+		$this->imageStore->method('exists')->willReturn(true);
 		$this->configMapper->method('insert')->willReturnCallback(
 			static fn (WatermarkConfig $config): WatermarkConfig => $config,
 		);
@@ -211,5 +215,84 @@ class ApiControllerImageTest extends TestCase {
 			Http::STATUS_OK,
 			$this->controller->saveConfig(type: 'text', textTemplate: '{username}', imagePath: '')->getStatus(),
 		);
+	}
+
+	/**
+	 * **A logo policy needs a logo that is actually stored.** Saved without one, every marked
+	 * file rendered "successfully" with nothing drawn on it and went out clean.
+	 *
+	 * @dataProvider provideLogoTypes
+	 */
+	public function testALogoPolicyWithoutAStoredLogoIsRefused(string $type, ?string $imagePath): void {
+		$this->login('admin', isAdmin: true);
+		$this->imageStore->method('exists')->willReturn(false);
+		$this->configMapper->expects($this->never())->method('insert');
+
+		$response = $this->controller->saveConfig(type: $type, textTemplate: '{username}', imagePath: $imagePath);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+		$this->assertSame('Upload a logo image to use an image watermark.', $response->getData()['error']);
+	}
+
+	/** @return array<string, array{0: string, 1: ?string}> */
+	public static function provideLogoTypes(): array {
+		return [
+			'image, no logo at all' => ['image', null],
+			'combined, no logo at all' => ['combined', null],
+			// Well-formed, but deleted from the store since - or never uploaded.
+			'image, a reference to nothing' => ['image', str_repeat('b', 32) . '.png'],
+		];
+	}
+
+	/** Blank text draws nothing, so a text policy cannot be saved with it. */
+	public function testATextPolicyWithBlankTextIsRefused(): void {
+		$this->login('admin', isAdmin: true);
+		$this->configMapper->expects($this->never())->method('insert');
+
+		$response = $this->controller->saveConfig(type: 'text', textTemplate: "  \t ", imagePath: null);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+		$this->assertSame('The watermark text cannot be empty.', $response->getData()['error']);
+	}
+
+	/** A logo the saved policy no longer uses is referenced by nothing, and is deleted. */
+	public function testAReplacedLogoIsDeletedFromTheStore(): void {
+		$this->login('admin', isAdmin: true);
+		$old = str_repeat('a', 32) . '.png';
+		$new = str_repeat('c', 32) . '.png';
+
+		$stored = new WatermarkConfig();
+		$stored->setId(7);
+		$stored->setType('image');
+		$stored->setImagePath($old);
+		$this->configMapper->method('findById')->with(7)->willReturn($stored);
+		$this->configMapper->method('update')->willReturnCallback(
+			static fn (WatermarkConfig $config): WatermarkConfig => $config,
+		);
+		$this->imageStore->method('exists')->willReturn(true);
+		$this->imageStore->expects($this->once())->method('delete')->with($old);
+
+		$response = $this->controller->saveConfig(type: 'image', textTemplate: null, imagePath: $new, id: 7);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+	}
+
+	/** Re-saving with the same logo keeps it: deleting the file the policy points at is the bug. */
+	public function testAKeptLogoIsNotDeleted(): void {
+		$this->login('admin', isAdmin: true);
+		$logo = str_repeat('a', 32) . '.png';
+
+		$stored = new WatermarkConfig();
+		$stored->setId(7);
+		$stored->setType('image');
+		$stored->setImagePath($logo);
+		$this->configMapper->method('findById')->willReturn($stored);
+		$this->configMapper->method('update')->willReturnCallback(
+			static fn (WatermarkConfig $config): WatermarkConfig => $config,
+		);
+		$this->imageStore->method('exists')->willReturn(true);
+		$this->imageStore->expects($this->never())->method('delete');
+
+		$this->controller->saveConfig(type: 'image', textTemplate: null, imagePath: $logo, id: 7);
 	}
 }

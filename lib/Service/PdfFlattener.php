@@ -17,7 +17,7 @@ use Psr\Log\LoggerInterface;
  * Everything else in this app is pure PHP and spawns no processes. Rasterising a page is the
  * one thing with no pure-PHP substitute worth having, because doing it in-process means
  * bundling a PDF *interpreter*, which is a far larger surface than the watermarking this app
- * exists to do. So this class shells out to `pdftoppm` (poppler-utils) and **nothing else in
+ * exists to do. So this class runs `pdftoppm` (poppler-utils) and **nothing else in
  * the app does**.
  *
  * The exception is contained by three rules, and they are what make it affordable:
@@ -30,9 +30,10 @@ use Psr\Log\LoggerInterface;
  *    refuses the setting when the probe fails, and a flatten that fails at render time
  *    falls back to the ordinary overlay-watermarked PDF ({@see WatermarkService}). The
  *    feature is additive from end to end.
- *  - **Only this one command line, and it is fully escaped.** No user-supplied string
- *    reaches the shell: the arguments are two temp paths this app created, a page number it
- *    counted, and a resolution that is a constant of this class.
+ *  - **Only this one process, with no shell and a deadline.** The arguments go to
+ *    `proc_open()` as an array - two temp paths this app created, a page number it counted
+ *    and a resolution that is a constant of this class - and the renderer is killed if a
+ *    page runs past {@see PAGE_TIMEOUT_SECONDS}.
  * ---------------------------------------------------------------------------
  *
  * What it does and does not buy: an overlay can be dropped with `qpdf` or `mutool`, or
@@ -76,6 +77,17 @@ class PdfFlattener {
 	private const MAX_BYTES = 268435456; // 256 MiB of source PDF
 
 	/**
+	 * How long one page may take to rasterise before the renderer is killed.
+	 *
+	 * **There was no limit at all**, and PHP's own `max_execution_time` is no substitute: on
+	 * Linux it counts the script's time, not time spent waiting on a child process. A PDF
+	 * crafted to send poppler into a loop - and poppler has shipped such bugs - held a PHP
+	 * worker for as long as the loop ran, on every download of the file. A page that takes
+	 * longer than this at 150 DPI is not a page anybody is waiting to read.
+	 */
+	public const PAGE_TIMEOUT_SECONDS = 60;
+
+	/**
 	 * Memoised for the life of this instance, which is one injection point per request.
 	 * Cheap either way - the probe stats PATH and never shells out.
 	 */
@@ -83,8 +95,14 @@ class PdfFlattener {
 	private bool $probed = false;
 	private bool $loggedUnavailable = false;
 
+	/**
+	 * @param int $pageTimeout seconds per page; the container cannot resolve a scalar, so in
+	 *                         production this is always {@see PAGE_TIMEOUT_SECONDS} - it exists
+	 *                         so a test can watch the deadline fire without waiting a minute
+	 */
 	public function __construct(
 		private LoggerInterface $logger,
+		private int $pageTimeout = self::PAGE_TIMEOUT_SECONDS,
 	) {
 	}
 
@@ -281,39 +299,38 @@ class PdfFlattener {
 	 * format every renderer handles without argument - the same reasoning that ruled SVG
 	 * out of the logo upload.
 	 *
-	 * **The only command line in this application**, and it is built entirely from values
-	 * this app controls:
+	 * **The only process this application starts**, and no shell is involved: the arguments
+	 * go to `proc_open()` as an array, so there is no command line to escape. Every one of
+	 * them is a value this app controls - a binary found on `PATH`, two absolute paths inside
+	 * temp directories it created (so neither can begin with `-` and be read as an option), a
+	 * constant and a counted int. Nothing a user supplies - filename, watermark text, display
+	 * name - is among them. The *file* the renderer opens is of course user content; see the
+	 * class docblock.
 	 *
-	 * - `$binary` is an absolute path this class found on `PATH`, quoted rather than merely
-	 *   `escapeshellcmd`-ed, so a directory with a space in it is passed as one argument
-	 *   instead of being split into two;
-	 * - both paths are absolute and inside temp directories this app created, so neither can
-	 *   begin with `-` and be read as an option, and both are quoted;
-	 * - the resolution is a constant of this class and `$page` is a counted int, both
-	 *   formatted with `%d`.
-	 *
-	 * Nothing a user supplies - filename, watermark text, display name - reaches this string.
-	 * The *file* the renderer opens is of course user content; see the class docblock.
+	 * **It runs against a deadline** ({@see PAGE_TIMEOUT_SECONDS}) and is killed when it
+	 * misses one.
 	 */
 	private function renderPage(string $binary, string $sourcePath, int $page, string $workDir): string {
 		// Inside this flatten's own 0700 directory, so no other local account can create,
 		// replace or symlink the name the renderer is about to write.
 		$prefix = $workDir . '/page-' . $page;
 		$expected = $prefix . '.png';
+		// The renderer's chatter goes to a file rather than a pipe: a pipe nobody drains while
+		// this waits on the deadline is a pipe that fills and stalls the renderer.
+		$log = $workDir . '/renderer.log';
 
-		$command = sprintf(
-			'%s -png -r %d -f %d -l %d -singlefile %s %s 2>&1',
-			escapeshellarg($binary),
-			self::RENDER_DPI,
-			$page,
-			$page,
-			escapeshellarg($sourcePath),
-			escapeshellarg($prefix),
+		$process = proc_open(
+			[$binary, '-png', '-r', (string)self::RENDER_DPI, '-f', (string)$page, '-l', (string)$page, '-singlefile', $sourcePath, $prefix],
+			[0 => ['file', '/dev/null', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']],
+			$pipes,
 		);
+		if (!is_resource($process)) {
+			throw new \RuntimeException(sprintf('Cannot flatten PDF: the renderer could not be started for page %d.', $page));
+		}
 
-		$output = [];
-		$status = 0;
-		exec($command, $output, $status);
+		$status = $this->waitFor($process, $page);
+		$output = trim((string)@file_get_contents($log));
+		@unlink($log);
 
 		if ($status !== 0 || !file_exists($expected)) {
 			if (file_exists($expected)) {
@@ -323,11 +340,41 @@ class PdfFlattener {
 				'Cannot flatten PDF: rendering page %d failed (exit %d) %s',
 				$page,
 				$status,
-				trim(implode(' ', $output)),
+				$output,
 			));
 		}
 
 		return $expected;
+	}
+
+	/**
+	 * The renderer's exit status, or an exception once it has run past its deadline.
+	 *
+	 * @param resource $process
+	 */
+	private function waitFor($process, int $page): int {
+		$deadline = microtime(true) + $this->pageTimeout;
+
+		while (true) {
+			$status = proc_get_status($process);
+			if (!$status['running']) {
+				// Only the first call after exit reports the real code; this is that call.
+				proc_close($process);
+				return $status['exitcode'];
+			}
+
+			if (microtime(true) >= $deadline) {
+				proc_terminate($process, 9);
+				proc_close($process);
+				throw new \RuntimeException(sprintf(
+					'Cannot flatten PDF: rendering page %d took longer than %d seconds and was stopped.',
+					$page,
+					$this->pageTimeout,
+				));
+			}
+
+			usleep(20000);
+		}
 	}
 
 	/**
@@ -349,7 +396,7 @@ class PdfFlattener {
 		$this->probed = true;
 
 		if (!self::canSpawnProcesses()) {
-			$this->logUnavailable('exec() is disabled in this PHP configuration');
+			$this->logUnavailable('proc_open() is disabled in this PHP configuration');
 			return null;
 		}
 
@@ -370,15 +417,20 @@ class PdfFlattener {
 		return null;
 	}
 
-	/** Whether `exec()` exists and this PHP is permitted to call it. */
-	private static function canSpawnProcesses(): bool {
-		if (!function_exists('exec')) {
-			return false;
-		}
+	/** The process functions {@see renderPage} needs, every one of which a host can disable. */
+	private const PROCESS_FUNCTIONS = ['proc_open', 'proc_get_status', 'proc_terminate', 'proc_close'];
 
+	/** Whether this PHP may start, watch and stop a process. */
+	private static function canSpawnProcesses(): bool {
 		$disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
 
-		return !in_array('exec', $disabled, true);
+		foreach (self::PROCESS_FUNCTIONS as $function) {
+			if (!function_exists($function) || in_array($function, $disabled, true)) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**

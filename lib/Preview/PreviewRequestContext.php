@@ -37,6 +37,28 @@ class PreviewRequestContext {
 	private int $height = 0;
 
 	/**
+	 * The rest of what core was asked for, so the middleware asks for the *same* preview.
+	 *
+	 * It used to ask for a square of the shorter side with neither crop nor mode: the
+	 * Viewer's 1920x1080 request came back as a 1080 box, and the Files list's cropped
+	 * squares came back uncropped - the preview a marked file showed was not the one core
+	 * had just rendered, and not a cache hit either.
+	 */
+	private ?bool $crop = null;
+	private ?string $mode = null;
+	private ?string $mimeType = null;
+
+	/**
+	 * The file whose mark and identity govern this preview, when that is not the node being
+	 * previewed. Set for an old version, whose node is a file of its own in `files_versions`
+	 * - a different id, which no mark names. See {@see noteVersionSource}.
+	 */
+	private ?File $subject = null;
+
+	/** The versioned file, noted by the middleware before the version's preview is fetched. */
+	private ?File $versionSource = null;
+
+	/**
 	 * Whether the recorded file is to be watermarked on this fetch. False for a file this app
 	 * *could* watermark but does not, here and now - it is recorded anyway, because it can be
 	 * marked later and its clean preview must not be cached past that. See
@@ -62,7 +84,16 @@ class PreviewRequestContext {
 	 * not something core's preview endpoints do - they serve one image - and picking the
 	 * last would mean an unrelated internal preview could displace the one being served.
 	 */
-	public function record(File $file, int $width, int $height, bool $stamp = true): void {
+	public function record(
+		File $file,
+		int $width,
+		int $height,
+		bool $stamp = true,
+		?bool $crop = null,
+		?string $mode = null,
+		?string $mimeType = null,
+		?File $subject = null,
+	): void {
 		if ($this->generating || $this->file !== null) {
 			return;
 		}
@@ -71,11 +102,61 @@ class PreviewRequestContext {
 		$this->width = $width;
 		$this->height = $height;
 		$this->stamp = $stamp;
+		$this->crop = $crop;
+		$this->mode = $mode;
+		$this->mimeType = $mimeType;
+		$this->subject = $subject;
 	}
 
-	/** The file whose preview is to be watermarked, or null when there is none. */
+	/** The node whose preview is to be watermarked, or null when there is none. */
 	public function file(): ?File {
 		return $this->stamp ? $this->file : null;
+	}
+
+	/**
+	 * The file the watermark is about - its name, its owner, its share - which is the
+	 * previewed node itself except for an old version.
+	 */
+	public function subject(): ?File {
+		return $this->stamp ? ($this->subject ?? $this->file) : null;
+	}
+
+	/**
+	 * Note that this request previews a version of $source.
+	 *
+	 * The version controller is the one preview endpoint whose node cannot be traced back to
+	 * the file it belongs to: the event carries the version's own node, under
+	 * `files_versions`, with its own file id. So the middleware notes the source from the
+	 * controller's arguments before the controller runs, and the listener reads it here.
+	 */
+	public function noteVersionSource(File $source): void {
+		$this->versionSource = $source;
+	}
+
+	public function versionSource(): ?File {
+		return $this->versionSource;
+	}
+
+	/** The requested width, or 0 when the request named none. */
+	public function width(): int {
+		return $this->width;
+	}
+
+	/** The requested height, or 0 when the request named none. */
+	public function height(): int {
+		return $this->height;
+	}
+
+	public function crop(): ?bool {
+		return $this->crop;
+	}
+
+	public function mode(): ?string {
+		return $this->mode;
+	}
+
+	public function mimeType(): ?string {
+		return $this->mimeType;
 	}
 
 	/** Whether this request previews a file this app could watermark, and goes out clean. */

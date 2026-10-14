@@ -156,4 +156,34 @@ class WatermarkImageStoreTest extends TestCase {
 
 		$this->assertNull($this->store->localPath($reference));
 	}
+
+	/** A stored file that the sweep may or may not delete. */
+	private function storedFile(string $name, int $mtime, bool $expectDelete): ISimpleFile&MockObject {
+		$file = $this->createMock(ISimpleFile::class);
+		$file->method('getName')->willReturn($name);
+		$file->method('getMTime')->willReturn($mtime);
+		$file->expects($expectDelete ? $this->once() : $this->never())->method('delete');
+		return $file;
+	}
+
+	/**
+	 * **Only an old logo that nothing references goes.** Uploads replaced or never saved used
+	 * to stay in appdata for good; the one the policy uses, and one uploaded so recently its
+	 * save may still be coming, stay.
+	 */
+	public function testTheSweepDeletesOnlyOldUnreferencedLogos(): void {
+		$inUse = str_repeat('a', 32) . '.png';
+		$abandoned = str_repeat('b', 32) . '.png';
+		$fresh = str_repeat('c', 32) . '.jpg';
+
+		$this->folder->method('getDirectoryListing')->willReturn([
+			$this->storedFile($inUse, 1000, expectDelete: false),
+			$this->storedFile($abandoned, 1000, expectDelete: true),
+			$this->storedFile($fresh, 5000, expectDelete: false),
+			// Not something this store wrote; not its to delete.
+			$this->storedFile('README.txt', 1000, expectDelete: false),
+		]);
+
+		$this->assertSame(1, $this->store->deleteUnreferenced([$inUse], 2000));
+	}
 }

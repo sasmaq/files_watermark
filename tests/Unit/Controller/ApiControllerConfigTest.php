@@ -50,12 +50,18 @@ class ApiControllerConfigTest extends TestCase {
 	 * nothing about flattening is a save that does not ask for it.
 	 */
 	private PdfFlattener&MockObject $pdfFlattener;
+
+	/** What `findGlobal()` answers: the saved policy, or null for "none saved yet". */
+	private ?WatermarkConfig $globalConfig = null;
 	private ApiController $controller;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->configMapper = $this->createMock(WatermarkConfigMapper::class);
 		$this->pdfFlattener = $this->createMock(PdfFlattener::class);
+		$this->configMapper->method('findGlobal')->willReturnCallback(function (): WatermarkConfig {
+			return $this->globalConfig ?? throw new DoesNotExistException('');
+		});
 
 		$this->configMapper->method('insert')->willReturnCallback(
 			static fn (WatermarkConfig $config): WatermarkConfig => $config,
@@ -116,7 +122,7 @@ class ApiControllerConfigTest extends TestCase {
 	// getConfig ---------------------------------------------------------------------------
 
 	public function testGetConfigReturnsTheStoredPolicy(): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->storedConfig());
+		$this->globalConfig = $this->storedConfig();
 
 		$response = $this->controller->getConfig();
 
@@ -133,7 +139,7 @@ class ApiControllerConfigTest extends TestCase {
 	 * list and HTTP 200 - not a 404, which the form would have to special-case.
 	 */
 	public function testGetConfigReturnsAnEmptyListWhenNoneIsSaved(): void {
-		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException(''));
+		$this->globalConfig = null;
 
 		$response = $this->controller->getConfig();
 
@@ -260,7 +266,7 @@ class ApiControllerConfigTest extends TestCase {
 	 *           [false]
 	 */
 	public function testGetConfigReportsWhetherThisHostCanFlatten(bool $available): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->storedConfig());
+		$this->globalConfig = $this->storedConfig();
 		$this->pdfFlattener->method('isAvailable')->willReturn($available);
 
 		$data = $this->controller->getConfig()->getData();
@@ -471,15 +477,15 @@ class ApiControllerConfigTest extends TestCase {
 		$this->configMapper->expects($this->never())->method('insert');
 
 		$response = $this->controller->saveConfig(
-			type: 'combined',
-			textTemplate: '{username}',
+			type: 'text',
+			textTemplate: '{username} - {date}',
 			imagePath: null,
 			id: 7,
 		);
 
 		$this->assertSame(Http::STATUS_OK, $response->getStatus());
 		$this->assertSame(7, $response->getData()['id']);
-		$this->assertSame('combined', $response->getData()['type']);
+		$this->assertSame('{username} - {date}', $response->getData()['textTemplate']);
 		// The row's own history survives the edit; only updatedAt moves.
 		$this->assertSame('2026-01-01 00:00:00', $response->getData()['createdAt']);
 		$this->assertNotSame('', $response->getData()['updatedAt']);
@@ -498,6 +504,23 @@ class ApiControllerConfigTest extends TestCase {
 		);
 
 		$this->assertSame(Http::STATUS_NOT_FOUND, $response->getStatus());
+	}
+
+	/**
+	 * **A save without an id still edits the one policy there is.** The form sends no id
+	 * until its first save comes back, so two tabs on a fresh install - or a double submit -
+	 * used to insert a second row, and `findGlobal()` then chose between them with no order.
+	 */
+	public function testSavingWithoutAnIdEditsThePolicyThatAlreadyExists(): void {
+		$this->globalConfig = $this->storedConfig(7);
+		$this->configMapper->expects($this->never())->method('insert');
+		$this->configMapper->expects($this->once())->method('update');
+
+		$response = $this->controller->saveConfig(type: 'text', textTemplate: '{email}', imagePath: null);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame(7, $response->getData()['id']);
+		$this->assertSame('2026-01-01 00:00:00', $response->getData()['createdAt']);
 	}
 
 	public function testSavingWithoutAnIdInsertsAndStampsCreatedAt(): void {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Tests\Unit\Middleware;
 
+use OCA\Files_Versions\Controller\PreviewController as VersionsPreviewController;
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\WatermarkService;
@@ -112,6 +113,102 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 		$this->assertInstanceOf(DataDisplayResponse::class, $response);
 		$this->assertSame('STAMPED', $response->render());
 		$this->assertSame('image/png', $response->getHeaders()['Content-Type']);
+	}
+
+	/**
+	 * **The preview re-fetched is the one core was asked for.** Both sides used to be the
+	 * shorter one, with neither crop nor mode: the Viewer's 1920x1080 came back as a 1080 box
+	 * and the Files list's cropped squares came back uncropped.
+	 */
+	public function testThePreviewIsRefetchedWithTheRequestsOwnShape(): void {
+		$file = $this->createMock(File::class);
+		$this->context->record($file, 1920, 1080, true, true, IPreview::MODE_COVER, 'image/webp');
+
+		$this->preview->expects($this->once())
+			->method('getPreview')
+			->with($file, 1920, 1080, true, IPreview::MODE_COVER, 'image/webp')
+			->willReturn($this->cleanPreview($this->png()));
+		$this->watermarkService->method('watermarkPreviewImage')->willReturnCallback(
+			static fn ($f, string $src, string $dst) => file_put_contents($dst, 'STAMPED'),
+		);
+
+		$this->afterController(new Response());
+	}
+
+	/** A request that named no size passes "no constraint", not a size of its own invention. */
+	public function testARequestWithNoSizeAsksForCoresDefault(): void {
+		$file = $this->createMock(File::class);
+		$this->context->record($file, 0, 0);
+
+		$this->preview->expects($this->once())
+			->method('getPreview')
+			->with($file, -1, -1, false, IPreview::MODE_FILL, null)
+			->willReturn($this->cleanPreview($this->png()));
+		$this->watermarkService->method('watermarkPreviewImage')->willReturnCallback(
+			static fn ($f, string $src, string $dst) => file_put_contents($dst, 'STAMPED'),
+		);
+
+		$this->afterController(new Response());
+	}
+
+	/**
+	 * **A version preview is noted against the file it belongs to**, from the version
+	 * controller's own `file` argument, before that controller asks for the preview. Nothing
+	 * on the version's node says which file it is a version of.
+	 */
+	public function testAVersionPreviewNotesItsSourceBeforeTheControllerRuns(): void {
+		$source = $this->createMock(File::class);
+		$userFolder = $this->createMock(\OCP\Files\Folder::class);
+		$userFolder->method('get')->with('Docs/report.pdf')->willReturn($source);
+		$rootFolder = $this->createMock(\OCP\Files\IRootFolder::class);
+		$rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+		$user = $this->createMock(\OCP\IUser::class);
+		$user->method('getUID')->willReturn('alice');
+		$session = $this->createMock(\OCP\IUserSession::class);
+		$session->method('getUser')->willReturn($user);
+		$this->params = ['file' => 'Docs/report.pdf', 'version' => '1700000000'];
+
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParam')->willReturnCallback(
+			fn (string $key, mixed $default = null): mixed => $this->params[$key] ?? $default,
+		);
+		$middleware = new WatermarkPreviewMiddleware(
+			$this->context,
+			$this->watermarkService,
+			$this->preview,
+			$this->createMock(LoggerInterface::class),
+			$request,
+			$rootFolder,
+			$session,
+		);
+
+		$middleware->beforeController($this->createMock(VersionsPreviewController::class), 'getPreview');
+
+		$this->assertSame($source, $this->context->versionSource());
+	}
+
+	/** Every other controller in the server is left exactly as it was. */
+	public function testOnlyTheVersionControllerHasItsSourceNoted(): void {
+		$this->params = ['file' => 'Docs/report.pdf'];
+
+		$this->middleware->beforeController($this->controller(), 'getPreview');
+
+		$this->assertNull($this->context->versionSource());
+	}
+
+	/** The watermark of a version names the file it is a version of, not the version node. */
+	public function testAVersionPreviewIsStampedForItsSourceFile(): void {
+		$versionNode = $this->createMock(File::class);
+		$source = $this->createMock(File::class);
+		$this->context->record($versionNode, 256, 256, true, null, null, null, $source);
+		$this->preview->method('getPreview')->with($versionNode)->willReturn($this->cleanPreview($this->png()));
+
+		$this->watermarkService->expects($this->once())
+			->method('watermarkPreviewImage')
+			->with($source)
+			->willReturnCallback(static fn ($f, string $src, string $dst) => file_put_contents($dst, 'STAMPED'));
+
+		$this->afterController(new Response());
 	}
 
 	/**

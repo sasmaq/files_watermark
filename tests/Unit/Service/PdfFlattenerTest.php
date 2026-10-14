@@ -214,6 +214,33 @@ class PdfFlattenerTest extends TestCase {
 		$this->assertFileDoesNotExist($dest);
 	}
 
+	/**
+	 * **A renderer that hangs is killed.** There was no limit: `max_execution_time` does not
+	 * count time spent waiting on a child, so a PDF that looped poppler held a worker for as
+	 * long as the loop ran, on every download.
+	 */
+	public function testARendererThatRunsPastItsDeadlineIsStopped(): void {
+		$bin = $this->tmpDir . '/bin';
+		mkdir($bin, 0700, true);
+		file_put_contents($bin . '/pdftoppm', "#!/bin/sh\nexec /bin/sleep 30\n");
+		chmod($bin . '/pdftoppm', 0o755);
+		putenv('PATH=' . $bin);
+
+		$flattener = new PdfFlattener($this->createMock(LoggerInterface::class), pageTimeout: 1);
+		$dest = $this->tmpDir . '/hung.pdf';
+		$started = microtime(true);
+
+		try {
+			$flattener->flatten($this->sourcePdf(['One']), $dest);
+			$this->fail('Expected the deadline to stop the renderer');
+		} catch (\RuntimeException $e) {
+			$this->assertStringContainsString('took longer than 1 seconds', $e->getMessage());
+		}
+
+		$this->assertLessThan(10, microtime(true) - $started, 'the flatten waited out the renderer');
+		$this->assertFileDoesNotExist($dest);
+	}
+
 	public function testAFailingRenderPassIsReportedAndWritesNothing(): void {
 		// The caller keeps the overlay-watermarked file it passed in and serves that, so
 		// what matters here is that no half-built rebuild is left where it might be served

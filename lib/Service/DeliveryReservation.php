@@ -58,7 +58,7 @@ class DeliveryReservation {
 			return null;
 		}
 
-		return $rendition->matches($this->signature($file->getEtag(), $config)) ? $rendition : null;
+		return $rendition->matches($this->signature($file, $config)) ? $rendition : null;
 	}
 
 	/**
@@ -80,7 +80,7 @@ class DeliveryReservation {
 		$valid = [];
 		foreach ($found as $fileId => $rendition) {
 			$file = $filesById[$fileId] ?? null;
-			if ($file !== null && $rendition->matches($this->signature($file->getEtag(), $config))) {
+			if ($file !== null && $rendition->matches($this->signature($file, $config))) {
 				$valid[$fileId] = $rendition;
 			}
 		}
@@ -113,17 +113,16 @@ class DeliveryReservation {
 
 		$reserved = $this->padder->reservationFor($renderedSize);
 
-		// **Bump first, then record against what the bump produced.** A sync client only
-		// re-reads a listing whose etag moved, so without this the reservation is published
-		// to nobody - see {@see bumpEtag}. Recording against the *new* etag is what keeps
-		// that from looping: the row this writes matches the file as it will be from here on,
-		// so the next download finds a valid reservation and bumps nothing.
+		// A sync client only re-reads a listing whose etag moved, so without the bump the
+		// reservation is published to nobody - see {@see bumpEtag}. The new etag goes into
+		// the etag this reader is *offered*; it does not go into the signature, which is
+		// what keeps one reader's bump from invalidating everybody else's row.
 		$sourceEtag = $this->bumpEtag($file) ?? $file->getEtag();
 
 		$stored = $this->mapper->reserve(
 			$fileId,
 			$uid,
-			$this->signature($sourceEtag, $config),
+			$this->signature($file, $config),
 			$reserved,
 			$this->etagFor($sourceEtag, $reserved),
 		);
@@ -226,8 +225,26 @@ class DeliveryReservation {
 	/**
 	 * What makes a reservation stale.
 	 *
-	 * The stored file's etag, because editing the file changes what a render of it weighs;
-	 * and the whole policy, because every field on it - the text, the font size, the
+	 * ---------------------------------------------------------------------------
+	 * NOT THE ETAG, BECAUSE THIS CLASS MOVES THE ETAG.
+	 *
+	 * The signature used to be the stored etag - and {@see record} bumps that etag every
+	 * time it writes a row. One reader's reservation is therefore what invalidated every
+	 * other reader's: Alice's download bumped the etag, Bob's row stopped matching, Bob's
+	 * next download re-measured and bumped it again, and Alice's stopped matching. Two sync
+	 * clients on one marked file re-downloaded it from each other forever, and every round
+	 * moved the etag of every folder above it.
+	 *
+	 * So the signature is built from what this app never touches: the size and modification
+	 * time core records for the stored bytes - which an edit moves - and the name, which the
+	 * `{filename}` placeholder draws into the output.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * Missing an edit that keeps size and mtime alike is not a correctness problem, only a
+	 * cheaper one: the download is still padded *up* to the promise, and a render that has
+	 * outgrown it is caught by {@see DeliveryPadder::padTo} and re-measured.
+	 *
+	 * And the whole policy, because every field on it - the text, the font size, the
 	 * rotation, whether PDFs are flattened - moves the output too. `jsonSerialize()` carries
 	 * `updatedAt`, so a config edited back to its old values still counts as a change, which
 	 * is the safe direction to be wrong in.
@@ -236,9 +253,10 @@ class DeliveryReservation {
 	 * every reservation under it stale on sight, which costs a re-measure per download and
 	 * never promises a length nothing will honour - the safe direction again.
 	 */
-	private function signature(string $etag, WatermarkConfig $config): string {
+	private function signature(File $file, WatermarkConfig $config): string {
 		$policy = json_encode($config->jsonSerialize());
+		$content = (string)$file->getSize() . '|' . (string)$file->getMTime() . '|' . $file->getName();
 
-		return md5($etag . '|' . ($policy === false ? '' : $policy));
+		return md5($content . '|' . ($policy === false ? '' : $policy));
 	}
 }

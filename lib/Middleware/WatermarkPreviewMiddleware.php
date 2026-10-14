@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Middleware;
 
+use OCA\Files_Versions\Controller\PreviewController as VersionsPreviewController;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Controller;
@@ -12,8 +13,10 @@ use OCP\AppFramework\Http\DataDisplayResponse;
 use OCP\AppFramework\Http\Response;
 use OCP\AppFramework\Middleware;
 use OCP\Files\File;
+use OCP\Files\IRootFolder;
 use OCP\IPreview;
 use OCP\IRequest;
+use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -69,7 +72,46 @@ class WatermarkPreviewMiddleware extends Middleware {
 		private IPreview $preview,
 		private LoggerInterface $logger,
 		private IRequest $request,
+		private ?IRootFolder $rootFolder = null,
+		private ?IUserSession $userSession = null,
 	) {
+	}
+
+	/**
+	 * Note which file a version preview is a version of, before the controller asks for it.
+	 *
+	 * A source that will not resolve is simply not noted: the controller resolves the same
+	 * path itself a moment later and answers 404 for it, so there is no preview to protect.
+	 */
+	public function beforeController(Controller $controller, string $methodName): void {
+		// **The one preview controller named here**, which this class otherwise avoids on
+		// principle - see {@see PreviewRequestContext}. The preview event carries the
+		// *version's* node, which lives under `files_versions` with a file id of its own;
+		// nothing on it says which file it is a version of, so no mark matched and every
+		// version thumbnail in the Versions tab went out clean. The controller's `file`
+		// argument is the only place the answer exists.
+		//
+		// `instanceof` never autoloads, so with `files_versions` disabled this simply never
+		// matches - the same reasoning the trash checks in lib/Dav rely on.
+		if (!($controller instanceof VersionsPreviewController)) {
+			return;
+		}
+
+		$uid = $this->userSession?->getUser()?->getUID();
+		$path = $this->request->getParam('file');
+		if ($uid === null || $this->rootFolder === null || !is_string($path) || $path === '') {
+			return;
+		}
+
+		try {
+			$source = $this->rootFolder->getUserFolder($uid)->get($path);
+		} catch (\Throwable) {
+			return;
+		}
+
+		if ($source instanceof File) {
+			$this->context->noteVersionSource($source);
+		}
 	}
 
 	public function afterController(Controller $controller, string $methodName, Response $response): Response {
@@ -92,7 +134,7 @@ class WatermarkPreviewMiddleware extends Middleware {
 		}
 
 		try {
-			return $this->stamped($file);
+			return $this->stamped($file, $this->context->subject() ?? $file);
 		} catch (\Throwable $e) {
 			$this->logger->error('files_watermark: could not watermark a preview, refusing to serve it: ' . $e->getMessage(), [
 				'exception' => $e,
@@ -111,9 +153,18 @@ class WatermarkPreviewMiddleware extends Middleware {
 	 * produce it again. It is the one place where re-rendering on every scroll is the
 	 * cheaper mistake.
 	 */
-	private function stamped(File $file): Response {
+	private function stamped(File $file, File $subject): Response {
+		// Exactly what the controller asked core for - size, crop, mode and type - so this is
+		// the preview it just rendered and a cache hit, not a different one.
 		$preview = $this->context->whileGenerating(
-			fn () => $this->preview->getPreview($file, $this->requestedWidth(), $this->requestedHeight()),
+			fn () => $this->preview->getPreview(
+				$file,
+				$this->requestedWidth(),
+				$this->requestedHeight(),
+				$this->context->crop() ?? false,
+				$this->context->mode() ?? IPreview::MODE_FILL,
+				$this->context->mimeType(),
+			),
 		);
 
 		$bytes = $preview->getContent();
@@ -134,7 +185,9 @@ class WatermarkPreviewMiddleware extends Middleware {
 			$size = @getimagesize($src);
 			$shorterSide = $size === false ? $this->context->shorterSide() : min($size[0], $size[1]);
 
-			$this->watermarkService->watermarkPreviewImage($file, $src, $dst, $shorterSide);
+			// The subject, not the node: for an old version the watermark names the file it is a
+			// version of, and is decided by that file's mark and share.
+			$this->watermarkService->watermarkPreviewImage($subject, $src, $dst, $shorterSide);
 
 			$stamped = file_get_contents($dst);
 			if ($stamped === false) {
@@ -207,15 +260,20 @@ class WatermarkPreviewMiddleware extends Middleware {
 	}
 
 	/**
-	 * Zero means "core's default", which is what it also means to `IPreview::getPreview()`
-	 * when a caller does not care - so an event that carried no dimensions passes the lack
-	 * of them straight through rather than inventing a size.
+	 * The width core was asked for, or -1 - `IPreview`'s "no constraint" - when the event
+	 * carried none.
+	 *
+	 * Width and height are passed through separately. Both used to be the *shorter* side,
+	 * so the Viewer's 1920x1080 request was regenerated inside a 1080x1080 box and arrived at
+	 * a little over half the width it asked for.
 	 */
 	private function requestedWidth(): int {
-		return max(-1, $this->context->shorterSide());
+		$width = $this->context->width();
+		return $width > 0 ? $width : -1;
 	}
 
 	private function requestedHeight(): int {
-		return max(-1, $this->context->shorterSide());
+		$height = $this->context->height();
+		return $height > 0 ? $height : -1;
 	}
 }

@@ -15,7 +15,7 @@ use Psr\Log\LoggerInterface;
  *
  * Replaces the old "type an image path" field, which stored a raw **server filesystem**
  * path that {@see PdfWatermarker} / {@see ImageWatermarker} then `file_exists()`ed and
- * read. Because saving a config is not admin-only, any account could point its personal
+ * read. Saving a config was not admin-only then, so any account could point its personal
  * watermark at an arbitrary server-readable image and have the contents composited into
  * files it downloaded. Images now only ever come from here: uploaded through the settings
  * UI, validated, and referenced by an opaque generated name that cannot escape this folder.
@@ -196,6 +196,45 @@ class WatermarkImageStore {
 				'exception' => $e,
 			]);
 		}
+	}
+
+	/**
+	 * Delete every stored logo that is not in $keep and was stored before $olderThan.
+	 *
+	 * An upload is stored the moment it arrives, before the admin saves the policy that will
+	 * reference it - and an admin who uploads three logos before settling on one, or closes
+	 * the page without saving, left the other uploads in appdata for good. The age floor is
+	 * what keeps this from deleting an upload whose save is still to come.
+	 *
+	 * @param list<string> $keep references still in use
+	 * @param int $olderThan unix time; anything modified after it is left alone
+	 * @return int how many were deleted
+	 */
+	public function deleteUnreferenced(array $keep, int $olderThan): int {
+		$folder = $this->folder(false);
+		if ($folder === null) {
+			return 0;
+		}
+
+		$deleted = 0;
+		foreach ($folder->getDirectoryListing() as $file) {
+			$name = $file->getName();
+			if (!self::isReference($name) || in_array($name, $keep, true) || $file->getMTime() >= $olderThan) {
+				continue;
+			}
+
+			try {
+				$file->delete();
+				$deleted++;
+			} catch (\Throwable $e) {
+				$this->logger->warning('files_watermark: could not delete an unused watermark image', [
+					'reference' => $name,
+					'exception' => $e,
+				]);
+			}
+		}
+
+		return $deleted;
 	}
 
 	private function folder(bool $create): ?ISimpleFolder {

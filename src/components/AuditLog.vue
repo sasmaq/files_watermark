@@ -153,6 +153,11 @@ const TRIGGER_LABELS = {
 	on_upload: t('files_watermark', 'On upload'),
 	unmarked: t('files_watermark', 'Watermark removed'),
 	delivered: t('files_watermark', 'Downloaded'),
+	// A copy of a protected file carries the protection with it. It used to show as the
+	// raw `inherited` - the one row in the log in English on a translated page.
+	inherited: t('files_watermark', 'Copied from a watermarked file'),
+	// The one file the policy skips rather than marks: a PDF only its password opens.
+	skipped: t('files_watermark', 'Skipped: password-protected'),
 }
 
 /**
@@ -187,6 +192,10 @@ const TRIGGER_ICONS = {
 	delivered: 'M12 16 6 10h4V4h4v6h4l-6 6ZM5 18h14v2H5Z',
 	// The same document with a bar where the droplet was: the mark is off.
 	unmarked: DOCUMENT + 'M8 13h8v2H8Z',
+	// A smaller page inside the page: the mark arrived with a copy of a protected file.
+	inherited: DOCUMENT + 'M9 10h6v7H9Zm1.5 1.5v4h3v-4h-3Z',
+	// A padlock where the droplet would be: the file's own password kept the mark off.
+	skipped: DOCUMENT + 'M10 13v-1.5a2 2 0 0 1 4 0V13h1v5H9v-5h1Zm1.2 0h1.6v-1.5a.8.8 0 0 0-1.6 0V13Z',
 }
 
 // A row whose trigger this version does not know - written by an older or newer release -
@@ -393,6 +402,10 @@ onMounted(fetchLog)
    makes a file *less* protected than it was.
 */
 .trigger-badge--unmarked { --trigger-color: #b8770f; }
+/* The mark came with a copy of a protected file - a mark like any other, by another route. */
+.trigger-badge--inherited { --trigger-color: #8a4fb8; }
+/* The policy would have marked it and could not: the file goes out as stored. */
+.trigger-badge--skipped { --trigger-color: #c2410c; }
 
 .empty-state {
 	display: flex;

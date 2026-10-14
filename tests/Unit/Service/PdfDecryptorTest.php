@@ -104,6 +104,37 @@ class PdfDecryptorTest extends TestCase {
 		$this->assertNull($this->decryptor->decrypt((string)file_get_contents($source)));
 	}
 
+	/**
+	 * `isLocked()` tells a real password apart from every other "not ours": it is the one
+	 * unreadable PDF the upload trigger skips rather than marks.
+	 *
+	 * @dataProvider encryptionModeProvider
+	 */
+	public function testARealPasswordIsReportedAsLocked(int $mode): void {
+		$source = $this->tmpDir . '/locked.pdf';
+		$this->writeEncryptedPdf($source, 's3cret', $mode, 'Genuinely protected');
+
+		$this->assertTrue($this->decryptor->isLocked((string)file_get_contents($source)));
+	}
+
+	/** @dataProvider encryptionModeProvider */
+	public function testTheEmptyPasswordIsNotALock(int $mode): void {
+		$source = $this->tmpDir . '/flags-only.pdf';
+		$this->writeEncryptedPdf($source, '', $mode, 'Permission flags only');
+
+		$this->assertFalse($this->decryptor->isLocked((string)file_get_contents($source)));
+	}
+
+	/** Unencrypted, or not a PDF at all: "cannot tell" is not "locked". */
+	public function testNothingElseIsReportedAsLocked(): void {
+		$source = $this->tmpDir . '/plain.pdf';
+		$this->writePdf($source, [['text' => 'Nothing to unlock']]);
+
+		$this->assertFalse($this->decryptor->isLocked((string)file_get_contents($source)));
+		$this->assertFalse($this->decryptor->isLocked('this is not a real PDF document'));
+		$this->assertFalse($this->decryptor->isLocked(''));
+	}
+
 	public function testGarbageIsDeclinedRatherThanThrowing(): void {
 		$this->assertNull($this->decryptor->decrypt('this is not a real PDF document'));
 		$this->assertNull($this->decryptor->decrypt(''));

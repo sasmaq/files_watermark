@@ -79,6 +79,54 @@ class WatermarkMarkMapper extends QBMapper {
 		return $qb->executeStatement() > 0;
 	}
 
+	/**
+	 * Delete up to $limit marks whose file no longer exists anywhere, and say how many went.
+	 *
+	 * Nothing else ever deletes a mark but Remove: a file deleted for good left its row behind
+	 * forever. "Anywhere" is the file cache, which still holds a trashed file - the trash is a
+	 * move, so a deleted file's mark stays exactly as long as the file can be restored or
+	 * downloaded from the trash. Run in batches by {@see \OCA\FilesWatermark\BackgroundJob\CleanupJob}.
+	 */
+	public function deleteOrphans(int $limit = InList::MAX): int {
+		return $this->deleteFileIds($this->orphanedFileIds($limit));
+	}
+
+	/**
+	 * Up to $limit distinct marked file ids that the file cache no longer knows.
+	 *
+	 * @return list<int>
+	 */
+	private function orphanedFileIds(int $limit): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectDistinct('t.file_id')
+			->from($this->getTableName(), 't')
+			->leftJoin('t', 'filecache', 'f', $qb->expr()->eq('t.file_id', 'f.fileid'))
+			->where($qb->expr()->isNull('f.fileid'))
+			->setMaxResults($limit);
+
+		$result = $qb->executeQuery();
+		$ids = [];
+		while ($row = $result->fetch()) {
+			$ids[] = (int)$row['file_id'];
+		}
+		$result->closeCursor();
+
+		return $ids;
+	}
+
+	/** @param list<int> $fileIds at most {@see InList::MAX} of them */
+	private function deleteFileIds(array $fileIds): int {
+		if ($fileIds === []) {
+			return 0;
+		}
+
+		$qb = $this->db->getQueryBuilder();
+		$qb->delete($this->getTableName())
+			->where($qb->expr()->in('file_id', $qb->createNamedParameter($fileIds, IQueryBuilder::PARAM_INT_ARRAY)));
+
+		return $qb->executeStatement();
+	}
+
 	public function isMarked(int $fileId): bool {
 		return $this->markedFileIds([$fileId]) !== [];
 	}
@@ -117,23 +165,20 @@ class WatermarkMarkMapper extends QBMapper {
 	 * @return array<int, WatermarkMark>
 	 */
 	public function findByFileIds(array $fileIds): array {
-		if ($fileIds === []) {
-			return [];
-		}
-
-		$fileIds = array_values(array_unique(array_map('intval', $fileIds)));
-
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->getTableName())
-			->where($qb->expr()->in(
-				'file_id',
-				$qb->createNamedParameter($fileIds, IQueryBuilder::PARAM_INT_ARRAY),
-			));
-
 		$marks = [];
-		foreach ($this->findEntities($qb) as $mark) {
-			$marks[$mark->getFileId()] = $mark;
+		// One query per thousand ids - see {@see InList} for why not one per call.
+		foreach (InList::chunks($fileIds) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('*')
+				->from($this->getTableName())
+				->where($qb->expr()->in(
+					'file_id',
+					$qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY),
+				));
+
+			foreach ($this->findEntities($qb) as $mark) {
+				$marks[$mark->getFileId()] = $mark;
+			}
 		}
 
 		return $marks;
@@ -150,26 +195,23 @@ class WatermarkMarkMapper extends QBMapper {
 	 * @return int[]
 	 */
 	public function markedFileIds(array $fileIds): array {
-		if ($fileIds === []) {
-			return [];
-		}
-
-		$fileIds = array_values(array_unique(array_map('intval', $fileIds)));
-
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('file_id')
-			->from($this->getTableName())
-			->where($qb->expr()->in(
-				'file_id',
-				$qb->createNamedParameter($fileIds, IQueryBuilder::PARAM_INT_ARRAY),
-			));
-
-		$result = $qb->executeQuery();
 		$ids = [];
-		while ($row = $result->fetch()) {
-			$ids[] = (int)$row['file_id'];
+		// One query per thousand ids - see {@see InList} for why not one per call.
+		foreach (InList::chunks($fileIds) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('file_id')
+				->from($this->getTableName())
+				->where($qb->expr()->in(
+					'file_id',
+					$qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY),
+				));
+
+			$result = $qb->executeQuery();
+			while ($row = $result->fetch()) {
+				$ids[] = (int)$row['file_id'];
+			}
+			$result->closeCursor();
 		}
-		$result->closeCursor();
 
 		return $ids;
 	}

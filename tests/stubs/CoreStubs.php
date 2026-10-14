@@ -101,6 +101,71 @@ namespace OCA\Files_Trashbin\Sabre {
 	}
 }
 
+namespace OCA\Files_Versions\Versions {
+
+	if (!interface_exists(IVersion::class)) {
+		/**
+		 * Mirrors `interface IVersion` (files_versions/lib/Versions/IVersion.php).
+		 *
+		 * `getBackend()` is left out: nothing in lib/ asks a version for its backend, and
+		 * reproducing it would drag `IVersionBackend` in with it for no assertion's sake.
+		 */
+		interface IVersion {
+			public function getSourceFile(): \OCP\Files\FileInfo;
+
+			/** @return int|string */
+			public function getRevisionId();
+
+			public function getTimestamp(): int;
+
+			public function getSize(): int|float;
+
+			public function getSourceFileName(): string;
+
+			public function getMimeType(): string;
+
+			public function getVersionPath(): string;
+
+			public function getUser(): \OCP\IUser;
+		}
+	}
+}
+
+namespace OCA\Files_Versions\Sabre {
+
+	if (!class_exists(VersionFile::class)) {
+		/**
+		 * Mirrors `class VersionFile implements IFile, IPropertySource`
+		 * (files_versions/lib/Sabre/VersionFile.php).
+		 *
+		 * Abstract here, like the DAV node stubs above: the plugin only recognises the node
+		 * and asks it for its version, its bytes, its type, its size and its etag - all of
+		 * which a mock answers. `files_versions` is an app and can be disabled, in which case
+		 * the `instanceof` in `DownloadInterceptorPlugin` simply never matches.
+		 */
+		abstract class VersionFile implements \Sabre\DAV\IFile {
+			/** VersionFile.php:83 */
+			abstract public function getVersion(): \OCA\Files_Versions\Versions\IVersion;
+		}
+	}
+}
+
+namespace OCA\Files_Versions\Controller {
+
+	if (!class_exists(PreviewController::class)) {
+		/**
+		 * Stands in for `class PreviewController extends Controller`
+		 * (files_versions/lib/Controller/PreviewController.php).
+		 *
+		 * `WatermarkPreviewMiddleware` recognises it by name, before it runs, to note which
+		 * file a version preview belongs to. Nothing else about it is touched, so nothing
+		 * else is reproduced.
+		 */
+		abstract class PreviewController extends \OCP\AppFramework\Controller {
+		}
+	}
+}
+
 namespace OC {
 
 	use OCP\IDateTimeZone;
@@ -225,6 +290,29 @@ namespace OCA\DAV\Events {
 			/** SabrePluginAddEvent.php:34 - not nullable here, unlike SabrePluginEvent's. */
 			public function getServer(): \Sabre\DAV\Server {
 				return $this->server;
+			}
+		}
+	}
+
+	if (!class_exists(BeforeFileDirectDownloadedEvent::class)) {
+		/**
+		 * Mirrors `class BeforeFileDirectDownloadedEvent extends Event`
+		 * (apps/dav/lib/Events/BeforeFileDirectDownloadedEvent.php).
+		 *
+		 * Dispatched by `OCA\DAV\Direct\DirectFile::get()` - the `/remote.php/direct/{token}`
+		 * server - immediately before it opens the stored file. It carries no veto flag; a
+		 * listener refuses the download by throwing, which `DirectFile::get()` lets through to
+		 * Sabre as the response.
+		 */
+		class BeforeFileDirectDownloadedEvent extends \OCP\EventDispatcher\Event {
+			public function __construct(
+				private \OCP\Files\File $file,
+			) {
+				parent::__construct();
+			}
+
+			public function getFile(): \OCP\Files\File {
+				return $this->file;
 			}
 		}
 	}

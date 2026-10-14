@@ -6,11 +6,13 @@ namespace OCA\FilesWatermark\Dav;
 
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\Files_Trashbin\Sabre\ITrash;
+use OCA\Files_Versions\Sabre\VersionFile;
 use OCA\FilesWatermark\Service\DeliveryPadder;
 use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
+use OCP\Files\FileInfo;
 use OCP\Files\IRootFolder;
 use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
@@ -107,14 +109,28 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	) {
 	}
 
+	/**
+	 * Where on `method:GET` this plugin runs.
+	 *
+	 * **After core's view-only check, and before core serves the body.** `ViewOnlyPlugin`
+	 * refuses a GET on a share whose download permission is off, and it sits at 90; Sabre's
+	 * `CorePlugin` streams the stored file at 100. This used to be 90 as well, and Sabre does
+	 * not define an order between equal priorities - when this plugin happened to run first,
+	 * it returned false and the view-only check never ran, so a share that forbade
+	 * downloading handed out the watermarked file anyway. 92 is strictly between the two.
+	 * (`ViewOnlyPlugin` is added on `beforeMethod:*`, after this plugin, so registration
+	 * order would have put it second.)
+	 */
+	public const GET_PRIORITY = 92;
+
 	public function initialize(Server $server): void {
 		$this->server = $server;
 		// Hook the same event Sabre's CorePlugin streams file bodies on (`method:GET`),
-		// at a lower priority number so we run *first*. Returning false stops CorePlugin
+		// at a lower priority number so we run before it. Returning false stops CorePlugin
 		// from serving the original, but - unlike returning false from `beforeMethod` -
 		// Sabre still runs `afterMethod` and flushes our response via `sendResponse`.
 		// (A false from `beforeMethod:GET` returns before `sendResponse`, sending 0 bytes.)
-		$server->on('method:GET', [$this, 'httpGet'], 90);
+		$server->on('method:GET', [$this, 'httpGet'], self::GET_PRIORITY);
 		// And again *after* core has had its say. `FilesPlugin::httpGet` listens on this
 		// same event at the default priority of 100, so a larger number here is what puts
 		// {@see afterGet} last and lets it overrule what core wrote. See that method for
@@ -140,6 +156,10 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			$node = $this->server->tree->getNodeForPath($request->getPath());
 		} catch (NotFound) {
 			return true;
+		}
+
+		if ($node instanceof VersionFile) {
+			return $this->serveVersion($request, $response, $node);
 		}
 
 		$file = $this->fileFor($node);
@@ -168,8 +188,10 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 
 		$stream = @fopen($tmpPath, 'rb');
 		if ($stream === false) {
+			// A render that cannot be read back is a render that failed. The file is marked
+			// (or forced by its share), so the stored bytes are not the fallback.
 			$this->cleanup($tmpPath);
-			return true;
+			throw new Forbidden('This file is watermarked on download, and the watermark could not be generated.');
 		}
 
 		// Delete the temp copy once the response has been flushed to the client.
@@ -184,31 +206,150 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			'sentEtag' => $etag,
 		]);
 
+		// **The trashbin names its own downloads.** `TrashbinPlugin` adds a
+		// Content-Disposition on `afterMethod:GET` - which still runs after we return false -
+		// carrying the file's *original* name rather than the `Frog.jpg.d1786407996` that
+		// storage gives it. It adds unconditionally, and `addHeader` appends rather than
+		// replaces, so setting ours here would not win the argument, it would send the header
+		// twice. Core's `FilesPlugin` does check first, which is why the ordinary path is
+		// still ours to set.
+		$this->stream($response, $stream, $tmpPath, $etag, $file->getMimeType(), $length, $node instanceof ITrash ? null : $file->getName());
+
+		return false;
+	}
+
+	/**
+	 * Serve an old version of a protected file watermarked, or leave it to core.
+	 *
+	 * `files_versions` serves `/remote.php/dav/versions/...` from this same Sabre server, and
+	 * every version of a marked file is a clean copy of it - nothing this app does writes to
+	 * storage. The Versions tab offers each one for download, to the owner and to every share
+	 * recipient. See {@see WatermarkService::watermarkVersionForDownload} for the decision.
+	 *
+	 * The source file is resolved **as this reader sees it**, the way core's own
+	 * `ViewOnlyPlugin` does: `getSourceFile()` answers from the owner's storage, where a
+	 * recipient's fetch would look like the owner reading their own file and the share
+	 * switches would never see it.
+	 */
+	private function serveVersion(RequestInterface $request, ResponseInterface $response, VersionFile $node): bool {
+		$sourceInfo = $node->getVersion()->getSourceFile();
+		$source = $this->readersViewOf($sourceInfo);
+
+		if ($source === null) {
+			// A version whose file this reader cannot resolve. The mark is still asked by id,
+			// because a marked file's version must not slip out on a lookup that failed.
+			$sourceId = $sourceInfo->getId();
+			if ($sourceId !== null && $this->watermarkService->isMarked($sourceId)) {
+				throw new Forbidden('This file is watermarked on download, and the watermark could not be generated.');
+			}
+			return true;
+		}
+
+		$this->revalidate = $this->watermarkService->isSupported($node->getContentType() ?? '');
+
+		try {
+			$tmpPath = $this->watermarkService->watermarkVersionForDownload(
+				$source,
+				static fn () => $node->get(),
+				(string)$node->getContentType(),
+				$node->getSize(),
+			);
+		} catch (WatermarkRequiredException $e) {
+			$this->trace('refusing a version: the render failed', $request, ['reason' => $e->getMessage()]);
+			throw new Forbidden($e->getMessage(), 0, $e);
+		}
+
+		if ($tmpPath === null) {
+			$this->trace('version not watermarked, leaving to core', $request, ['path' => $source->getPath()]);
+			return true;
+		}
+
+		$stream = @fopen($tmpPath, 'rb');
+		if ($stream === false) {
+			$this->cleanup($tmpPath);
+			throw new Forbidden('This file is watermarked on download, and the watermark could not be generated.');
+		}
+		register_shutdown_function(fn () => $this->cleanup($tmpPath));
+
+		$length = (int)filesize($tmpPath);
+		$this->trace('serving a watermarked version', $request, ['path' => $source->getPath(), 'sentSize' => $length]);
+
+		// No reservation: a version is never listed with a promised length, so there is
+		// nothing to pad to. And no Content-Disposition: `files_versions` adds its own on
+		// `afterMethod:GET`, with the source file's name, exactly as the trash does.
+		$this->stream($response, $stream, $tmpPath, (string)$node->getETag(), (string)$node->getContentType(), $length, null);
+
+		return false;
+	}
+
+	/**
+	 * The versioned file as the current reader reaches it, or the owner's node when there is
+	 * no reader to ask for.
+	 */
+	private function readersViewOf(FileInfo $source): ?File {
+		$id = $source->getId();
+		$uid = $this->userSession?->getUser()?->getUID();
+
+		if ($id !== null && $uid !== null) {
+			try {
+				foreach ($this->rootFolder->getUserFolder($uid)->getById($id) as $candidate) {
+					if ($candidate instanceof File) {
+						return $candidate;
+					}
+				}
+			} catch (\Throwable) {
+				// Fall through to the owner's node.
+			}
+		}
+
+		return $source instanceof File ? $source : null;
+	}
+
+	/**
+	 * Put a substituted body on the response.
+	 *
+	 * Status 200 with the full body deliberately ignores any Range header: the watermarked
+	 * bytes differ from the original, so byte offsets into the source are meaningless and a
+	 * partial response would be incoherent.
+	 *
+	 * @param resource $stream
+	 * @param ?string $downloadName the name to offer the download under, or null when another
+	 *                              plugin names it
+	 */
+	private function stream(
+		ResponseInterface $response,
+		$stream,
+		string $tmpPath,
+		string $etag,
+		string $mime,
+		int $length,
+		?string $downloadName,
+	): void {
 		// Tell `afterGet` there is a substituted body to describe.
 		$this->served = ['path' => $tmpPath, 'etag' => $etag];
 
-		// Status 200 with the full body deliberately ignores any Range header: the
-		// watermarked bytes differ from the original, so byte offsets into the
-		// source are meaningless and a partial response would be incoherent.
 		$response->setStatus(200);
-		$response->setHeader('Content-Type', $file->getMimeType());
+		$response->setHeader('Content-Type', $mime);
 		$response->setHeader('Content-Length', (string)$length);
-		if (!($node instanceof ITrash)) {
-			// **The trashbin names its own downloads.** `TrashbinPlugin` adds a
-			// Content-Disposition on `afterMethod:GET` - which still runs after we return
-			// false - carrying the file's *original* name rather than the
-			// `Frog.jpg.d1786407996` that storage gives it. It adds unconditionally, and
-			// `addHeader` appends rather than replaces, so setting ours here would not win
-			// the argument, it would send the header twice. Core's `FilesPlugin` does check
-			// first, which is why the ordinary path below is still ours to set.
-			$response->setHeader(
-				'Content-Disposition',
-				'attachment; filename="' . addslashes($file->getName()) . '"',
-			);
+		if ($downloadName !== null) {
+			$response->setHeader('Content-Disposition', self::contentDisposition($downloadName));
 		}
 		$response->setBody($stream);
+	}
 
-		return false;
+	/**
+	 * An `attachment` disposition that survives a name that is not ASCII.
+	 *
+	 * The form core's `FilesPlugin` sends: the RFC 5987 `filename*` that every current browser
+	 * reads, and a percent-encoded plain `filename` for the ones that do not. This used to be
+	 * `filename="<raw bytes>"` with `addslashes()`, which put UTF-8 straight into a header -
+	 * an Arabic name arrived as mojibake or as `download` depending on the browser, on a
+	 * deployment where Arabic names are the ordinary case.
+	 */
+	public static function contentDisposition(string $name): string {
+		$encoded = rawurlencode($name);
+
+		return "attachment; filename*=UTF-8''" . $encoded . '; filename="' . $encoded . '"';
 	}
 
 	/**

@@ -219,6 +219,25 @@ class ApiController extends Controller {
 			}
 		}
 
+		// **A policy that draws nothing is refused here**, rather than saved and then
+		// delivering marked files with no watermark on them. An `image` policy without a logo
+		// that is actually stored, or a `text` one whose text is blank, used to render
+		// successfully and change not one pixel.
+		$wantsText = in_array($type, ['text', 'combined'], true);
+		$wantsLogo = in_array($type, ['image', 'combined'], true);
+		if ($wantsText && $textTemplate !== null && trim($textTemplate) === '') {
+			return new DataResponse(
+				['error' => $this->l->t('The watermark text cannot be empty.')],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+		if ($wantsLogo && !$this->imageStore->exists($imagePath)) {
+			return new DataResponse(
+				['error' => $this->l->t('Upload a logo image to use an image watermark.')],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+
 		if ($textTemplate !== null) {
 			preg_match_all('/\{([^}]+)\}/', $textTemplate, $matches);
 			$invalid = array_diff($matches[1], self::VALID_TOKENS);
@@ -239,9 +258,20 @@ class ApiController extends Controller {
 				return new DataResponse(['error' => $this->l->t('Config not found')], Http::STATUS_NOT_FOUND);
 			}
 		} else {
-			$config = new WatermarkConfig();
-			$config->setCreatedAt(date('Y-m-d H:i:s'));
+			// **There is one policy, and a save without an id edits it if it exists.** The
+			// form sends no id until it has saved once, so two tabs open on a fresh install -
+			// or one double-submitted save - used to insert a second row, and `findGlobal()`
+			// then picked between them with no order to go on.
+			try {
+				$config = $this->configMapper->findGlobal();
+				$id = $config->getId();
+			} catch (DoesNotExistException) {
+				$config = new WatermarkConfig();
+				$config->setCreatedAt(date('Y-m-d H:i:s'));
+			}
 		}
+
+		$previousImage = $config->getImagePath();
 
 		$config->setType($type);
 		$config->setTextTemplate($textTemplate);
@@ -270,6 +300,12 @@ class ApiController extends Controller {
 			$config = $this->configMapper->update($config);
 		} else {
 			$config = $this->configMapper->insert($config);
+		}
+
+		// The logo this save replaced or cleared is referenced by nothing now. Deleted after
+		// the write, so a save that failed cannot leave the stored policy pointing at nothing.
+		if ($previousImage !== null && $previousImage !== $config->getImagePath()) {
+			$this->imageStore->delete($previousImage);
 		}
 
 		return new DataResponse($config->jsonSerialize());
@@ -323,20 +359,21 @@ class ApiController extends Controller {
 		}
 
 		$this->configMapper->delete($config);
+		$this->imageStore->delete($config->getImagePath());
 		return new DataResponse(['status' => 'deleted']);
 	}
 
 	/**
 	 * Mark a file, on the user's own request, so every fetch of it is watermarked.
 	 *
-	 * **Nothing is rendered here and nothing is written to the file.** This used to be the
-	 * one expensive thing an ordinary user could trigger - a full render plus two full reads
-	 * of the content, synchronously, on one PHP worker - and it is now a row. The ceilings
-	 * still apply, but they moved with the cost: {@see WatermarkService::mark()} checks them
-	 * because a file this app will not render is a file it must not promise a watermark for,
-	 * not because this request would struggle.
+	 * **Nothing is written to the file, and it is rendered exactly once.** The render is the
+	 * proof that the file *can* be watermarked - a password-protected PDF, or a document the
+	 * renderer cannot read, is refused here with the reason, rather than marked into a file
+	 * every later download answers 403 for - and it doubles as the owner's delivery
+	 * measurement. See {@see WatermarkService::mark()}. The size ceilings are checked first,
+	 * so the render is bounded by the same policy that allows the mark.
 	 *
-	 * The rate limit is sized for what is left. 120 a minute is well above what the file
+	 * The rate limit is sized for that one render. 120 a minute is well above what the file
 	 * action can produce by hand - each mark is its own click in the row menu - and still
 	 * bounds a script, which matters because this is the only route to marking from the UI.
 	 * Core's rate-limiting middleware enforces it and answers 429 before anything here runs.
@@ -548,6 +585,17 @@ class ApiController extends Controller {
 			return new DataResponse(['watermarked' => [], 'locked' => []]);
 		}
 
+		// **Bounded, because every id costs a mount lookup and a bound parameter.** The Files
+		// app asks in chunks of 100; an unbounded list let any account send tens of thousands
+		// in one request, each resolved through the filesystem and the lot handed to an
+		// `IN (...)` past what the database accepts.
+		if (count($requested) > self::MAX_STATUS_IDS) {
+			return new DataResponse(
+				['error' => $this->l->t('Too many files were asked about at once.')],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+
 		// Restrict to ids the acting user can access. getById returns an empty
 		// array for ids the user cannot reach, so anything outside their scope
 		// is dropped before it ever hits the log table.
@@ -572,6 +620,12 @@ class ApiController extends Controller {
 		return new DataResponse(['watermarked' => $watermarked, 'locked' => $locked]);
 	}
 
+	/** The most ids {@see getWatermarkedStatus} answers for in one request. */
+	public const MAX_STATUS_IDS = 500;
+
+	/** The most audit rows {@see getLog} returns in one page. */
+	public const MAX_LOG_PAGE = 500;
+
 	public function getLog(int $limit = 100, int $offset = 0): DataResponse {
 		$user = $this->userSession->getUser();
 		$isAdmin = $user && $this->groupManager->isAdmin($user->getUID());
@@ -580,7 +634,9 @@ class ApiController extends Controller {
 			return new DataResponse(['error' => $this->l->t('Forbidden')], Http::STATUS_FORBIDDEN);
 		}
 
-		$entries = $this->logMapper->findAll($limit, $offset);
+		// A page, not a dump: the table grows by a row per delivery when that is audited, and
+		// a limit of a few million would materialise it all in one response.
+		$entries = $this->logMapper->findAll(max(1, min(self::MAX_LOG_PAGE, $limit)), max(0, $offset));
 		return new DataResponse(array_map(fn ($e) => $this->inInstanceTimeZone($e->jsonSerialize()), $entries));
 	}
 

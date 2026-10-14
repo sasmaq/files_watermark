@@ -102,26 +102,6 @@ Cypress.Commands.add('wmApply', (path, options = {}) =>
 Cypress.Commands.add('wmRemove', (path, options = {}) =>
 	cy.wmApi('POST', '/api/v1/remove', { path }, options))
 
-/**
- * `GET /api/v1/download`, which streams a watermarked copy of one file.
- *
- * It goes through `cy.request` rather than a task because it is session-authenticated
- * like the rest of the app API - and unlike an upload, a GET has no request body to
- * be mangled, so `encoding: 'base64'` brings the bytes back intact.
- */
-Cypress.Commands.add('wmApiDownload', (path) => {
-	cy.wmToken().then((token) =>
-		cy.request({
-			url: `/apps/files_watermark/api/v1/download?path=${encodeURIComponent(path)}`,
-			headers: { requesttoken: token },
-			encoding: 'base64',
-		}).then((response) => {
-			expect(response.status, `api download ${path}`).to.eq(200)
-			return response.body
-		}),
-	)
-})
-
 /** Create a folder, replacing any left over from an earlier run. */
 Cypress.Commands.add('wmFolder', (path) => {
 	cy.task('nc:delete', { ...admin(), path })

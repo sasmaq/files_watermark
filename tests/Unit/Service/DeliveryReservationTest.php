@@ -43,12 +43,20 @@ class DeliveryReservationTest extends TestCase {
 	/** @var list<string> etags written to the file cache, in order */
 	private array $bumped = [];
 
-	private function file(int $id = 42, string $etag = 'etag-1'): File&MockObject {
+	private function file(
+		int $id = 42,
+		string $etag = 'etag-1',
+		int $size = 2048,
+		int $mtime = 1_700_000_000,
+		string $name = 'x.pdf',
+	): File&MockObject {
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn($id);
 		$file->method('getEtag')->willReturn($etag);
-		$file->method('getInternalPath')->willReturn('files/x.pdf');
-		$file->method('getMTime')->willReturn(1_700_000_000);
+		$file->method('getInternalPath')->willReturn('files/' . $name);
+		$file->method('getName')->willReturn($name);
+		$file->method('getSize')->willReturn($size);
+		$file->method('getMTime')->willReturn($mtime);
 
 		// A storage that records what the reservation writes back, so the etag refresh is
 		// observable - it is the whole reason a client ever re-reads a listing.
@@ -102,8 +110,14 @@ class DeliveryReservationTest extends TestCase {
 		);
 	}
 
-	/** Editing the file changes what a render of it weighs. */
-	public function testAReservationDoesNotSurviveTheFileChanging(): void {
+	/**
+	 * Editing the file changes what a render of it weighs. An edit is what core records as
+	 * new bytes - a new size, a new modification time - and a rename changes the
+	 * `{filename}` drawn into the output.
+	 *
+	 * @dataProvider provideEdits
+	 */
+	public function testAReservationDoesNotSurviveTheFileChanging(array $edited): void {
 		$config = $this->config();
 
 		$captured = null;
@@ -112,15 +126,58 @@ class DeliveryReservationTest extends TestCase {
 				$captured = $sig;
 				return true;
 			});
-		$this->reservation->record($this->file(etag: 'etag-1'), 'alice', $config, 1000, 'application/pdf');
+		$this->reservation->record($this->file(), 'alice', $config, 1000, 'application/pdf');
 
 		$stored = new WatermarkRendition();
 		$stored->setSignature((string)$captured);
 		$this->mapper->method('find')->willReturn($stored);
 
 		$this->assertNull(
-			$this->reservation->current($this->file(etag: 'etag-2'), 'alice', $config),
+			$this->reservation->current($this->file(...$edited), 'alice', $config),
 			'a reservation measured against an older version of the file must not be reused',
+		);
+	}
+
+	/** @return array<string, array{0: array<string, int|string>}> */
+	public static function provideEdits(): array {
+		return [
+			'new size' => [['size' => 4096]],
+			'new modification time' => [['mtime' => 1_700_000_500]],
+			'renamed' => [['name' => 'a much longer name.pdf']],
+		];
+	}
+
+	/**
+	 * **One reader's reservation must not retire another's.**
+	 *
+	 * `record()` bumps the file's etag so clients come back and re-read the length. When the
+	 * signature *was* that etag, Alice's measurement invalidated Bob's row and Bob's next
+	 * measurement invalidated Alice's - two sync clients on one marked file re-downloaded it
+	 * from each other forever, and every round moved the etag of every folder above it.
+	 */
+	public function testAnotherReadersReservationDoesNotRetireThisOne(): void {
+		$config = $this->config();
+
+		$signatures = [];
+		$this->mapper->method('reserve')
+			->willReturnCallback(function (int $f, string $uid, string $sig) use (&$signatures): bool {
+				$signatures[$uid] = $sig;
+				return true;
+			});
+
+		$this->reservation->record($this->file(etag: 'etag-1'), 'alice', $config, 1000, 'application/pdf');
+		// Bob measures the file as Alice's bump left it, and bumps it again.
+		$this->reservation->record($this->file(etag: $this->bumped[0]), 'bob', $config, 1000, 'application/pdf');
+
+		$alices = new WatermarkRendition();
+		$alices->setSignature($signatures['alice']);
+		$this->mapper->method('find')->willReturn($alices);
+
+		$this->assertCount(2, $this->bumped, 'each first measurement still publishes itself');
+		$this->assertSame(
+			$alices,
+			$this->reservation->current($this->file(etag: $this->bumped[1]), 'alice', $config),
+			"Bob's measurement moved the etag, and Alice's promise must still stand",
 		);
 	}
 
