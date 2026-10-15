@@ -65,7 +65,8 @@ iOS-specific inputs:
 
 | Check | Source |
 | --- | --- |
-| Supported type | `tableMetadata.contentType` |
+| Supported type | `tableMetadata.contentType`, against `mimetypes` from the capability entry |
+| Trigger | `trigger` from the capability entry (README, *The capability entry*). NextcloudKit decodes capabilities into its own types; if they drop `files_watermark`, add the entry to them |
 | Write permission (Apply) | `W` in `tableMetadata.permissions` |
 | Owner (Remove) | `tableMetadata.ownerId` equals the account's `userId` (the id in its DAV URL), not its login name |
 | Status | The two new `tableMetadata` fields |

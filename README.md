@@ -424,6 +424,11 @@ bound on marking from the UI, which is why it is still there. It is not configur
 | `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
 
+Native clients also get the app's trigger, supported types and limits from a
+`files_watermark` entry in `/ocs/v2.php/cloud/capabilities`, for signed-in accounts only.
+[doc/clients/README.md](doc/clients/README.md) describes it, with the rest of the client
+contract.
+
 ## Usage
 
 - **On demand:** right-click any supported file in the Files app → **Apply Watermark**. The
