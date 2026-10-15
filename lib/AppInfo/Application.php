@@ -13,23 +13,28 @@ use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\DirectDownloadListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeCopiedListener;
+use OCA\FilesWatermark\EventListener\NodeMovedListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
 use OCA\FilesWatermark\EventListener\UserDeletedListener;
 use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
+use OCA\FilesWatermark\Middleware\TextAttachmentMiddleware;
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\PdfFontPath;
 use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\ShareRecipient;
+use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\BeforeSabrePubliclyLoadedEvent;
+use OCP\Files\Events\Node\BeforeNodeRenamedEvent;
 use OCP\Files\Events\Node\NodeCopiedEvent;
+use OCP\Files\Events\Node\NodeRenamedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\IRequest;
 use OCP\IUserSession;
@@ -38,6 +43,7 @@ use OCP\Share\IManager as IShareManager;
 use OCP\User\Events\UserDeletedEvent;
 use OCP\Util;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 
 class Application extends App implements IBootstrap {
 
@@ -162,9 +168,19 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
 		// A copy gets a new file id, so it lands outside every mark already placed - which
 		// made copying a shared file the way to obtain it clean. See NodeCopiedListener.
-		// (There is deliberately no NodeRenamedEvent listener: a move keeps the file id, so
-		// the mark moves with the file on its own.)
 		$context->registerEventListener(NodeCopiedEvent::class, NodeCopiedListener::class);
+		// A move keeps the file id, so the mark moves with the file on its own - but a move
+		// out of a share into somebody else's storage escapes the share switch, and the rare
+		// move that cannot keep the id leaves the mark behind. Both halves of the move are
+		// needed (see NodeMovedListener), so one shared instance takes both events.
+		$context->registerService(NodeMovedListener::class, static fn (
+			ContainerInterface $c,
+		): NodeMovedListener => new NodeMovedListener(
+			$c->get(WatermarkService::class),
+			$c->get(LoggerInterface::class),
+		), true);
+		$context->registerEventListener(BeforeNodeRenamedEvent::class, NodeMovedListener::class);
+		$context->registerEventListener(NodeRenamedEvent::class, NodeMovedListener::class);
 		$context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
 		$context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
 		// Public links are served by a *separate* Sabre server that never fires
@@ -204,6 +220,9 @@ class Application extends App implements IBootstrap {
 		// never serves - which is how a logged-in visitor's *preview* of somebody else's
 		// link used to come out clean while the download of the same file did not.
 		$context->registerMiddleware(PublicShareContextMiddleware::class, true);
+		// Global as well: Text serves a document's attachments from its own controller with
+		// `getContent()`, never through DAV, so this is the only place they can be caught.
+		$context->registerMiddleware(TextAttachmentMiddleware::class, true);
 		// One instance per request, shared by both halves above: the middleware reads what
 		// the listener recorded, and two instances would leave it reading an empty one.
 		$context->registerService(PreviewRequestContext::class, static fn (

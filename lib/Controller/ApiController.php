@@ -458,9 +458,11 @@ class ApiController extends Controller {
 	 * the watermark exists to answer. Whoever the shared copy would have named is exactly
 	 * whoever has an interest in it naming nobody.
 	 *
-	 * So this asks who *owns* the file, not who may write it. For a file that is not shared
-	 * the two are the same person and nothing changes; the rule only ever bites on a share,
-	 * which is the case it was written for.
+	 * So this asks who *owns* the file, not who may write it - and specifically who owned it
+	 * when it was marked, which the recipient cannot change by moving the file out of the
+	 * share and into their own home. For a file that is not shared the two are the same
+	 * person and nothing changes; the rule only ever bites on a share, which is the case it
+	 * was written for.
 	 *
 	 * Note that the reverse is deliberately not restricted: a recipient may still *mark* a
 	 * file they can write. That direction only ever adds protection, and it cannot lock the

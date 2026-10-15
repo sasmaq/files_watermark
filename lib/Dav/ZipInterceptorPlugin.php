@@ -8,6 +8,7 @@ use OC\Streamer;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\Node as DavNode;
 use OCA\FilesWatermark\Service\ArchiveLimits;
+use OCA\FilesWatermark\Service\RenderRateLimitedException;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\IEventDispatcher;
@@ -162,6 +163,11 @@ class ZipInterceptorPlugin extends ServerPlugin {
 				'reason' => $e->getMessage(),
 			]);
 			throw new Forbidden('This folder contains a watermarked file whose watermark could not be generated, so it cannot be downloaded as an archive.');
+		} catch (RenderRateLimitedException $e) {
+			// Charged before the first render, so nothing has been written yet; cleaned up
+			// anyway, so this stays correct if the charge ever moves.
+			$this->cleanup();
+			throw TooManyRendersException::from($e);
 		}
 
 		if ($rendered === []) {
@@ -296,7 +302,15 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		$maxMembers = $this->limits->maxMembers();
 		$maxBytes = $this->limits->maxBytes();
 
-		foreach ($this->deliveryMembers($content) as $file) {
+		$members = $this->deliveryMembers($content);
+		if ($members !== []) {
+			// One charge for the archive, not one per member: its own cost is already bounded
+			// by the caps below, and charging per member would turn an ordinary folder download
+			// into an immediate 429. See AnonymousRenderLimit.
+			$this->watermarkService->chargeAnonymousRender();
+		}
+
+		foreach ($members as $file) {
 			$count++;
 			$bytes += max(0, $file->getSize());
 			if ($count > $maxMembers || $bytes > $maxBytes) {
@@ -314,7 +328,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 			// Throws WatermarkRequiredException of its own if the render fails, which is the
 			// same denial by a different route.
-			$tmpPath = $this->watermarkService->watermarkForDownload($file);
+			$tmpPath = $this->watermarkService->watermarkForDownload($file, false);
 			if ($tmpPath === null) {
 				// The mark went away between the batch query and here. Vanishingly rare and
 				// entirely benign: the file is not marked, so streaming it as stored is
@@ -342,7 +356,9 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	 * The marks are still one query for the whole archive rather than one per member: a
 	 * folder download of a few hundred files is the ordinary case, and asking the mark table
 	 * per file is what would make this plugin the slowest thing in a download. The share test
-	 * costs nothing per member - the storage is already resolved and the policy is memoised.
+	 * costs nothing per member until a switch claims the fetch - the storage is already
+	 * resolved and the policy is memoised - and then one short read only for a member whose
+	 * name says it is nothing renderable.
 	 *
 	 * @param Node[] $content
 	 * @return File[]
@@ -375,10 +391,14 @@ class ZipInterceptorPlugin extends ServerPlugin {
 				continue;
 			}
 
-			// Unmarked: only the share switches can pull it in, and those are a rule about
-			// *this fetch* rather than about the file, so the cached type is answer enough.
-			if ($this->watermarkService->isSupported($file->getMimeType())
-				&& $this->watermarkService->isForcedByShare($file)) {
+			// Unmarked: only the share switches can pull it in. **The name is not trusted
+			// here either.** This used to pre-filter on the cached type, so a recipient who
+			// could rename `report.pdf` to `report.txt` got the single download watermarked
+			// and the same file clean inside a folder archive. `isForcedByShare()` reads the
+			// bytes only once a switch has claimed the fetch and the name says nothing
+			// renderable, so an archive on an instance with both switches off still costs no
+			// reads at all.
+			if ($this->watermarkService->isForcedByShare($file)) {
 				$members[] = $file;
 			}
 		}

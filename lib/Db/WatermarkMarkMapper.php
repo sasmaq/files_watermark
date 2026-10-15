@@ -30,8 +30,9 @@ class WatermarkMarkMapper extends QBMapper {
 	/**
 	 * Mark $fileId, or leave the existing mark standing.
 	 *
-	 * @param ?string $originOwner the uid this protection descends from, for an inherited
-	 *                             mark; null for one placed directly on a file
+	 * @param ?string $originOwner whose protection this is: the file's owner for a mark placed
+	 *                             on it, the source's for an inherited one. See
+	 *                             {@see WatermarkMark::$originOwner}
 	 * @param ?int $originFileId the file the mark was inherited from; audit only
 	 * @return bool true when this call created the mark, false when one was already there
 	 */

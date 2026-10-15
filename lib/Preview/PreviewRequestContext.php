@@ -159,6 +159,17 @@ class PreviewRequestContext {
 		return $this->mimeType;
 	}
 
+	/**
+	 * Whether this request produced a preview of a file this app watches, stamped or not.
+	 *
+	 * What a controller that can answer with *either* a preview or the raw file - Text's
+	 * attachment image - is asked, to tell which it did: a preview is
+	 * {@see \OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware}'s to handle.
+	 */
+	public function previewed(): bool {
+		return $this->file !== null;
+	}
+
 	/** Whether this request previews a file this app could watermark, and goes out clean. */
 	public function previewsCleanCopy(): bool {
 		return $this->file !== null && !$this->stamp;
