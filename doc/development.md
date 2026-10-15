@@ -4182,9 +4182,10 @@ Open:
     runner's tag; unset, the job does not exist, rather than sitting pending forever waiting
     for a runner that will never take it. `resource_group: e2e` keeps two runs off the same
     port 8080
-  - `workflow:` runs merge-request and default-branch pipelines only. Without that pairing a
-    push to a branch with an open MR builds twice, and `auto_cancel: on_new_commit` plus
-    `interruptible` is what replaces `cancel-in-progress`
+  - `workflow:` runs merge-request pipelines and branch pipelines for every branch - so every
+    merge, which lands as a push to its target branch, gets a pipeline - but skips the branch
+    pipeline when the branch has an open MR, so that push builds once rather than twice.
+    `auto_cancel: on_new_commit` plus `interruptible` cancels the superseded run
 
 ---
 
