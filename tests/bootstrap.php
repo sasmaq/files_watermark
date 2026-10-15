@@ -125,6 +125,57 @@ namespace Doctrine\DBAL\Query\Expression {
 	}
 }
 
+namespace Symfony\Component\HttpFoundation {
+	// OCP\AppFramework\Http\DownloadResponse (nextcloud/ocp stable32, as in a real
+	// Nextcloud 32) builds its Content-Disposition with this. Core ships symfony/http-foundation
+	// in 3rdparty/; the app does not depend on it, so a test that constructs a
+	// DataDownloadResponse - TextAttachmentMiddlewareTest - needs this much of it. Mirrors
+	// HeaderUtils::makeDisposition() and the quoting it does, so the header a test sees is
+	// the one core would send.
+	if (!class_exists(HeaderUtils::class)) {
+		final class HeaderUtils {
+			public const DISPOSITION_ATTACHMENT = 'attachment';
+			public const DISPOSITION_INLINE = 'inline';
+
+			public static function makeDisposition(string $disposition, string $filename, string $filenameFallback = ''): string {
+				if (!in_array($disposition, [self::DISPOSITION_ATTACHMENT, self::DISPOSITION_INLINE], true)) {
+					throw new \InvalidArgumentException(sprintf('The disposition must be either "%s" or "%s".', self::DISPOSITION_ATTACHMENT, self::DISPOSITION_INLINE));
+				}
+
+				if ($filenameFallback === '') {
+					$filenameFallback = $filename;
+				}
+
+				if (!preg_match('/^[\x20-\x7e]*$/', $filenameFallback)) {
+					throw new \InvalidArgumentException('The filename fallback must only contain ASCII characters.');
+				}
+
+				if (str_contains($filenameFallback, '%')) {
+					throw new \InvalidArgumentException('The filename fallback cannot contain the "%" character.');
+				}
+
+				if (str_contains($filename, '/') || str_contains($filename, '\\') || str_contains($filenameFallback, '/') || str_contains($filenameFallback, '\\')) {
+					throw new \InvalidArgumentException('The filename and the fallback cannot contain the "/" and "\\" characters.');
+				}
+
+				$params = ['filename' => $filenameFallback];
+				if ($filename !== $filenameFallback) {
+					$params['filename*'] = "utf-8''" . rawurlencode($filename);
+				}
+
+				$parts = [];
+				foreach ($params as $key => $value) {
+					$parts[] = $key . '=' . (preg_match('/^[a-z0-9!#$%&\'*.^_`|~-]+$/i', $value)
+						? $value
+						: '"' . addcslashes($value, '"\\') . '"');
+				}
+
+				return $disposition . '; ' . implode('; ', $parts);
+			}
+		}
+	}
+}
+
 namespace Doctrine\DBAL\Types {
 	if (!class_exists(Types::class)) {
 		final class Types {
