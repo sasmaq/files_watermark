@@ -191,6 +191,9 @@ class TextAttachmentMiddlewareTest extends TestCase {
 		$this->assertInstanceOf(DataDownloadResponse::class, $response);
 		$this->assertSame('WATERMARKED', $response->render());
 		$this->assertSame('application/pdf', $response->getHeaders()['Content-Type']);
+		// Offered as an attachment under the file's own name. The quoting is core's business
+		// and differs between OCP versions, so it is not pinned here.
+		$this->assertMatchesRegularExpression('/^attachment; filename="?report\.pdf"?$/', $response->getHeaders()['Content-Disposition']);
 		$this->assertSame('private, no-store', $response->getHeaders()['Cache-Control']);
 	}
 
