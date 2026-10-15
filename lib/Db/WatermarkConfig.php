@@ -37,6 +37,8 @@ use OCP\AppFramework\Db\Entity;
  * @method void setWatermarkExternalShares(bool $watermarkExternalShares)
  * @method bool getFlattenPdf()
  * @method void setFlattenPdf(bool $flattenPdf)
+ * @method bool getDynamicFontSize()
+ * @method void setDynamicFontSize(bool $dynamicFontSize)
  * @method string getCreatedAt()
  * @method void setCreatedAt(string $createdAt)
  * @method string getUpdatedAt()
@@ -105,6 +107,15 @@ class WatermarkConfig extends Entity {
 	 * and with it selection, search and screen-reader access.
 	 */
 	protected bool $flattenPdf = false;
+	/**
+	 * Size the watermark text to each page or image instead of drawing it at `fontSize` -
+	 * {@see \OCA\FilesWatermark\Service\FontSize} has the rule.
+	 *
+	 * Off by default, so an upgrade draws every watermark exactly as before. `fontSize` is
+	 * kept rather than cleared while this is on, so switching it off again restores the size
+	 * the admin had chosen.
+	 */
+	protected bool $dynamicFontSize = false;
 	protected string $createdAt = '';
 	protected string $updatedAt = '';
 
@@ -116,6 +127,7 @@ class WatermarkConfig extends Entity {
 		$this->addType('watermarkInternalShares', 'boolean');
 		$this->addType('watermarkExternalShares', 'boolean');
 		$this->addType('flattenPdf', 'boolean');
+		$this->addType('dynamicFontSize', 'boolean');
 	}
 
 	/** Returns the allowed MIME types as an array, or all supported types if not set. */
@@ -143,6 +155,7 @@ class WatermarkConfig extends Entity {
 			'watermarkInternalShares' => $this->watermarkInternalShares,
 			'watermarkExternalShares' => $this->watermarkExternalShares,
 			'flattenPdf' => $this->flattenPdf,
+			'dynamicFontSize' => $this->dynamicFontSize,
 			'createdAt' => $this->createdAt,
 			'updatedAt' => $this->updatedAt,
 		];

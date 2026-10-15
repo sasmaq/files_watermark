@@ -244,6 +244,22 @@ class WatermarkConfigMapperTest extends TestCase {
 	}
 
 	/**
+	 * The same coercion again: `"0"` would disable the form's font size slider.
+	 *
+	 * @dataProvider dynamicFontSizeRowProvider
+	 */
+	public function testTheDynamicFontSizeSwitchComesBackTyped(string $stored, bool $expected): void {
+		$this->queryReturning([$this->row(['dynamic_font_size' => $stored])]);
+
+		$this->assertSame($expected, $this->mapper->findById(7)->jsonSerialize()['dynamicFontSize']);
+	}
+
+	/** @return array<string, array{string, bool}> */
+	public static function dynamicFontSizeRowProvider(): array {
+		return ['off' => ['0', false], 'on' => ['1', true]];
+	}
+
+	/**
 	 * The same map, on the way in. `QBMapper::insert()` asks the entity for each property's
 	 * type, so a column added to `WatermarkConfig` without a matching `addType()` is bound as
 	 * a string - silently, and only on the databases that tolerate it.
@@ -286,6 +302,7 @@ class WatermarkConfigMapperTest extends TestCase {
 		// The flattening switch, for the same reason: bound as a string it is the setting
 		// silently reading true on an instance that has it off.
 		$config->setFlattenPdf(true);
+		$config->setDynamicFontSize(true);
 
 		$saved = $this->mapper->insert($config);
 
@@ -294,6 +311,7 @@ class WatermarkConfigMapperTest extends TestCase {
 		$this->assertSame(IQueryBuilder::PARAM_INT, $bound['rotation']);
 		$this->assertSame(IQueryBuilder::PARAM_BOOL, $bound['log_delivery']);
 		$this->assertSame(IQueryBuilder::PARAM_BOOL, $bound['flatten_pdf']);
+		$this->assertSame(IQueryBuilder::PARAM_BOOL, $bound['dynamic_font_size']);
 		$this->assertSame(IQueryBuilder::PARAM_STR, $bound['type']);
 		$this->assertSame(IQueryBuilder::PARAM_STR, $bound['color']);
 		// The generated id lands on the entity, which is what the controller returns to the

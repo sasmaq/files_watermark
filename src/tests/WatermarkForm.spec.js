@@ -365,6 +365,102 @@ describe('WatermarkForm', () => {
 		})
 	})
 
+	describe('dynamic font size', () => {
+		/**
+		 * Mount as an admin with the advanced options open, where the switch lives.
+		 * @param {object} [props] - prop overrides, typically modelValue
+		 * @return {Promise<object>} the mounted wrapper
+		 */
+		async function mountDynamic(props = {}) {
+			const wrapper = mountForm({ isAdmin: true, ...props })
+			const advanced = wrapper.find('.wm-advanced input')
+			if (!advanced.element.checked) {
+				await advanced.setValue(true)
+			}
+			return wrapper
+		}
+
+		const slider = (wrapper) => wrapper.find('#wm-fontsize')
+
+		it('lives behind the advanced switch, and defaults to off', async () => {
+			expect(mountForm({ isAdmin: true }).find('.wm-dynamic-font-toggle').exists()).toBe(false)
+
+			const wrapper = await mountDynamic()
+			expect(wrapper.find('.wm-dynamic-font-toggle').exists()).toBe(true)
+			expect(wrapper.vm.form.dynamicFontSize).toBe(false)
+			expect(slider(wrapper).element.disabled).toBe(false)
+		})
+
+		it('is admin-only, like the rest of the server-wide policy', () => {
+			expect(mountForm({ isAdmin: false, modelValue: { dynamicFontSize: true } })
+				.find('.wm-dynamic-font-toggle').exists()).toBe(false)
+		})
+
+		it('is not offered for a logo-only watermark, which has no text to size', async () => {
+			const wrapper = await mountDynamic({ modelValue: { type: 'image' } })
+			expect(wrapper.find('.wm-dynamic-font-toggle').exists()).toBe(false)
+		})
+
+		it('disables the font size slider while it is on, and says why', async () => {
+			const wrapper = await mountDynamic()
+			await wrapper.find('.wm-dynamic-font-toggle input').setValue(true)
+
+			expect(wrapper.vm.form.dynamicFontSize).toBe(true)
+			expect(slider(wrapper).element.disabled).toBe(true)
+			expect(wrapper.find('.wm-fontsize .wm-inline__val').text()).toBe('Auto')
+			expect(wrapper.find('.wm-fontsize').text()).toContain('advanced options')
+		})
+
+		it('enables the slider again when it is switched off', async () => {
+			const wrapper = await mountDynamic({ modelValue: { dynamicFontSize: true, fontSize: 60 } })
+			expect(slider(wrapper).element.disabled).toBe(true)
+
+			await wrapper.find('.wm-dynamic-font-toggle input').setValue(false)
+			expect(slider(wrapper).element.disabled).toBe(false)
+			expect(wrapper.find('.wm-fontsize').text()).toContain('60 pt')
+		})
+
+		it('keeps the chosen size while it is on, so switching off restores it', async () => {
+			const wrapper = await mountDynamic({ modelValue: { dynamicFontSize: true, fontSize: 60 } })
+			await wrapper.find('.wm-save').trigger('click')
+
+			const [payload] = wrapper.emitted('save')[0]
+			expect(payload.dynamicFontSize).toBe(true)
+			expect(payload.fontSize).toBe(60)
+		})
+
+		it('opens the advanced options when the stored policy already uses it', () => {
+			// The slider is disabled by a control behind the switch; hiding that control would
+			// leave a disabled slider with nothing on screen to explain it.
+			const wrapper = mountForm({ isAdmin: true, modelValue: { dynamicFontSize: true } })
+			expect(wrapper.find('.wm-advanced input').element.checked).toBe(true)
+			expect(wrapper.find('.wm-dynamic-font-toggle').exists()).toBe(true)
+		})
+
+		it('states the rule with the numbers the server uses', async () => {
+			// FontSize::DYNAMIC_RATIO is 0.04, which puts an A4 page at 24pt.
+			const text = (await mountDynamic()).text()
+			expect(text).toContain('4% of the shorter side')
+			expect(text).toContain('24 pt on an A4 page')
+		})
+
+		it('previews the size an A4 page gets, whatever the slider holds', async () => {
+			const previewSize = (wrapper) => Number(wrapper.find('.wm-preview__svg text').attributes('font-size'))
+			const fixed24 = mountForm({ modelValue: { fontSize: 24 } })
+			const dynamic = mountForm({ modelValue: { fontSize: 120, dynamicFontSize: true } })
+
+			expect(previewSize(dynamic)).toBe(previewSize(fixed24))
+		})
+
+		it('is restored to off by Reset to defaults', async () => {
+			const wrapper = await mountDynamic({ modelValue: { dynamicFontSize: true } })
+			await wrapper.find('.wm-reset').trigger('click')
+
+			expect(wrapper.vm.form.dynamicFontSize).toBe(false)
+			expect(slider(wrapper).element.disabled).toBe(false)
+		})
+	})
+
 	describe('tamper resistance (PDF flattening)', () => {
 		/**
 		 * Mount as an admin with the advanced options open and the server reporting a

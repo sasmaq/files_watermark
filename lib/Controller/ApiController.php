@@ -117,6 +117,7 @@ class ApiController extends Controller {
 		bool $watermarkInternalShares = false,
 		bool $watermarkExternalShares = false,
 		bool $flattenPdf = false,
+		bool $dynamicFontSize = false,
 		?int $id = null,
 	): DataResponse {
 
@@ -294,6 +295,9 @@ class ApiController extends Controller {
 		$config->setWatermarkInternalShares($watermarkInternalShares);
 		$config->setWatermarkExternalShares($watermarkExternalShares);
 		$config->setFlattenPdf($flattenPdf);
+		// `fontSize` is still clamped and stored above while this is on: the renderers ignore
+		// it, and it is the size they go back to when this is switched off.
+		$config->setDynamicFontSize($dynamicFontSize);
 		$config->setUpdatedAt(date('Y-m-d H:i:s'));
 
 		if ($id !== null) {

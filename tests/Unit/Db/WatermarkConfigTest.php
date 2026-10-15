@@ -114,4 +114,17 @@ class WatermarkConfigTest extends TestCase {
 
 		$this->assertTrue($config->jsonSerialize()['flattenPdf']);
 	}
+
+	/**
+	 * In the payload, and off. The settings page disables the font size slider on this
+	 * value, and the reservation signature digests the payload - a field missing from it
+	 * would let a reader's promised download length survive the switch being flipped.
+	 */
+	public function testJsonSerializeCarriesTheDynamicFontSizeSwitch(): void {
+		$config = new WatermarkConfig();
+		$this->assertFalse($config->jsonSerialize()['dynamicFontSize'], 'an upgrade must draw at the size it did');
+
+		$config->setDynamicFontSize(true);
+		$this->assertTrue($config->jsonSerialize()['dynamicFontSize']);
+	}
 }

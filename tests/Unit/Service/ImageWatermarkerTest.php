@@ -242,6 +242,54 @@ class ImageWatermarkerTest extends TestCase {
 		$this->assertNotSame(md5_file($small), md5_file($large));
 	}
 
+	/**
+	 * The feature's whole claim, on pixels: with a dynamic size, an image three times larger
+	 * carries text three times taller. A fixed size draws the same text on both.
+	 *
+	 * Measured as line height rather than ink coverage, which is the obvious metric and
+	 * does not discriminate: the lattice gap scales with the type, so a fixed size simply
+	 * tiles *more* copies onto the larger image and covers the same share of it either way.
+	 */
+	public function testADynamicFontSizeScalesWithTheImage(): void {
+		$small = $this->createImage('image/png', 'png', 400, 300, name: 'small_src');
+		$large = $this->createImage('image/png', 'png', 1200, 900, name: 'large_src');
+
+		$heights = function (WatermarkConfig $config) use ($small, $large): array {
+			$out = [];
+			foreach (['small' => $small, 'large' => $large] as $label => $source) {
+				$dest = $this->tmpDir . "/band_$label.png";
+				$this->watermarker->apply($source, $dest, $config, ['username' => 'Watermark']);
+				$out[$label] = $this->tallestInkBand($dest);
+			}
+			return $out;
+		};
+
+		$dynamic = $this->makeConfig('text', 100, 0, 20);
+		$dynamic->setDynamicFontSize(true);
+		$dyn = $heights($dynamic);
+		// Measured at 12px and 37px. The slack is for hinting, which rounds a small face
+		// harder than a large one.
+		$this->assertEqualsWithDelta(3.0, $dyn['large'] / $dyn['small'], 0.5, 'dynamic text should grow with the image');
+
+		$fix = $heights($this->makeConfig('text', 100, 0, 20));
+		$this->assertSame($fix['small'], $fix['large'], 'a fixed size should draw the same text on both');
+	}
+
+	/** With a dynamic size on, the configured one is not read at all. */
+	public function testADynamicFontSizeIgnoresTheConfiguredSize(): void {
+		$base = $this->createImage('image/png', 'png', 600, 400);
+
+		$outputs = [];
+		foreach ([6, 120] as $fontSize) {
+			$config = $this->makeConfig('text', 100, 0, $fontSize);
+			$config->setDynamicFontSize(true);
+			$outputs[$fontSize] = $this->tmpDir . "/dyn_$fontSize.png";
+			$this->watermarker->apply($base, $outputs[$fontSize], $config, ['username' => 'WM']);
+		}
+
+		$this->assertSame(md5_file($outputs[6]), md5_file($outputs[120]));
+	}
+
 	public function testColorIsConfigurable(): void {
 		$base = $this->createImage('image/png', 'png', 400, 300);
 
@@ -700,6 +748,27 @@ class ImageWatermarkerTest extends TestCase {
 	 * the drawn glyphs are, which total ink no longer is now that the tile count falls as
 	 * the type size rises.
 	 */
+	/**
+	 * Height of the tallest run of consecutive rows carrying any ink. At rotation 0 that is
+	 * one line of watermark text: the tiles of a row share a baseline, and rows are a gap of
+	 * several type sizes apart, so no two lines merge into one band.
+	 */
+	private function tallestInkBand(string $path): int {
+		$img = imagecreatefrompng($path);
+		$tallest = 0;
+		$band = 0;
+		for ($y = 0; $y < imagesy($img); $y++) {
+			$inked = false;
+			for ($x = 0; $x < imagesx($img) && !$inked; $x++) {
+				$inked = (imagecolorat($img, $x, $y) & 0xFF) < 250;
+			}
+			$band = $inked ? $band + 1 : 0;
+			$tallest = max($tallest, $band);
+		}
+		imagedestroy($img);
+		return $tallest;
+	}
+
 	private function longestInkRun(string $path): int {
 		$img = imagecreatefrompng($path);
 		$longest = 0;

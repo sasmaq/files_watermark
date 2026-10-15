@@ -339,12 +339,13 @@ class PdfWatermarker {
 		float $height,
 	): void {
 		$text = $this->resolvePlaceholders($config->getTextTemplate() ?? '{username} {date}', $placeholders);
-		$fontSize = (float)$config->getFontSize();
+		// Per page, so a dynamic size follows each page of a document that mixes formats.
+		$fontSize = FontSize::forCanvas($config, $width, $height);
 
 		// The font has to be active on this page before anything is measured, or the
 		// widths come from whatever was current instead.
 		try {
-			$font = $pdf->font->insert($pdf->pon, self::FONT_FAMILY, self::FONT_STYLE, $fontSize);
+			$font = $pdf->font->insert($pdf->pon, self::FONT_FAMILY, self::FONT_STYLE, (float)$fontSize);
 		} catch (\Exception $e) {
 			// Overwhelmingly the cause is K_PATH_FONTS having been claimed by another
 			// app before this one loaded, which surfaces as a bare "unable to read
@@ -371,7 +372,7 @@ class PdfWatermarker {
 		$content = $pdf->color->getPdfColor($config->getColor())
 			. $pdf->graph->getAlpha(round($config->getOpacity() / 100, 2));
 
-		foreach (self::tilePositions($width, $height, $textWidth, $lineHeight, $angle, $config->getFontSize()) as [$cx, $cy]) {
+		foreach (self::tilePositions($width, $height, $textWidth, $lineHeight, $angle, $fontSize) as [$cx, $cy]) {
 			// Rotate about the tile's own centre, then draw the cell around that same
 			// point. tc-lib-pdf takes the pivot in user coordinates and does the flip
 			// into PDF space itself, so no manual y inversion belongs here.

@@ -31,6 +31,8 @@ document is whoever uploaded it rather than whoever walked out with it.
 - **Image watermarks** - overlay a logo or image on files
 - **Combined** text + image watermarks
 - Diagonal tiled placement at 45° rotation, light grey (`#d3d3d3`) and 40% opacity by default
+- Optional **dynamic font size**: the text is sized to each page or image instead of drawn
+  at one fixed size - see [Dynamic font size](#dynamic-font-size)
 - Two trigger modes, deciding **which files are marked**: **on demand** (the file action
   menu) and **on upload** (every supported file, as it arrives). Under both, a marked file
   is watermarked on every download *and* every preview - including a folder or
@@ -170,6 +172,31 @@ If a rebuild fails - a page the renderer chokes on, a host that lost the package
 ordinary watermarked PDF is delivered and a warning naming the file is written to the
 Nextcloud log. The download is never refused for this: the file still carries a watermark
 naming its reader, just a strippable one.
+
+### Dynamic font size
+
+A fixed font size is the same number of points on every file, so it is a different share of
+each one: 24pt suits an A4 page, nearly vanishes on a 4000 × 3000 photo, and covers a small
+image with a few letters. **Settings → Watermark → Show advanced options → Dynamic font
+size** sizes the text to each canvas instead - **4% of its shorter side**:
+
+| Canvas | Font size |
+| --- | --- |
+| A5 page | 17pt |
+| A4 page | 24pt (the shipped fixed default, so A4 looks the same either way) |
+| A3 page | 34pt |
+| 1920 × 1080 image | 43 |
+| 4000 × 3000 photo | 120 |
+
+- **Each PDF page is sized on its own**, so a document that mixes A4 and A3 pages gets a
+  size fit for each.
+- **The spacing between repetitions scales with the text**, so every file carries about the
+  same number of copies of the watermark whatever its size.
+- There is a floor of 6 and no ceiling: a ceiling would stop the text growing on exactly
+  the large images this exists for.
+- While it is on, **the Font size slider under Appearance is disabled** and reads *Auto*.
+  It keeps its value, so switching dynamic sizing off brings back the size chosen there.
+- It is off by default, and text-only: a logo is already scaled to 30% of the page width.
 
 ### Fonts and Arabic text
 

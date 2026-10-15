@@ -108,7 +108,12 @@
 						{{ t('files_watermark', 'Appearance') }}
 					</h4>
 					<div class="wm-fields">
-						<div v-if="form.type !== 'image'" class="wm-field">
+						<!--
+							Disabled rather than hidden while the size is dynamic: the renderers
+							ignore it then, but it keeps its value - switching dynamic sizing
+							off again brings back the size that was chosen here.
+						-->
+						<div v-if="form.type !== 'image'" class="wm-field wm-fontsize">
 							<label for="wm-fontsize">{{ t('files_watermark', 'Font size') }}</label>
 							<div class="wm-inline">
 								<input id="wm-fontsize"
@@ -116,9 +121,13 @@
 									type="range"
 									min="6"
 									max="120"
+									:disabled="!!form.dynamicFontSize"
 									class="wm-range">
-								<span class="wm-inline__val">{{ form.fontSize }} pt</span>
+								<span class="wm-inline__val">{{ form.dynamicFontSize ? t('files_watermark', 'Auto') : `${form.fontSize} pt` }}</span>
 							</div>
+							<small v-if="form.dynamicFontSize" class="wm-help">
+								{{ t('files_watermark', 'Set by Dynamic font size in the advanced options.') }}
+							</small>
 						</div>
 						<div v-if="form.type !== 'image'" class="wm-field">
 							<label for="wm-color">{{ t('files_watermark', 'Text color') }}</label>
@@ -285,7 +294,31 @@
 				</section>
 
 				<!--
-					7. Flattening, also behind the advanced switch. Absent entirely - not
+					7. Dynamic font size, also behind the advanced switch. Text-only, like the
+					font size field it overrides, so a logo-only watermark does not offer it.
+				-->
+				<section v-if="isAdmin && showAdvanced && form.type !== 'image'" class="wm-card">
+					<h4 class="wm-card__title">
+						{{ t('files_watermark', 'Dynamic font size') }}
+					</h4>
+					<p class="wm-card__desc">
+						{{ t('files_watermark', 'Size the watermark text to each page or image, so a large photo and a small page carry it in the same proportion.') }}
+					</p>
+					<div class="wm-field wm-field--stacked">
+						<NcCheckboxRadioSwitch :model-value="!!form.dynamicFontSize"
+							class="wm-dynamic-font-toggle"
+							type="switch"
+							@update:model-value="form.dynamicFontSize = $event">
+							{{ t('files_watermark', 'Scale the font with the page or image size') }}
+						</NcCheckboxRadioSwitch>
+						<small class="wm-help">
+							{{ t('files_watermark', 'The text is drawn at {percent}% of the shorter side, {size} pt on an A4 page. The font size under Appearance is ignored while this is on.', { percent: DYNAMIC_FONT_PERCENT, size: DYNAMIC_A4_FONT_SIZE }) }}
+						</small>
+					</div>
+				</section>
+
+				<!--
+					8. Flattening, also behind the advanced switch. Absent entirely - not
 					disabled, not a placeholder - when the server has no rasteriser, so an
 					admin never sees a setting this host cannot honour.
 				-->
@@ -515,6 +548,8 @@ const DEFAULTS = {
 	// Off, matching the column. The server refuses it outright on a host with no
 	// rasteriser, so it can only ever be turned on where it can be honoured.
 	flattenPdf: false,
+	// Off, matching the column, so an upgrade draws every watermark at the size it did.
+	dynamicFontSize: false,
 }
 
 const form = reactive({ ...DEFAULTS, ...props.modelValue })
@@ -577,8 +612,9 @@ const pdfCapable = computed(() => {
 // with a filter set hides the control, not the filter. Seeded from the stored config so a
 // narrowed policy arrives with its reason visible.
 // `flattenPdf` seeds it too, for the same reason the filters do: a policy that is
-// rasterising every PDF download must not hide the only control that says so.
-const showAdvanced = ref(!!(form.mimeTypes || form.folderTag || form.flattenPdf))
+// rasterising every PDF download must not hide the only control that says so. So does
+// `dynamicFontSize`, which is the reason the font size slider is disabled.
+const showAdvanced = ref(!!(form.mimeTypes || form.folderTag || form.flattenPdf || form.dynamicFontSize))
 
 watch(form, (val) => emit('update:modelValue', { ...val }))
 
@@ -790,7 +826,16 @@ function resetDefaults() {
 const PV_W = 300
 const PV_H = 400
 
-const previewFont = computed(() => Math.min(80, Math.max(7, Math.round((form.fontSize || 24) * 0.55))))
+// FontSize::DYNAMIC_RATIO and ::MIN on the server. The preview page stands for A4, so a
+// dynamic size previews as what an A4 page gets: its shorter side, 595pt, times the ratio.
+const DYNAMIC_FONT_RATIO = 0.04
+const DYNAMIC_FONT_PERCENT = Math.round(DYNAMIC_FONT_RATIO * 100)
+const A4_SHORT_SIDE_PT = 595
+const DYNAMIC_A4_FONT_SIZE = Math.max(6, Math.round(A4_SHORT_SIDE_PT * DYNAMIC_FONT_RATIO))
+
+const effectiveFontSize = computed(() => (form.dynamicFontSize ? DYNAMIC_A4_FONT_SIZE : form.fontSize))
+
+const previewFont = computed(() => Math.min(80, Math.max(7, Math.round((effectiveFontSize.value || 24) * 0.55))))
 
 // Tile spacing, mirroring TileLattice::GAP_FACTOR and ::LINE_HEIGHT_FACTOR on the server.
 // The preview is the contract an admin approves against, so a preview that spaces its
@@ -986,6 +1031,11 @@ const contentLines = [
     flex: 1;
     min-width: 0;
     accent-color: var(--color-primary-element);
+}
+/* `accent-color` keeps a disabled range looking live in some browsers. */
+.wm-range:disabled {
+    opacity: .5;
+    cursor: not-allowed;
 }
 .wm-color {
     width: 44px;

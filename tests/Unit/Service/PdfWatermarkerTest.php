@@ -426,6 +426,58 @@ class PdfWatermarkerTest extends TestCase {
 		$this->assertSame(2, $this->readPageCount($dest));
 	}
 
+	/**
+	 * A dynamic size is worked out per page, so a document mixing formats carries a size fit
+	 * for each - and the configured size, set deliberately far from both, is never drawn.
+	 *
+	 * Asserted as present and absent rather than as the exact set: tc-lib-pdf sets a 12pt
+	 * default of its own on every page, text or none, and that is not the watermark's.
+	 */
+	public function testADynamicFontSizeIsSizedToEachPage(): void {
+		$source = $this->tmpDir . '/mixed.pdf';
+		$this->writePdf($source, [[], ['width' => self::A5_WIDTH, 'height' => self::A5_HEIGHT]]);
+		$dest = $this->tmpDir . '/dynamic.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setFontSize(50);
+		$config->setDynamicFontSize(true);
+		$this->watermarker->apply($source, $dest, $config, ['username' => 'Alice']);
+
+		// FontSizeTest pins the numbers: 24 for A4, 17 for A5.
+		$sizes = $this->drawnFontSizes($dest);
+		$this->assertContains(24.0, $sizes, 'the A4 page was not sized for A4');
+		$this->assertContains(17.0, $sizes, 'the A5 page was not sized for A5');
+		$this->assertNotContains(50.0, $sizes, 'the configured size was drawn anyway');
+	}
+
+	/** The counterpart: switched off, every page gets the configured size. */
+	public function testAFixedFontSizeIsTheSameOnEveryPage(): void {
+		$source = $this->tmpDir . '/mixed.pdf';
+		$this->writePdf($source, [[], ['width' => self::A5_WIDTH, 'height' => self::A5_HEIGHT]]);
+		$dest = $this->tmpDir . '/fixed.pdf';
+
+		$config = $this->makeConfig('text');
+		$config->setFontSize(50);
+		$this->watermarker->apply($source, $dest, $config, ['username' => 'Alice']);
+
+		$sizes = $this->drawnFontSizes($dest);
+		$this->assertContains(50.0, $sizes);
+		$this->assertNotContains(24.0, $sizes);
+		$this->assertNotContains(17.0, $sizes);
+	}
+
+	/** @return list<float> every size a `Tf` operator anywhere in `$path` sets */
+	private function drawnFontSizes(string $path): array {
+		$sizes = [];
+		foreach ($this->inflatedStreams((string)file_get_contents($path)) as $stream) {
+			preg_match_all('#/\S+\s+([\d.]+)\s+Tf#', $stream, $matches);
+			foreach ($matches[1] as $size) {
+				$sizes[] = (float)$size;
+			}
+		}
+		return $sizes;
+	}
+
 	public function testLongWatermarkTextRendersWithoutError(): void {
 		// Note: this asserts only that a long string renders at all. The geometry
 		// it was originally written to protect is pinned by the tile tests below -

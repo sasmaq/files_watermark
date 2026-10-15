@@ -958,6 +958,10 @@ class WatermarkService {
 	 * Copied rather than mutated - this is the entity the mapper handed us, and it is
 	 * memoised for the request, so scaling it in place would shrink the watermark on every
 	 * later render in the same request.
+	 *
+	 * A dynamic font size never reads the value set here: the renderer sizes the text from
+	 * the preview's own dimensions ({@see FontSize}), which is this same scaling done for
+	 * every canvas rather than for previews alone.
 	 */
 	private function scaledForPreview(WatermarkConfig $config, int $shorterSide): WatermarkConfig {
 		$scaled = clone $config;

@@ -21,6 +21,7 @@ Features:
 - Optionally watermark every file that leaves through an internal share or a public link
 - Admin-configurable global policy, applied server-wide
 - Full audit log of every watermark event
+- Optional dynamic font size: the watermark text is sized to each page or image, so a large photo and a small page carry it in the same proportion
 - Optional tamper resistance: watermarked PDFs can be rebuilt as page images so the watermark cannot be stripped (needs poppler-utils on the server; falls back to the ordinary watermark without it)
     ]]></description>
     <description lang="ar"><![CDATA[
@@ -37,9 +38,10 @@ Features:
 - خيار لوضع علامة مائية على كل ملف يخرج عبر مشاركة داخلية أو رابط عام
 - سياسة عامة يضبطها المدير وتسري على الخادم كله
 - سجل تدقيق كامل لكل حدث علامة مائية
+- حجم خط ديناميكي اختياري: يُضبط حجم نص العلامة المائية على مقاس كل صفحة أو صورة، فتظهر بالنسبة نفسها على الصورة الكبيرة والصفحة الصغيرة
 - مقاومة اختيارية للعبث: يعاد بناء ملفات PDF الموسومة كصور صفحات فلا يمكن نزع العلامة (تحتاج حزمة poppler-utils على الخادم، وبدونها تسلم العلامة المائية المعتادة)
     ]]></description>
-    <version>2.1.0</version>
+    <version>2.2.0</version>
     <licence>agpl</licence>
     <author mail="">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>

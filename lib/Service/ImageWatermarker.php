@@ -160,7 +160,7 @@ class ImageWatermarker {
 		if (in_array($config->getType(), ['text', 'combined'], true)) {
 			$text = $this->resolvePlaceholders($config->getTextTemplate() ?? '{username} {date}', $placeholders);
 			$color = $config->getColor();
-			$fontSize = $config->getFontSize();
+			$fontSize = FontSize::forCanvas($config, $width, $height);
 			$rotation = $config->getRotation();
 
 			// Shaped here rather than trusted to the backend: ImageMagick only reorders and
@@ -272,7 +272,7 @@ class ImageWatermarker {
 			if ($textColor === false) {
 				throw new \RuntimeException('GD could not allocate the watermark colour; the image palette is full.');
 			}
-			$fontSize = $config->getFontSize();
+			$fontSize = FontSize::forCanvas($config, $width, $height);
 			$rotation = $config->getRotation();
 			// FreeType draws code points in the order given and joins nothing, so Arabic
 			// has to arrive already shaped and already in visual order - including when it

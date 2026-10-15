@@ -350,6 +350,36 @@ class ApiControllerConfigTest extends TestCase {
 		$this->assertArrayNotHasKey('flattenDpi', $response->getData());
 	}
 
+	/**
+	 * Stored with the font size it overrides, not instead of it: the slider's value has to
+	 * survive a policy saved with dynamic sizing on, or switching it off again would reset
+	 * the size the admin had chosen.
+	 */
+	public function testDynamicFontSizeIsStoredAlongsideTheFixedSize(): void {
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+			fontSize: 60,
+			dynamicFontSize: true,
+		);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertTrue($response->getData()['dynamicFontSize']);
+		$this->assertSame(60, $response->getData()['fontSize']);
+	}
+
+	/** A save that never mentions it - an older cached form - leaves it off. */
+	public function testDynamicFontSizeDefaultsToOff(): void {
+		$response = $this->controller->saveConfig(
+			type: 'text',
+			textTemplate: '{username}',
+			imagePath: null,
+		);
+
+		$this->assertFalse($response->getData()['dynamicFontSize']);
+	}
+
 	/** Off unless asked for, so an upgrade watermarks nothing it did not watermark before. */
 	public function testTheShareSwitchesDefaultToOff(): void {
 		$response = $this->controller->saveConfig(

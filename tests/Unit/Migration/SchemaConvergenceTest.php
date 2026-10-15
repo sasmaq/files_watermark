@@ -11,6 +11,7 @@ use OCA\FilesWatermark\Migration\Version1005Date20260901120000;
 use OCA\FilesWatermark\Migration\Version1006Date20260903120000;
 use OCA\FilesWatermark\Migration\Version1007Date20260908120000;
 use OCA\FilesWatermark\Migration\Version1008Date20260915120000;
+use OCA\FilesWatermark\Migration\Version1009Date20261015120000;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
@@ -80,6 +81,8 @@ class SchemaConvergenceTest extends TestCase {
 		// ordering difference, which is exactly what `flatten_dpi` would be if 1007 missed
 		// any path: added by 1005 on every one of them, and dropped again immediately.
 		'flatten_pdf',
+		// 1009, appended to the finished table like every column before it.
+		'dynamic_font_size',
 	];
 
 	/**
@@ -274,8 +277,9 @@ class SchemaConvergenceTest extends TestCase {
 		$this->assertContains('flatten_pdf', $table->columnNames());
 		$this->assertNotContains('flatten_dpi', $table->columnNames());
 		// Appended by 1005, not the column the instance arrived with: a survivor would
-		// still sit where the seed put it, ahead of `log_delivery`.
-		$this->assertSame(['flatten_pdf'], array_slice($table->columnNames(), -1));
+		// still sit where the seed put it, ahead of `log_delivery`. Only 1009's column
+		// comes after it.
+		$this->assertSame(['flatten_pdf', 'dynamic_font_size'], array_slice($table->columnNames(), -2));
 	}
 
 	/**
@@ -318,15 +322,24 @@ class SchemaConvergenceTest extends TestCase {
 		}
 	}
 
-	/** Re-running must not duplicate columns or throw - the tables already exist. */
+	/**
+	 * Re-running must not duplicate columns or throw - the tables already exist.
+	 *
+	 * Compared as a set, not in order: a second pass of 1002 drops `flatten_pdf` and 1005
+	 * appends it again, behind any column added after it. Nextcloud never re-runs a step it
+	 * has recorded, so the order a double run leaves is not one any instance can reach.
+	 */
 	public function testRunningTwiceIsHarmless(): void {
 		$schema = new FakeSchema();
 		$this->runMigration($schema);
 		$first = $schema->getTable('watermark_config')->columnNames();
+		sort($first);
 
 		$this->runMigration($schema);
 
-		$this->assertSame($first, $schema->getTable('watermark_config')->columnNames());
+		$second = $schema->getTable('watermark_config')->columnNames();
+		sort($second);
+		$this->assertSame($first, $second);
 	}
 
 	/**
@@ -377,15 +390,18 @@ class SchemaConvergenceTest extends TestCase {
 	}
 
 	/**
-	 * The finished schema, as an instance that ran the whole old chain already has it.
+	 * The schema as 1008 finished it, as an instance that ran the whole old chain has it.
 	 *
 	 * No dropped columns and no dropped indexes, because 1005, 1006 and 1008 already took
 	 * them - and `log_delivery` present, because 1007 already added it. Every step in the
 	 * squashed migration must find nothing to do here.
+	 *
+	 * `dynamic_font_size` is absent because 1008 is where this state stops: 1009 is the one
+	 * step with work to do, which also makes this the upgrade every 2.1.0 install takes.
 	 */
 	private function preCreateCurrentTables(FakeSchema $schema): void {
 		$config = $schema->createTable('watermark_config');
-		foreach (self::EXPECTED_CONFIG_COLUMNS as $column) {
+		foreach (array_diff(self::EXPECTED_CONFIG_COLUMNS, ['dynamic_font_size']) as $column) {
 			$config->addColumn($column, 'string');
 		}
 		$schema->createTable('watermark_log')->addColumn('id', 'bigint');
@@ -416,6 +432,7 @@ class SchemaConvergenceTest extends TestCase {
 		(new Version1006Date20260903120000())->changeSchema($output, $closure, []);
 		(new Version1007Date20260908120000())->changeSchema($output, $closure, []);
 		(new Version1008Date20260915120000())->changeSchema($output, $closure, []);
+		(new Version1009Date20261015120000())->changeSchema($output, $closure, []);
 	}
 
 	/**
