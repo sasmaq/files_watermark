@@ -47,20 +47,35 @@ class BeforePreviewFetchedListener implements IEventListener {
 			return;
 		}
 
+		// An old version is previewed through its own node, which has a file id of its own
+		// that no mark names - so the question is asked of the file it is a version of,
+		// noted by the middleware before the version controller ran. Everything else is its
+		// own subject.
+		$subject = $this->context->versionSource() ?? $node;
+
 		// Marked files are stamped. Unmarked files of a type this app can watermark are
 		// recorded too, unstamped, because they can be marked tomorrow and the middleware
 		// has to stop their clean preview being cached past that. Anything else is served
 		// by core untouched, which is both correct and the cheap path - this runs on every
 		// thumbnail in every folder listing.
-		$stamp = $this->watermarkService->isDeliveryCandidate($node);
+		$stamp = $this->watermarkService->isDeliveryCandidate($subject);
 		if (!$stamp && !$this->watermarkService->isSupported($node->getMimetype())) {
 			return;
 		}
 
 		// The dimensions are nullable on the event and are a *request*, not a promise: core
 		// clamps them to its configured maxima and to the source's own size. They are
-		// recorded as a hint for scaling the watermark, and the middleware re-measures the
-		// image it actually gets.
-		$this->context->record($node, $event->getWidth() ?? 0, $event->getHeight() ?? 0, $stamp);
+		// recorded together with the crop, the mode and the type, so the middleware asks
+		// core for the very preview it just served, and it re-measures the image it gets.
+		$this->context->record(
+			$node,
+			$event->getWidth() ?? 0,
+			$event->getHeight() ?? 0,
+			$stamp,
+			$event->isCrop(),
+			$event->getMode(),
+			$event->getMimeType(),
+			$subject === $node ? null : $subject,
+		);
 	}
 }

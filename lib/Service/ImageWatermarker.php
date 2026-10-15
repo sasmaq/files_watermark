@@ -195,10 +195,13 @@ class ImageWatermarker {
 		}
 
 		$imagePath = $config->getImagePath();
-		if (
-			in_array($config->getType(), ['image', 'combined'], true)
-			&& $imagePath !== null && $imagePath !== '' && file_exists($imagePath)
-		) {
+		$hasLogo = $imagePath !== null && $imagePath !== '' && file_exists($imagePath);
+		if ($config->getType() === 'image' && !$hasLogo) {
+			// Same refusal as the GD path: a logo-only watermark without its logo is no watermark.
+			$image->clear();
+			throw new \RuntimeException('The watermark logo could not be drawn on this image.');
+		}
+		if (in_array($config->getType(), ['image', 'combined'], true) && $hasLogo) {
 			$watermark = new \Imagick($imagePath);
 			$wmW = intval($width * 0.3);
 			$wmH = intval($watermark->getImageHeight() * ($wmW / $watermark->getImageWidth()));
@@ -235,6 +238,25 @@ class ImageWatermarker {
 		if ($src === false) {
 			throw new \RuntimeException("GD could not decode this $mime file; it may be truncated or corrupt.");
 		}
+
+		// **Palette images are drawn on as truecolour.** A PNG-8 whose 256 entries are all in
+		// use - which is what an optimiser like pngquant produces - had no slot left for the
+		// watermark colour, so every download of one was refused. Converting keeps its
+		// transparency and costs only the size of the output.
+		if (!imageistruecolor($src)) {
+			imagepalettetotruecolor($src);
+		}
+
+		// Upright before anything is drawn, because GD writes no EXIF back - see ExifOrientation.
+		if ($mime === 'image/jpeg') {
+			$src = ExifOrientation::apply($src, ExifOrientation::read($sourcePath));
+		}
+
+		// **Transparency is kept.** GD decodes the alpha channel and then, unless told to,
+		// writes the image without one - every transparent pixel of a PNG or WebP came out
+		// solid black. Blending stays on so the watermark composites over what is there.
+		imagealphablending($src, true);
+		imagesavealpha($src, true);
 
 		$width = imagesx($src);
 		$height = imagesy($src);
@@ -294,6 +316,7 @@ class ImageWatermarker {
 			}
 		}
 
+		$logoDrawn = false;
 		$imagePath = $config->getImagePath();
 		if (
 			in_array($config->getType(), ['image', 'combined'], true)
@@ -311,6 +334,9 @@ class ImageWatermarker {
 			};
 
 			if ($wm !== false) {
+				if (!imageistruecolor($wm)) {
+					imagepalettetotruecolor($wm);
+				}
 				$wmOrigW = imagesx($wm);
 				$wmOrigH = imagesy($wm);
 				$wmW = intval($width * 0.3);
@@ -319,15 +345,21 @@ class ImageWatermarker {
 				imagedestroy($wm);
 
 				// imagescale() fails on a zero target dimension - a logo scaled below one
-				// pixel by a very narrow source image. Nothing to composite, so the source
-				// image goes out with its text watermark and without the logo.
+				// pixel by a very narrow source image. Nothing to composite.
 				if ($scaled !== false) {
-					$dstX = intval(($width - $wmW) / 2);
-					$dstY = intval(($height - $wmH) / 2);
-					imagecopymerge($src, $scaled, $dstX, $dstY, 0, 0, $wmW, $wmH, $config->getOpacity());
+					$this->compositeLogo($src, $scaled, intval(($width - $wmW) / 2), intval(($height - $wmH) / 2), $config->getOpacity());
 					imagedestroy($scaled);
+					$logoDrawn = true;
 				}
 			}
+		}
+
+		// A logo-only watermark with no logo on it is not a watermark. The service refuses a
+		// policy whose logo did not resolve; this is the same refusal for a logo that resolved
+		// and still could not be drawn, so the file is denied rather than served clean.
+		if ($config->getType() === 'image' && !$logoDrawn) {
+			imagedestroy($src);
+			throw new \RuntimeException('The watermark logo could not be drawn on this image.');
 		}
 
 		match ($mime) {
@@ -337,6 +369,29 @@ class ImageWatermarker {
 		};
 
 		imagedestroy($src);
+	}
+
+	/**
+	 * Lay $logo over $image at the policy's opacity, keeping the logo's own transparency.
+	 *
+	 * `imagecopymerge()` - what this used - blends every pixel of the source rectangle at
+	 * one opacity and ignores its alpha channel, so a transparent PNG logo, which is what
+	 * logos are, arrived as a solid box. Here the logo's alpha is raised by the policy's
+	 * transparency instead: `IMG_FILTER_COLORIZE`'s fourth channel adds to every pixel's alpha
+	 * and clamps at fully transparent, so an opaque pixel ends at the policy's opacity and a
+	 * transparent one stays transparent. Then an ordinary blended copy.
+	 */
+	private function compositeLogo(\GdImage $image, \GdImage $logo, int $x, int $y, int $opacity): void {
+		imagealphablending($logo, false);
+		imagesavealpha($logo, true);
+
+		$fade = (int)round(127 * (1 - max(0, min(100, $opacity)) / 100));
+		if ($fade > 0) {
+			imagefilter($logo, IMG_FILTER_COLORIZE, 0, 0, 0, $fade);
+		}
+
+		imagealphablending($image, true);
+		imagecopy($image, $logo, $x, $y, 0, 0, imagesx($logo), imagesy($logo));
 	}
 
 	/**

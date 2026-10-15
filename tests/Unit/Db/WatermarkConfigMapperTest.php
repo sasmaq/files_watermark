@@ -84,6 +84,7 @@ class WatermarkConfigMapperTest extends TestCase {
 		$qb->method('expr')->willReturn($this->createMock(IExpressionBuilder::class));
 		$qb->method('select')->willReturnSelf();
 		$qb->method('from')->willReturnSelf();
+		$qb->method('orderBy')->willReturnSelf();
 		$qb->method('where')->willReturnSelf();
 		$qb->method('setMaxResults')->willReturnSelf();
 		$qb->method('createNamedParameter')->willReturn('param');
@@ -115,6 +116,19 @@ class WatermarkConfigMapperTest extends TestCase {
 	public function testFindGlobalAsksForOneRowOnly(): void {
 		$qb = $this->queryReturning([$this->row()]);
 		$qb->expects($this->once())->method('setMaxResults')->with(1)->willReturnSelf();
+
+		$this->mapper->findGlobal();
+	}
+
+	/**
+	 * **And the same row every time.** An unordered `LIMIT 1` is whichever row the database
+	 * reaches first, and on PostgreSQL an UPDATE moves a row to the end of the heap - so on an
+	 * install with two rows, editing the policy could make the server start enforcing the
+	 * other one.
+	 */
+	public function testFindGlobalIsTheOldestRowNotWhicheverComesFirst(): void {
+		$qb = $this->queryReturning([$this->row()]);
+		$qb->expects($this->once())->method('orderBy')->with('id', 'ASC')->willReturnSelf();
 
 		$this->mapper->findGlobal();
 	}
@@ -172,67 +186,6 @@ class WatermarkConfigMapperTest extends TestCase {
 		$this->queryReturning([]);
 
 		$this->assertSame([], $this->mapper->findAll());
-	}
-
-	// hasDeliveryTrigger ------------------------------------------------------------------
-
-	/**
-	 * The archive interceptor's coarse gate: one indexed lookup that answers "could this
-	 * request need watermarking at all", so the `on_demand` / `on_upload` case stays off
-	 * core's zip path entirely.
-	 */
-	public function testHasDeliveryTriggerAsksOnlyForTheDeliveryTriggers(): void {
-		$result = $this->createMock(IResult::class);
-		$result->method('fetch')->willReturn($this->row());
-		$result->expects($this->once())->method('closeCursor');
-
-		$expr = $this->createMock(IExpressionBuilder::class);
-		// Exactly the two triggers that render per fetch. `on_demand` and `on_upload` burn
-		// into the stored bytes, so a plain archive of those already carries the watermark
-		// and taking over core's path would buy nothing.
-		$expr->expects($this->once())
-			->method('in')
-			->with('trigger', 'param')
-			->willReturn('trigger IN (:param)');
-
-		$qb = $this->createMock(IQueryBuilder::class);
-		$qb->method('expr')->willReturn($expr);
-		// `id`, not `*`: the row is never read, only counted, and the index alone can answer.
-		$qb->expects($this->once())->method('select')->with('id')->willReturnSelf();
-		$qb->method('from')->willReturnSelf();
-		$qb->expects($this->once())
-			->method('createNamedParameter')
-			->with(['on_download', 'on_share'], IQueryBuilder::PARAM_STR_ARRAY)
-			->willReturn('param');
-		$qb->expects($this->once())->method('where')->with('trigger IN (:param)')->willReturnSelf();
-		// Existence, not a count: this runs on every folder download.
-		$qb->expects($this->once())->method('setMaxResults')->with(1)->willReturnSelf();
-		$qb->method('executeQuery')->willReturn($result);
-
-		$this->db->method('getQueryBuilder')->willReturn($qb);
-
-		$this->assertTrue($this->mapper->hasDeliveryTrigger());
-	}
-
-	public function testHasDeliveryTriggerIsFalseWhenNoPolicyDeliversOnFetch(): void {
-		$result = $this->createMock(IResult::class);
-		$result->method('fetch')->willReturn(false);
-		// Closed on the empty path too - this is the common case on most instances, so a
-		// leaked statement here would be the one that leaks constantly.
-		$result->expects($this->once())->method('closeCursor');
-
-		$qb = $this->createMock(IQueryBuilder::class);
-		$qb->method('expr')->willReturn($this->createMock(IExpressionBuilder::class));
-		$qb->method('select')->willReturnSelf();
-		$qb->method('from')->willReturnSelf();
-		$qb->method('where')->willReturnSelf();
-		$qb->method('setMaxResults')->willReturnSelf();
-		$qb->method('createNamedParameter')->willReturn('param');
-		$qb->method('executeQuery')->willReturn($result);
-
-		$this->db->method('getQueryBuilder')->willReturn($qb);
-
-		$this->assertFalse($this->mapper->hasDeliveryTrigger());
 	}
 
 	// Types, in both directions --------------------------------------------------------------

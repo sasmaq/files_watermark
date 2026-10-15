@@ -70,7 +70,6 @@
 | Module | Description |
 | --- | --- |
 | `ApiController` | REST API endpoints for watermark configuration, on-demand watermarking, and audit-log retrieval |
-| `DownloadController` | Streams a watermarked temporary copy at download time; original file untouched |
 | `SettingsController` | Backend for the admin management panel |
 | `WatermarkService` | Core watermark application logic; resolves the effective config and delegates to format-specific renderers |
 | `PdfWatermarker` | Applies text/image overlays to PDF files using a PHP PDF library |
@@ -199,7 +198,6 @@ because the log is history and this is a statement about what happens next.
 | `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Remove the global config (admin only) |
 | `POST` | `/apps/files_watermark/api/v1/apply` | Mark a file on demand |
 | `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file (**owner only**) |
-| `GET` | `/apps/files_watermark/api/v1/download` | Stream a file, watermarked if it is marked |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
 
 All endpoints require a valid Nextcloud session or app password. Admin-only endpoints enforce an admin-group check via `\OCP\IGroupManager::isAdmin()`.

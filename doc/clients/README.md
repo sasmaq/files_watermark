@@ -49,7 +49,7 @@ falls into four areas:
 | **Status**: read two WebDAV properties and draw a badge | Users can't see which files are protected, and actions can't be gated |
 | **Actions**: *Apply watermark* and *Remove watermark* | Users have to open the web UI to mark or unmark a file |
 | **Download handling**: 403, `Range`, checksums, `HEAD` | Retry loops on a file that can never be served; false "corrupt download" errors |
-| **Not undoing the protection**: read-only local copies, no direct links, no version downloads | A local edit uploads the reader's watermark into the stored file; some download paths hand out the clean original |
+| **Not undoing the protection**: read-only local copies; expect 403 from direct links | A local edit uploads the reader's watermark into the stored file; a direct link the client relies on fails |
 
 ### Terms
 
@@ -384,16 +384,19 @@ mechanism.
 ### Use direct-download links for these types
 
 `POST /ocs/v2.php/apps/dav/api/v1/direct` issues a `/remote.php/direct/{token}` link. Those
-links are served by a separate DAV server that the app doesn't hook into, so **they deliver the
-stored file without a watermark**. The mobile apps use direct links to stream audio and video.
-Keep it that way: never request one for a PDF, JPEG, PNG or WebP. The rule keeps the official
-clients from leaking; it doesn't stop a determined user.
+links are served by a separate DAV server that opens the stored file itself, so the app cannot
+watermark them - it **refuses them with 403** for any file it would watermark. The link is
+still issued; it is the download that fails. The mobile apps use direct links to stream audio
+and video. Keep it that way: never request one for a PDF, JPEG, PNG or WebP, or the user sees
+a failed open instead of the file.
 
-### Download old versions of a watermarked file
+### Old versions are watermarked too
 
-`GET /remote.php/dav/versions/{user}/versions/{fileId}/{version}` is **not intercepted**. It
-returns the old version without a watermark. Don't offer to download or preview versions of a
-file with `is-watermarked=1`. Restoring a version is fine: the mark belongs to the file id,
+`GET /remote.php/dav/versions/{user}/versions/{fileId}/{version}` is served watermarked for a
+protected file, exactly like the current version: the mark and the share switches are asked of
+the file, and the old version's bytes are what the watermark is drawn on. Version previews in
+the Versions tab are stamped the same way. Earlier releases served both clean. A version that
+cannot be rendered answers 403. Restoring a version is fine: the mark belongs to the file id,
 which a restore keeps.
 
 ### Share cached copies between accounts

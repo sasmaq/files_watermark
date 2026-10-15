@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
+use OCA\FilesWatermark\BackgroundJob\MeasureDeliveryJob;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
@@ -16,6 +17,7 @@ use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\InstanceTimeZone;
+use OCA\FilesWatermark\Service\PasswordProtectedPdfException;
 use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\ShareAccess;
@@ -25,6 +27,7 @@ use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\BackgroundJob\IJobList;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\IUser;
@@ -65,6 +68,7 @@ class WatermarkServiceTest extends TestCase {
 	private ShareRecipient&MockObject $shareRecipient;
 	private InstanceTimeZone&MockObject $timeZone;
 	private DeliveryReservation&MockObject $reservation;
+	private IJobList&MockObject $jobList;
 	private WatermarkService $service;
 
 	protected function setUp(): void {
@@ -100,6 +104,7 @@ class WatermarkServiceTest extends TestCase {
 		$this->timeZone->method('get')->willReturn(new \DateTimeZone('UTC'));
 
 		$this->reservation = $this->createMock(DeliveryReservation::class);
+		$this->jobList = $this->createMock(IJobList::class);
 
 		$this->service = new WatermarkService(
 			$this->configMapper,
@@ -119,6 +124,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->l10n(),
 			$this->timeZone,
 			$this->reservation,
+			$this->jobList,
 		);
 	}
 
@@ -160,24 +166,53 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	/**
-	 * The measurement is an optimisation over the lazy path, never a precondition for it.
-	 * A render that throws here must still leave the file marked - the download measures it
-	 * lazily exactly as it did before.
+	 * **On demand, the render is the proof.** A file whose watermark cannot be generated used
+	 * to be marked anyway - Apply reported success, and every later download, the owner's
+	 * included, answered 403. Somebody is waiting on this request, so they are told now and
+	 * the file is left as it was.
 	 */
-	public function testAFailedMeasurementStillMarksTheFile(): void {
-		$owner = $this->createMock(IUser::class);
-		$owner->method('getUID')->willReturn('owner-uid');
+	public function testAnOnDemandMarkWhoseRenderFailsIsRefused(): void {
+		$owner = $this->user('owner-uid');
 		$file = $this->file('application/pdf', 42, '%PDF-1.4 original', 1024, $owner);
 
-		$this->markMapper->method('mark')->willReturn(true);
 		$this->configMapper->method('findGlobal')->willReturn($this->config());
 		$this->pdfWatermarker->method('apply')
 			->willThrowException(new \RuntimeException('renderer exploded'));
+		$this->markMapper->expects($this->never())->method('mark');
 
-		$this->assertTrue(
-			$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND),
-			'a file must end up marked whether or not its length could be measured',
-		);
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessage('The watermark could not be generated for this file, so it was not marked.');
+
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	/**
+	 * **On upload, nothing is rendered in the request.** The measurement is queued for cron,
+	 * so an upload pays an insert rather than a full render - and a render that would have
+	 * failed costs the lazy first download it always did, not the upload.
+	 */
+	public function testAnUploadMarkIsPlacedWithoutRenderingAndQueuesItsMeasurement(): void {
+		$file = $this->file('application/pdf', 42, '%PDF-1.4 original', 1024, $this->user('owner-uid'));
+
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->markMapper->method('mark')->willReturn(true);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$this->reservation->expects($this->never())->method('record');
+		$this->jobList->expects($this->once())
+			->method('add')
+			->with(MeasureDeliveryJob::class, ['fileId' => 42]);
+
+		$this->assertTrue($this->service->mark($file, WatermarkService::TRIGGER_ON_UPLOAD));
+	}
+
+	/** An already-marked file is answered from the mark table, before any render. */
+	public function testAnOnDemandMarkOfAMarkedFileRendersNothing(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$this->markMapper->expects($this->never())->method('mark');
+
+		$this->assertFalse($this->service->mark($this->file(), WatermarkService::TRIGGER_ON_DEMAND));
 	}
 
 	// -----------------------------------------------------------------------
@@ -266,24 +301,33 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	/**
-	 * Marking never touches the file. It is the whole premise, and it is cheap to assert
-	 * outright rather than leave to be inferred from what the test does not stub.
+	 * Marking never writes the file, and on upload it never renders it either. It is the
+	 * whole premise, and it is cheap to assert outright rather than leave to be inferred
+	 * from what the test does not stub.
 	 */
-	public function testMarkNeverReadsOrWritesTheFile(): void {
-		$this->configMapper->method('findGlobal')->willReturn($this->config());
+	public function testMarkingOnUploadNeverRendersOrWritesTheFile(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
 		$this->markMapper->method('mark')->willReturn(true);
 
 		$file = $this->createMock(File::class);
 		$file->method('getMimeType')->willReturn('application/pdf');
 		$file->method('getId')->willReturn(42);
+		$file->method('getName')->willReturn('report.pdf');
 		$file->method('getPath')->willReturn('/alice/files/report.pdf');
 		$file->method('getSize')->willReturn(1024);
+		$file->method('fopen')->willReturnCallback(static function () {
+			$handle = fopen('php://memory', 'r+');
+			fwrite($handle, "%PDF-1.7\nplain, no encryption here");
+			rewind($handle);
+			return $handle;
+		});
 		$file->expects($this->never())->method('getContent');
 		$file->expects($this->never())->method('putContent');
 		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$this->pdfWatermarker->expects($this->never())->method('isPasswordProtected');
 		$this->imageWatermarker->expects($this->never())->method('apply');
 
-		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND, $this->user('alice'));
+		$this->assertTrue($this->service->mark($file, WatermarkService::TRIGGER_ON_UPLOAD, $this->user('alice')));
 	}
 
 	/**
@@ -604,13 +648,29 @@ class WatermarkServiceTest extends TestCase {
 	public function testAMarkedFileWithASupportedNameIsNeverSniffed(): void {
 		$this->configMapper->method('findGlobal')->willReturn($this->config());
 		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static fn ($src, $dst) => file_put_contents($dst, 'rendered'),
+		);
 
-		$file = $this->file('application/pdf');
-		// `getContent()` supplies the render; `fopen()` is the type probe and the header
-		// check, neither of which a plainly-named PDF has any reason to reach.
-		$file->expects($this->never())->method('fopen');
+		// One open, and it is the copy the render reads. A sniff would be a second.
+		$opens = 0;
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getId')->willReturn(42);
+		$file->method('getName')->willReturn('report.pdf');
+		$file->method('getPath')->willReturn('/alice/files/report.pdf');
+		$file->method('getSize')->willReturn(1024);
+		$file->method('fopen')->willReturnCallback(static function () use (&$opens) {
+			$opens++;
+			$handle = fopen('php://memory', 'r+');
+			fwrite($handle, '%PDF-1.4 body');
+			rewind($handle);
+			return $handle;
+		});
 
-		$this->assertNotNull($this->service->watermarkForDownload($file));
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame(1, $opens);
 	}
 
 	public function testAMarkedPdfIsRenderedThroughThePdfWatermarker(): void {
@@ -913,6 +973,7 @@ class WatermarkServiceTest extends TestCase {
 	 * would eventually produce.
 	 */
 	public function testDateAndDatetimeReadTheSameInstant(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
 		$seen = [];
 		$this->pdfWatermarker->method('apply')->willReturnCallback(
 			static function ($src, $dst, $config, array $placeholders) use (&$seen): void {
@@ -1747,6 +1808,368 @@ class WatermarkServiceTest extends TestCase {
 			WatermarkService::UNMARK_INHERITED,
 			$this->service->unmarkVerdict($this->file(owner: $this->user('bob')), ''),
 		);
+	}
+
+	// -----------------------------------------------------------------------
+	// Password-protected PDFs
+	// -----------------------------------------------------------------------
+	//
+	// The README promises a locked PDF is *skipped*: left unmarked, served as stored, audited.
+	// It was marked instead - and then every download of it, the owner's included, was a 403.
+
+	/** A PDF whose trailer names an /Encrypt dictionary, so the cheap probe says "maybe". */
+	private function encryptedPdf(): File&MockObject {
+		return $this->file('application/pdf', 42, "%PDF-1.7\ntrailer\n<< /Encrypt 9 0 R >>\n%%EOF");
+	}
+
+	public function testAPasswordProtectedPdfIsSkippedOnUploadAndTheSkipIsAudited(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->pdfWatermarker->method('isPasswordProtected')->willReturn(true);
+		$this->markMapper->expects($this->never())->method('mark');
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('alice', 42, '/alice/files/report.pdf', WatermarkService::TRIGGER_SKIPPED, null);
+
+		$this->expectException(PasswordProtectedPdfException::class);
+		$this->expectExceptionMessage('This PDF is protected with a password, so it cannot be watermarked.');
+
+		$this->service->mark($this->encryptedPdf(), WatermarkService::TRIGGER_ON_UPLOAD, $this->user('alice'));
+	}
+
+	/** Encrypted with the *empty* password is not protected - it is marked like any PDF. */
+	public function testAnEncryptedPdfTheEmptyPasswordOpensIsMarkedOnUpload(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->pdfWatermarker->method('isPasswordProtected')->willReturn(false);
+		$this->markMapper->expects($this->once())->method('mark')->willReturn(true);
+
+		$this->assertTrue($this->service->mark($this->encryptedPdf(), WatermarkService::TRIGGER_ON_UPLOAD, $this->user('alice')));
+	}
+
+	/** On demand the render finds it, and Apply answers with the reason instead of "applied". */
+	public function testAPasswordProtectedPdfIsRefusedOnDemandWithItsReason(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->pdfWatermarker->method('apply')->willThrowException(new PasswordProtectedPdfException('locked'));
+		$this->markMapper->expects($this->never())->method('mark');
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('alice', 42, $this->anything(), WatermarkService::TRIGGER_SKIPPED, null);
+
+		$this->expectException(PasswordProtectedPdfException::class);
+		$this->expectExceptionMessage('This PDF is protected with a password, so it cannot be watermarked.');
+
+		$this->service->mark($this->file(), WatermarkService::TRIGGER_ON_DEMAND, $this->user('alice'));
+	}
+
+	// -----------------------------------------------------------------------
+	// A renamed file leaving through a share
+	// -----------------------------------------------------------------------
+	//
+	// Closed for marked files long ago; a file watermarked only because it is leaving
+	// through a share still trusted its name, so `report.pdf` renamed to `report.txt` by a
+	// recipient with edit rights downloaded clean.
+
+	public function testARenamedFileLeavingThroughAShareIsWatermarkedFromItsContent(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$this->markMapper->method('isMarked')->willReturn(false);
+		$renamed = $this->file('text/plain', content: "%PDF-1.7\nbody");
+
+		$this->assertTrue($this->service->isDeliveryCandidate($renamed));
+
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+		$this->cleanup($this->service->watermarkForDownload($renamed));
+	}
+
+	/**
+	 * The badge asks the same question across a whole listing, so it trusts the name rather
+	 * than open every unsupported file in the folder. Delivery always asks the bytes.
+	 */
+	public function testTheBadgeDoesNotOpenEveryFileInAListing(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimetype')->willReturn('text/plain');
+		$file->expects($this->never())->method('fopen');
+
+		$this->assertFalse($this->service->isForcedByShare($file, inspectContent: false));
+	}
+
+	/** Content that is genuinely nothing renderable is served as stored, as for a marked file. */
+	public function testAShareForcedFileWhoseContentIsNothingRenderableStaysClean(): void {
+		$this->sharePolicy(internal: true);
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$this->markMapper->method('isMarked')->willReturn(false);
+
+		$this->assertNull($this->service->watermarkForDownload($this->file('text/plain', content: 'just text')));
+	}
+
+	/** The whitelist is applied to what the file holds: a PDF renamed `.png` is still a PDF. */
+	public function testTheWhitelistIsAppliedToWhatTheFileHolds(): void {
+		$config = $this->sharePolicy(internal: true);
+		$config->setMimeTypes('image/png');
+		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
+		$this->markMapper->method('isMarked')->willReturn(false);
+
+		$this->assertNull($this->service->watermarkForDownload($this->file('text/plain', content: "%PDF-1.7\nbody")));
+	}
+
+	// -----------------------------------------------------------------------
+	// A policy that draws nothing
+	// -----------------------------------------------------------------------
+	//
+	// Both renderers skip what they cannot draw and say nothing, so these rendered
+	// "successfully", were served as watermarked and audited as delivered - with not one
+	// changed pixel. Every other failure refuses the fetch; these handed out the original.
+
+	public function testAnImagePolicyWhoseLogoIsGoneRefusesTheDownload(): void {
+		$config = $this->config();
+		$config->setType('image');
+		$config->setImagePath(str_repeat('a', 32) . '.png');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->imageStore->method('localPath')->willReturn(null);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->service->watermarkForDownload($this->markedFile());
+	}
+
+	public function testABlankTemplateRefusesTheDownload(): void {
+		$config = $this->config();
+		$config->setTextTemplate('   ');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->service->watermarkForDownload($this->markedFile());
+	}
+
+	/** `{email}` for a reader with no address is a blank watermark too, decided per reader. */
+	public function testATemplateThatResolvesToNothingForThisReaderRefuses(): void {
+		$config = $this->config();
+		$config->setTextTemplate('{email}');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->userSession->method('getUser')->willReturn($this->user('bob', 'Bob', ''));
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->service->watermarkForDownload($this->markedFile());
+	}
+
+	/** A combined policy that has lost only its logo still names the reader, so it renders. */
+	public function testACombinedPolicyMissingOnlyItsLogoStillRendersItsText(): void {
+		$config = $this->config();
+		$config->setType('combined');
+		$config->setImagePath(str_repeat('a', 32) . '.png');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->imageStore->method('localPath')->willReturn(null);
+		$this->logger->expects($this->atLeastOnce())->method('warning');
+		$this->pdfWatermarker->expects($this->once())->method('apply');
+
+		$this->cleanup($this->service->watermarkForDownload($this->markedFile()));
+	}
+
+	public function testAPreviewThatWouldDrawNothingIsRefused(): void {
+		$config = $this->config();
+		$config->setType('image');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->imageWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(\RuntimeException::class);
+
+		$this->service->watermarkPreviewImage($this->file('image/png'), '/tmp/src', '/tmp/dst', 256);
+	}
+
+	// -----------------------------------------------------------------------
+	// Rendering: memory, names, ceilings
+	// -----------------------------------------------------------------------
+
+	/** The source is streamed to disk; `getContent()` held the whole file in PHP memory. */
+	public function testTheSourceIsStreamedNeverLoadedWhole(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+
+		$seen = null;
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function (string $src, string $dst) use (&$seen): void {
+				$seen = file_get_contents($src);
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$file = $this->file('application/pdf', content: '%PDF-1.4 the stored bytes');
+		$file->expects($this->never())->method('getContent');
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame('%PDF-1.4 the stored bytes', $seen);
+	}
+
+	/**
+	 * **A long name is not a refused download.** The working files were named after the file
+	 * plus `_src`, so a 254-byte name - 125 Arabic letters - overflowed the filesystem's 255,
+	 * the copy silently failed to write, and the download was refused.
+	 */
+	public function testAFileWithAMaximumLengthNameIsStillRendered(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static fn (string $src, string $dst) => file_put_contents($dst, file_get_contents($src)),
+		);
+
+		$name = str_repeat('ت', 125) . '.pdf';
+		$this->assertSame(254, strlen($name));
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('application/pdf');
+		$file->method('getId')->willReturn(42);
+		$file->method('getName')->willReturn($name);
+		$file->method('getPath')->willReturn('/alice/files/' . $name);
+		$file->method('getSize')->willReturn(16);
+		$file->method('fopen')->willReturnCallback(static function () {
+			$handle = fopen('php://memory', 'r+');
+			fwrite($handle, '%PDF-1.4 content');
+			rewind($handle);
+			return $handle;
+		});
+
+		$tmpPath = $this->service->watermarkForDownload($file);
+
+		$this->assertSame('%PDF-1.4 content', file_get_contents((string)$tmpPath));
+		$this->cleanup($tmpPath);
+	}
+
+	/**
+	 * **The ceiling meets the bytes that are there now.** A mark survives an overwrite, so a
+	 * marked file replaced by one far past the ceiling was rendered all the same - pulled
+	 * through PHP's memory on every download.
+	 */
+	public function testAMarkedFileOverwrittenPastTheCeilingIsRefusedAtDelivery(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->service->watermarkForDownload($this->file(size: ApplyLimits::DEFAULT_MAX_BYTES + 1));
+	}
+
+	// -----------------------------------------------------------------------
+	// Old versions
+	// -----------------------------------------------------------------------
+
+	/** @return callable():mixed */
+	private function versionBytes(string $bytes): callable {
+		return static function () use ($bytes) {
+			$handle = fopen('php://memory', 'r+');
+			fwrite($handle, $bytes);
+			rewind($handle);
+			return $handle;
+		};
+	}
+
+	/** The source's mark decides; the version's own bytes are what is drawn on. */
+	public function testAVersionOfAMarkedFileIsRenderedFromTheVersionsOwnBytes(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->with(42)->willReturn(true);
+
+		$seen = null;
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function (string $src, string $dst) use (&$seen): void {
+				$seen = file_get_contents($src);
+				file_put_contents($dst, 'rendered');
+			},
+		);
+
+		$tmpPath = $this->service->watermarkVersionForDownload(
+			$this->file(content: '%PDF-1.4 the current bytes'),
+			$this->versionBytes('%PDF-1.4 last week\'s bytes'),
+			'application/pdf',
+			26,
+		);
+
+		$this->assertSame('%PDF-1.4 last week\'s bytes', $seen);
+		$this->cleanup($tmpPath);
+	}
+
+	public function testAVersionOfAnUnprotectedFileIsLeftAlone(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(false);
+
+		$this->assertNull($this->service->watermarkVersionForDownload(
+			$this->file(),
+			$this->versionBytes('%PDF-1.4'),
+			'application/pdf',
+			8,
+		));
+	}
+
+	/** A protected file's version that is nothing this app can draw on is refused, not served. */
+	public function testAVersionInAFormatTheAppCannotDrawOnIsRefused(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->service->watermarkVersionForDownload($this->file(), $this->versionBytes('plain text'), 'text/plain', 10);
+	}
+
+	public function testAVersionPastTheCeilingIsRefused(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->service->watermarkVersionForDownload(
+			$this->file(),
+			$this->versionBytes('%PDF-1.4'),
+			'application/pdf',
+			ApplyLimits::DEFAULT_MAX_BYTES + 1,
+		);
+	}
+
+	// -----------------------------------------------------------------------
+	// Measurement and reservations
+	// -----------------------------------------------------------------------
+
+	/**
+	 * **A copy is marked, never rendered, in the request.** A folder copy inherits a mark per
+	 * protected file, and a render each let the COPY run long enough to be killed partway -
+	 * leaving the copies after that point unmarked.
+	 */
+	public function testInheritingAMarkQueuesItsMeasurementInsteadOfRendering(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('mark')->willReturn(true);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$this->jobList->expects($this->once())
+			->method('add')
+			->with(MeasureDeliveryJob::class, ['fileId' => 99]);
+
+		$this->service->inheritMark($this->file(id: 99), $this->file(id: 42, owner: $this->user('alice')));
+	}
+
+	public function testUnmarkingForgetsTheReservations(): void {
+		$this->markMapper->method('unmark')->with(42)->willReturn(true);
+		$this->reservation->expects($this->once())->method('forget')->with(42);
+
+		$this->service->unmark($this->file());
+	}
+
+	/** The queued job's body: render for the owner, record what came out. */
+	public function testMeasuringRecordsTheOwnersDeliveryLength(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static fn (string $src, string $dst) => file_put_contents($dst, 'twelve bytes'),
+		);
+		$this->reservation->expects($this->once())
+			->method('record')
+			->with($this->anything(), 'owner-uid', $this->anything(), 12, 'application/pdf');
+
+		$this->service->measure($this->file('application/pdf', 42, '%PDF-1.4', 8, $this->user('owner-uid')));
 	}
 
 	private function cleanup(?string $tmpPath): void {

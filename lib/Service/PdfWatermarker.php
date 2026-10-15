@@ -275,8 +275,21 @@ class PdfWatermarker {
 				}
 			}
 
-			throw $this->unreadable($failure);
+			throw $this->unreadable($failure, $sourcePath);
 		}
+	}
+
+	/**
+	 * Whether the PDF at `$path` is locked with a real password.
+	 *
+	 * Asked before a file is marked on upload, which is where a password-protected document
+	 * is skipped rather than promised a watermark nobody could render. Reads the whole file,
+	 * so the caller only asks once a cheap look at the bytes has found `/Encrypt` in them.
+	 */
+	public function isPasswordProtected(string $path): bool {
+		$raw = @file_get_contents($path);
+
+		return $raw !== false && (new PdfDecryptor())->isLocked($raw);
 	}
 
 	/**
@@ -463,7 +476,17 @@ class PdfWatermarker {
 		}
 	}
 
-	private function unreadable(\Exception $cause): \RuntimeException {
+	private function unreadable(\Exception $cause, string $sourcePath): \RuntimeException {
+		// The one unreadable document that is not a failure: a real password is the file
+		// protecting itself, and the callers that mark files skip it rather than refuse it.
+		if ($this->isPasswordProtected($sourcePath)) {
+			return new PasswordProtectedPdfException(
+				'Cannot process PDF: the file is protected with a password.',
+				0,
+				$cause,
+			);
+		}
+
 		return new \RuntimeException(
 			'Cannot process PDF: the file may be encrypted, password-protected, or use unsupported compression. '
 				. $cause->getMessage(),

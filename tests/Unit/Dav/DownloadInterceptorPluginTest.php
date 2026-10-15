@@ -7,6 +7,8 @@ namespace OCA\FilesWatermark\Tests\Unit\Dav;
 use OCA\DAV\Connector\Sabre\Directory as DavDirectory;
 use OCA\DAV\Connector\Sabre\File as DavFile;
 use OCA\Files_Trashbin\Sabre\ITrash;
+use OCA\Files_Versions\Sabre\VersionFile;
+use OCA\Files_Versions\Versions\IVersion;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Db\WatermarkRendition;
 use OCA\FilesWatermark\Service\DeliveryPadder;
@@ -172,7 +174,7 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->assertSame('application/pdf', $response->getHeader('Content-Type'));
 		$this->assertSame((string)strlen('WATERMARKED-BYTES'), $response->getHeader('Content-Length'));
 		$this->assertSame(
-			'attachment; filename="report.pdf"',
+			"attachment; filename*=UTF-8''report.pdf; filename=\"report.pdf\"",
 			$response->getHeader('Content-Disposition'),
 		);
 
@@ -361,14 +363,67 @@ class DownloadInterceptorPluginTest extends TestCase {
 		);
 	}
 
-	public function testUnreadableTempCopyFallsBackToCore(): void {
+	/**
+	 * A render that cannot be read back is a render that failed, and is refused like one.
+	 *
+	 * This used to return true - "leave it to core" - which for a file that is watermarked on
+	 * download means core streaming the stored, clean original. Every other way a render can
+	 * fail answers 403; this one quietly handed out exactly what the mark exists to withhold.
+	 */
+	public function testAnUnreadableRenderIsRefusedRatherThanLeftToCore(): void {
 		$davFile = $this->davFile();
 
 		$this->tree->method('getNodeForPath')->willReturn($davFile);
 		$this->watermarkService->method('watermarkForDownload')
 			->willReturn('/nonexistent/nc_watermark_gone/copy.pdf');
 
-		$this->assertTrue($this->plugin()->httpGet($this->request(), new Response()));
+		$this->expectException(Forbidden::class);
+
+		$this->plugin()->httpGet($this->request(), new Response());
+	}
+
+	/**
+	 * A name that is not ASCII travels percent-encoded, in the RFC 5987 form browsers read,
+	 * rather than as raw UTF-8 bytes in a header - which arrived as mojibake, or as
+	 * `download`, depending on the browser.
+	 */
+	public function testANonAsciiNameIsOfferedInTheEncodedForm(): void {
+		$this->assertSame(
+			"attachment; filename*=UTF-8''%D8%AA%D9%82%D8%B1%D9%8A%D8%B1%20%22q3%22.pdf; filename=\"%D8%AA%D9%82%D8%B1%D9%8A%D8%B1%20%22q3%22.pdf\"",
+			DownloadInterceptorPlugin::contentDisposition('تقرير "q3".pdf'),
+		);
+	}
+
+	/**
+	 * **Core's view-only check runs first.** `ViewOnlyPlugin` refuses a GET on a share whose
+	 * download permission is off, at priority 90, and Sabre does not order equal priorities.
+	 * At 90 this plugin could run first, return false, and serve the watermarked copy past
+	 * the refusal. Registered strictly between it and the `CorePlugin` that serves the body.
+	 */
+	public function testTheGetHookRunsAfterCoresViewOnlyCheckAndBeforeCoreServes(): void {
+		// A real Sabre server: its CorePlugin is what streams the stored body, at 100.
+		$server = new Server(new \Sabre\DAV\SimpleCollection('root'));
+		$plugin = $this->plugin();
+		$server->addPlugin($plugin);
+
+		// Core adds ViewOnlyPlugin on `beforeMethod:*`, i.e. *after* this plugin - the
+		// registration order under which a tie used to be decided against it.
+		$viewOnly = static fn (): bool => true;
+		$server->on('method:GET', $viewOnly, 90);
+
+		$order = [];
+		foreach ($server->listeners('method:GET') as $index => $listener) {
+			if ($listener === $viewOnly) {
+				$order['viewOnly'] = $index;
+			} elseif (is_array($listener) && $listener[0] === $plugin) {
+				$order['watermark'] = $index;
+			} elseif (is_array($listener) && $listener[0] instanceof \Sabre\DAV\CorePlugin) {
+				$order['core'] = $index;
+			}
+		}
+
+		asort($order);
+		$this->assertSame(['viewOnly', 'watermark', 'core'], array_keys($order));
 	}
 
 	/**
@@ -680,5 +735,119 @@ class DownloadInterceptorPluginTest extends TestCase {
 		// Nothing may be registered on beforeMethod:GET - returning false there returns
 		// before sendResponse and would ship a 0-byte download.
 		$this->assertSame([], $this->server->listeners('beforeMethod:GET'));
+	}
+
+	// -----------------------------------------------------------------------
+	// Old versions
+	// -----------------------------------------------------------------------
+	//
+	// `/remote.php/dav/versions/...` is served by this same server, and every version of a
+	// marked file is a clean copy of it. The plugin used to recognise only file and trash
+	// nodes, so a version download - offered in the Versions tab to the owner and to every
+	// share recipient - went out as stored.
+
+	/**
+	 * A version node, the source file it belongs to, and that source as the reader sees it.
+	 *
+	 * @return array{0: VersionFile&MockObject, 1: File&MockObject}
+	 */
+	private function versionNode(string $versionBytes = 'OLD-VERSION-BYTES'): array {
+		$ownersView = $this->createMock(File::class);
+		$ownersView->method('getId')->willReturn(42);
+
+		$version = $this->createMock(IVersion::class);
+		$version->method('getSourceFile')->willReturn($ownersView);
+
+		$node = $this->createMock(VersionFile::class);
+		$node->method('getVersion')->willReturn($version);
+		$node->method('getContentType')->willReturn('application/pdf');
+		$node->method('getSize')->willReturn(strlen($versionBytes));
+		$node->method('getETag')->willReturn('1700000000');
+		$node->method('get')->willReturnCallback(static function () use ($versionBytes) {
+			$handle = fopen('php://memory', 'r+');
+			fwrite($handle, $versionBytes);
+			rewind($handle);
+			return $handle;
+		});
+
+		// The recipient's own view of the same file id - a shared mount, which is what the
+		// share switches ask about.
+		$readersView = $this->createMock(File::class);
+		$readersView->method('getId')->willReturn(42);
+		$readersView->method('getPath')->willReturn('/alice/files/Shared/report.pdf');
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getById')->with(42)->willReturn([$readersView]);
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+
+		$this->tree->method('getNodeForPath')->willReturn($node);
+
+		return [$node, $readersView];
+	}
+
+	public function testAVersionOfAProtectedFileIsServedWatermarked(): void {
+		[$node, $readersView] = $this->versionNode();
+		$tmpPath = $this->renderedCopy('WATERMARKED-VERSION');
+
+		$this->watermarkService->expects($this->once())
+			->method('watermarkVersionForDownload')
+			->with(
+				// Decided against the reader's view of the file, not the owner's.
+				$readersView,
+				$this->callback(static function (callable $open): bool {
+					return stream_get_contents($open()) === 'OLD-VERSION-BYTES';
+				}),
+				'application/pdf',
+				strlen('OLD-VERSION-BYTES'),
+			)
+			->willReturn($tmpPath);
+
+		$response = new Response();
+		$this->assertFalse($this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), $response));
+
+		$this->assertSame('WATERMARKED-VERSION', stream_get_contents($response->getBody()));
+		$this->assertSame((string)strlen('WATERMARKED-VERSION'), $response->getHeader('Content-Length'));
+		// `files_versions` names the download itself on afterMethod:GET; a second header here
+		// would be appended next to it rather than replace it.
+		$this->assertNull($response->getHeader('Content-Disposition'));
+	}
+
+	public function testAVersionOfAnUnprotectedFileIsLeftToCore(): void {
+		$this->versionNode();
+		$this->watermarkService->method('watermarkVersionForDownload')->willReturn(null);
+
+		$this->assertTrue($this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), new Response()));
+	}
+
+	public function testAVersionThatCannotBeWatermarkedIsRefused(): void {
+		$this->versionNode();
+		$this->watermarkService->method('watermarkVersionForDownload')
+			->willThrowException(new WatermarkRequiredException('/alice/files/report.pdf', 'no'));
+
+		$this->expectException(Forbidden::class);
+
+		$this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), new Response());
+	}
+
+	/**
+	 * A source this reader cannot resolve still has its mark asked by id: a lookup that
+	 * failed must not be the way a marked file's version slips out.
+	 */
+	public function testAVersionOfAMarkedFileTheReaderCannotResolveIsRefused(): void {
+		$ownersView = $this->createMock(\OCP\Files\FileInfo::class);
+		$ownersView->method('getId')->willReturn(42);
+		$version = $this->createMock(IVersion::class);
+		$version->method('getSourceFile')->willReturn($ownersView);
+		$node = $this->createMock(VersionFile::class);
+		$node->method('getVersion')->willReturn($version);
+		$this->tree->method('getNodeForPath')->willReturn($node);
+
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getById')->willReturn([]);
+		$this->rootFolder->method('getUserFolder')->willReturn($userFolder);
+		$this->watermarkService->method('isMarked')->with(42)->willReturn(true);
+
+		$this->expectException(Forbidden::class);
+
+		$this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), new Response());
 	}
 }

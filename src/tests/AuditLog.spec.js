@@ -87,8 +87,8 @@ describe('AuditLog', () => {
 		 * is gone in a printed or screenshotted log and to a reader who cannot tell the
 		 * colours apart, and this is the table an auditor scans for "watermark removed".
 		 */
-		it('gives all four kinds their own class and their own glyph', async () => {
-			const triggers = ['on_demand', 'on_upload', 'delivered', 'unmarked']
+		it('gives every kind its own class and its own glyph', async () => {
+			const triggers = ['on_demand', 'on_upload', 'delivered', 'unmarked', 'inherited', 'skipped']
 			axios.get.mockResolvedValue({
 				data: triggers.map((trigger, i) => ({
 					id: i + 1,
@@ -102,13 +102,31 @@ describe('AuditLog', () => {
 			await flushPromises()
 
 			const badges = wrapper.findAll('.trigger-badge')
-			expect(badges).toHaveLength(4)
+			expect(badges).toHaveLength(triggers.length)
 			triggers.forEach((trigger, i) => {
 				expect(badges[i].classes()).toContain(`trigger-badge--${trigger}`)
 			})
 
 			const paths = wrapper.findAll('.trigger-icon path').map((p) => p.attributes('d'))
-			expect(new Set(paths).size).toBe(4)
+			expect(new Set(paths).size).toBe(triggers.length)
+		})
+
+		/**
+		 * `inherited` had no label and showed its raw key, in English on a translated page;
+		 * `skipped` is new. Both read as words now.
+		 */
+		it('labels a copied mark and a skipped file in words', async () => {
+			axios.get.mockResolvedValue({
+				data: [
+					{ id: 1, createdAt: '2026-06-29 10:00:00', userId: 'a', filePath: '/a.pdf', trigger: 'inherited' },
+					{ id: 2, createdAt: '2026-06-29 10:00:00', userId: 'a', filePath: '/b.pdf', trigger: 'skipped' },
+				],
+			})
+			const wrapper = mount(AuditLog)
+			await flushPromises()
+
+			const labels = wrapper.findAll('.trigger-badge').map((b) => b.text())
+			expect(labels).toEqual(['Copied from a watermarked file', 'Skipped: password-protected'])
 		})
 
 		/**

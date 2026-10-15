@@ -98,6 +98,37 @@ class WatermarkMarkMapperTest extends TestCase {
 		$this->assertSame([2, 5], $this->mapper->markedFileIds([1, 2, 5, 2]));
 	}
 
+	/**
+	 * **A thousand ids per query, never more.** A folder download asks about every file in
+	 * the tree, and one `IN` for all of them is past Oracle's 1000-value limit and, at 65536,
+	 * past the bound-parameter limit of MySQL and PostgreSQL too: a large enough folder
+	 * answered 500 instead of an archive.
+	 */
+	public function testALongListIsAskedInChunksOfAThousand(): void {
+		$bound = [];
+		$this->db->method('getQueryBuilder')->willReturnCallback(function () use (&$bound): IQueryBuilder {
+			$result = $this->createMock(IResult::class);
+			$result->method('fetch')->willReturn(false);
+
+			$qb = $this->createMock(IQueryBuilder::class);
+			$qb->method('expr')->willReturn($this->createMock(IExpressionBuilder::class));
+			$qb->method('select')->willReturnSelf();
+			$qb->method('from')->willReturnSelf();
+			$qb->method('where')->willReturnSelf();
+			$qb->method('createNamedParameter')->willReturnCallback(static function ($value) use (&$bound): string {
+				$bound[] = $value;
+				return 'param';
+			});
+			$qb->method('executeQuery')->willReturn($result);
+			return $qb;
+		});
+
+		$this->mapper->markedFileIds(range(1, 2500));
+
+		$this->assertSame([1000, 1000, 500], array_map('count', $bound));
+		$this->assertSame(range(1, 2500), array_merge(...$bound), 'every id is asked about exactly once');
+	}
+
 	public function testAnEmptyResultMeansNothingIsMarked(): void {
 		$this->mockLookup([], [7]);
 

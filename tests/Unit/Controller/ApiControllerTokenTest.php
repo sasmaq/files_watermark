@@ -13,6 +13,7 @@ use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCA\FilesWatermark\Tests\Unit\InstanceTimeZoneMock;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\Files\IRootFolder;
 use OCP\IGroupManager;
@@ -42,6 +43,8 @@ class ApiControllerTokenTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->configMapper = $this->createMock(WatermarkConfigMapper::class);
+		// A fresh install: no policy saved yet, so a save without an id inserts one.
+		$this->configMapper->method('findGlobal')->willThrowException(new DoesNotExistException(''));
 		$userSession = $this->createMock(IUserSession::class);
 		$groupManager = $this->createMock(IGroupManager::class);
 

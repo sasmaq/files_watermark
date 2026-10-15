@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace OCA\FilesWatermark\Service;
 
+use OCA\FilesWatermark\BackgroundJob\MeasureDeliveryJob;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\BackgroundJob\IJobList;
 use OCP\Files\File;
 use OCP\Files\FileInfo;
 use OCP\IL10N;
@@ -87,6 +89,23 @@ class WatermarkService {
 	public const TRIGGER_UNMARKED = 'unmarked';
 	public const TRIGGER_DELIVERED = 'delivered';
 
+	/**
+	 * Audit-only: a file the policy would have marked and did not, because no watermark can
+	 * be drawn on it - a PDF locked with a real password. See {@see PasswordProtectedPdfException}.
+	 */
+	public const TRIGGER_SKIPPED = 'skipped';
+
+	/** What the renderers draw when a policy carries no template at all. */
+	private const DEFAULT_TEMPLATE = '{username} {date}';
+
+	/** The extension a render is written under, so an engine that infers the format from it agrees with the bytes. */
+	private const EXTENSIONS = [
+		'application/pdf' => 'pdf',
+		'image/jpeg' => 'jpg',
+		'image/png' => 'png',
+		'image/webp' => 'webp',
+	];
+
 	/** {@see unmarkVerdict} - this user may take the mark off. */
 	public const UNMARK_OK = 'ok';
 	/** They do not own the file. */
@@ -115,6 +134,7 @@ class WatermarkService {
 		private IL10N $l,
 		private InstanceTimeZone $timeZone,
 		private ?DeliveryReservation $reservation = null,
+		private ?IJobList $jobList = null,
 	) {
 	}
 
@@ -125,43 +145,219 @@ class WatermarkService {
 	/**
 	 * Mark $file so that every fetch of it is watermarked.
 	 *
-	 * Nothing is read and nothing is written except one row - which is what lets the upload
-	 * listener do this inline, where the old in-place burn had to be queued behind a lock.
+	 * The stored file is never written - the mark is one row. What is *read* depends on who
+	 * is waiting:
+	 *
+	 *  - **`on_demand` renders the file once, before the mark goes in.** A person clicked
+	 *    Apply and is waiting on the answer, so this is the moment to find out whether the
+	 *    file can be watermarked at all: one that cannot is refused here, with a reason,
+	 *    instead of being marked into a file every later download answers 403 for. The same
+	 *    render is the owner's delivery measurement, so it costs nothing extra.
+	 *  - **`on_upload` reads a few kilobytes**, and only of a PDF - enough to see whether it
+	 *    might be encrypted ({@see PdfEncryptionProbe}). A document locked with a real
+	 *    password is skipped and the skip is audited; everything else is marked, and its
+	 *    measurement is queued ({@see MeasureDeliveryJob}) rather than rendered inside the
+	 *    upload.
+	 *
 	 * The two size ceilings are enforced *here*, at the only moment where refusing is still
-	 * a choice: past this point the file is promised a watermark on every fetch, and a
-	 * ceiling discovered then would deny the download of a file nobody was ever warned
-	 * about.
+	 * a choice: past this point the file is promised a watermark on every fetch.
 	 *
 	 * @param string $trigger one of {@see TRIGGERS}
 	 * @param ?IUser $actor who is marking; null falls back to the session user
 	 * @return bool true when this call placed the mark, false when one was already there
 	 *
 	 * @throws FileTooLargeException|ImageTooLargeException the file is past a ceiling
-	 * @throws \RuntimeException unsupported type, or excluded by the policy's own scope
+	 * @throws PasswordProtectedPdfException the file is a PDF locked with a real password
+	 * @throws \RuntimeException unsupported type, excluded by the policy's own scope, or -
+	 *                           on demand - a file whose watermark could not be generated
 	 */
 	public function mark(File $file, string $trigger, ?IUser $actor = null, ?WatermarkConfig $config = null): bool {
 		$config ??= $this->resolveConfig();
 
 		$this->assertMarkable($file, $config);
 
-		$user = $actor ?? $this->userSession->getUser();
-		$placed = $this->markMapper->mark(
-			$file->getId(),
-			$user?->getUID() ?? 'system',
-			$trigger,
-			$config->getId(),
-		);
-
-		if (!$placed) {
-			// Already marked. Not an error anywhere: the on-demand endpoint reports it as a
-			// no-op, and on_upload re-marking a file on every write is the ordinary case.
+		// Already marked: nothing to probe, nothing to render, nothing to insert. The unique
+		// index still settles a race below; this only spares the common re-write the work.
+		if ($this->isMarked($file->getId())) {
 			return false;
 		}
 
-		$this->recordLog($file, $trigger, $config, $user);
-		$this->measureForDelivery($file, $config);
+		$user = $actor ?? $this->userSession->getUser();
 
-		return true;
+		$measured = null;
+		try {
+			if ($trigger === self::TRIGGER_ON_DEMAND) {
+				$measured = $this->renderForMarking($file, $config, $user);
+			} else {
+				$this->refuseIfPasswordProtected($file, $config, $user);
+			}
+
+			$placed = $this->markMapper->mark(
+				$file->getId(),
+				$user?->getUID() ?? 'system',
+				$trigger,
+				$config->getId(),
+			);
+
+			if (!$placed) {
+				// Marked between the check above and the insert. Not an error anywhere.
+				return false;
+			}
+
+			$this->recordLog($file, $trigger, $config, $user);
+
+			if ($measured !== null) {
+				$this->reserveMeasured($file, $config, $measured);
+			} else {
+				$this->queueMeasurement($file);
+			}
+
+			return true;
+		} finally {
+			if ($measured !== null) {
+				$this->discardTemp($measured['path']);
+			}
+		}
+	}
+
+	/**
+	 * Render $file for its owner, as the on-demand action's proof that it can be watermarked.
+	 *
+	 * @return array{path: string, mime: string, uid: ?string} the render, which the caller
+	 *                                                         owns and must discard
+	 * @throws \RuntimeException naming why the file cannot be watermarked
+	 */
+	private function renderForMarking(File $file, WatermarkConfig $config, ?IUser $actor): array {
+		$owner = $this->ownerOf($file) ?? $actor;
+		$mime = $this->deliveryMime($file) ?? $file->getMimeType();
+
+		try {
+			[$path] = $this->renderToTemp($file, $config, $owner, $mime);
+		} catch (PasswordProtectedPdfException $e) {
+			$this->logMapper->insertLog(
+				$actor?->getUID() ?? 'system',
+				$file->getId(),
+				$file->getPath(),
+				self::TRIGGER_SKIPPED,
+				$config->getId(),
+			);
+			throw new PasswordProtectedPdfException($this->passwordProtectedMessage(), 0, $e);
+		} catch (\Throwable $e) {
+			$this->logger->warning('files_watermark: refusing to mark {path}, its watermark could not be generated: {reason}', [
+				'path' => $file->getPath(),
+				'reason' => $e->getMessage(),
+				'exception' => $e,
+			]);
+			throw new \RuntimeException($this->l->t('The watermark could not be generated for this file, so it was not marked.'), 0, $e);
+		}
+
+		return ['path' => $path, 'mime' => $mime, 'uid' => $owner?->getUID()];
+	}
+
+	/**
+	 * Skip a PDF that is locked with a real password, and say so in the audit log.
+	 *
+	 * Reads a few kilobytes of every PDF and the whole of only those that mention `/Encrypt`
+	 * - see {@see PdfEncryptionProbe}.
+	 *
+	 * @throws PasswordProtectedPdfException
+	 */
+	private function refuseIfPasswordProtected(File $file, WatermarkConfig $config, ?IUser $actor): void {
+		if (!in_array($file->getMimeType(), self::SUPPORTED_PDF, true) || !PdfEncryptionProbe::mayBeEncrypted($file)) {
+			return;
+		}
+
+		$dir = $this->createTempDir();
+		$copy = $dir . '/source';
+		try {
+			$this->copySource(fn () => $file->fopen('rb'), $copy);
+			$locked = $this->pdfWatermarker->isPasswordProtected($copy);
+		} catch (\Throwable) {
+			// Unreadable is not locked. The file is marked, and a delivery that cannot render
+			// it refuses - the posture for every other broken document.
+			$locked = false;
+		} finally {
+			$this->discardTemp($copy);
+		}
+
+		if (!$locked) {
+			return;
+		}
+
+		$this->logMapper->insertLog(
+			$actor?->getUID() ?? 'system',
+			$file->getId(),
+			$file->getPath(),
+			self::TRIGGER_SKIPPED,
+			$config->getId(),
+		);
+
+		throw new PasswordProtectedPdfException($this->passwordProtectedMessage());
+	}
+
+	private function passwordProtectedMessage(): string {
+		return $this->l->t('This PDF is protected with a password, so it cannot be watermarked.');
+	}
+
+	/**
+	 * Promise the owner the length the on-demand render just measured.
+	 *
+	 * @param array{path: string, mime: string, uid: ?string} $measured
+	 */
+	private function reserveMeasured(File $file, WatermarkConfig $config, array $measured): void {
+		if ($this->reservation === null || $measured['uid'] === null || $measured['uid'] === '') {
+			return;
+		}
+
+		$size = @filesize($measured['path']);
+		if ($size === false || $size === 0) {
+			return;
+		}
+
+		try {
+			$this->reservation->record($file, $measured['uid'], $config, $size, $measured['mime']);
+		} catch (\Throwable $e) {
+			$this->logger->info('files_watermark: could not record a delivery length at mark time', [
+				'exception' => $e,
+				'path' => $file->getPath(),
+			]);
+		}
+	}
+
+	/**
+	 * Leave the owner's delivery measurement to {@see MeasureDeliveryJob}.
+	 *
+	 * Never fails the mark: a queue that will not take the job costs the self-correcting
+	 * first download a measurement exists to spare, and nothing worse.
+	 */
+	private function queueMeasurement(File $file): void {
+		if ($this->jobList === null || $this->reservation === null) {
+			return;
+		}
+
+		try {
+			$this->jobList->add(MeasureDeliveryJob::class, ['fileId' => $file->getId()]);
+		} catch (\Throwable $e) {
+			$this->logger->info('files_watermark: could not queue a delivery measurement', [
+				'exception' => $e,
+				'path' => $file->getPath(),
+			]);
+		}
+	}
+
+	/**
+	 * Measure $file's delivery length for its owner, now. The body of {@see MeasureDeliveryJob}.
+	 */
+	public function measure(File $file): void {
+		$this->measureForDelivery($file, $this->resolveConfig());
+	}
+
+	private function ownerOf(File $file): ?IUser {
+		try {
+			return $file->getOwner();
+		} catch (\Throwable) {
+			return null;
+		}
 	}
 
 	/**
@@ -177,6 +373,11 @@ class WatermarkService {
 		if (!$this->markMapper->unmark($file->getId())) {
 			return false;
 		}
+
+		// A promised length describes a watermarked download, and there is none now. The
+		// listing already stops advertising it once the mark is gone; this keeps the row from
+		// outliving the reason it was written.
+		$this->reservation?->forget($file->getId());
 
 		$this->logMapper->insertLog(
 			$this->userSession->getUser()?->getUID() ?? 'system',
@@ -248,7 +449,10 @@ class WatermarkService {
 		}
 
 		$this->recordLog($target, self::TRIGGER_INHERITED, $this->resolveConfig());
-		$this->measureForDelivery($target, $this->resolveConfig());
+		// Queued, never rendered here: a folder copy calls this once per protected file, and
+		// a render each would let the copy request run long enough to be killed before the
+		// walk reached the rest of the tree - leaving those copies unmarked.
+		$this->queueMeasurement($target);
 
 		return true;
 	}
@@ -353,38 +557,29 @@ class WatermarkService {
 	 *                                    caller must deny the fetch rather than serve the original
 	 */
 	public function watermarkForDownload(File $file): ?string {
-		// The two reasons are told apart rather than folded into `isDeliveryCandidate` here,
-		// because the ceiling below depends on which one applies - and asking the mark table
-		// once is the difference between one query per delivery and two.
 		$id = $file->getId();
 		$marked = $id !== null && $this->isMarked($id);
 
-		// **The mark is asked before the type, and the type is asked of the bytes.** A
-		// rename changes the cached MIME - the server derives it from the name - so testing
-		// `isSupported($file->getMimeType())` first handed anyone who could rename a marked
-		// file a one-click way to fetch it clean: `report.pdf` to `report.txt`, download,
-		// rename back. See {@see deliveryMime}.
-		$mime = $marked
-			? $this->deliveryMime($file)
-			: ($this->isSupported($file->getMimeType()) ? $file->getMimeType() : null);
+		// **The type is asked of the bytes, for both reasons a fetch is watermarked.** A
+		// rename changes the cached MIME - the server derives it from the name - so trusting
+		// it handed anyone who could rename a protected file a one-click way to fetch it
+		// clean: `report.pdf` to `report.txt`, download, rename back. That was closed for
+		// marked files first; a file watermarked only because it leaves through a share had
+		// the same hole until {@see shareForcedMime} learned to sniff as well.
+		$mime = $marked ? $this->deliveryMime($file) : $this->shareForcedMime($file);
 
 		if ($mime === null) {
 			return null;
 		}
 
-		if (!$marked && !$this->isForcedByShare($file)) {
-			return null;
-		}
-
 		try {
 			$config = $this->resolveConfig();
-			// A marked file passed the byte ceiling when it was marked; a file watermarked
-			// only because it is going out through a share never had such a moment, so the
-			// ceiling is applied here instead. It throws, and the catch below turns that into
-			// the same denial a failed render produces - the file is not served clean.
-			if (!$marked) {
-				$this->assertSizeAllowed($file);
-			}
+			// **Checked at every delivery, marked or not.** A mark survives an overwrite, so
+			// the bytes being rendered are not necessarily the bytes that passed the ceiling
+			// when the file was marked - and a file far past it would be pulled through a
+			// render all the same. It throws, and the catch below turns that into the same
+			// denial a failed render produces: the file is not served clean.
+			$this->assertSizeAllowed($file);
 			[$tmpPath, $resolved] = $this->renderToTemp($file, $config, null, $mime);
 			$this->recordLog($file, self::TRIGGER_DELIVERED, $resolved);
 
@@ -397,6 +592,72 @@ class WatermarkService {
 
 			throw new WatermarkRequiredException(
 				$file->getPath(),
+				$this->l->t('This file is watermarked on download, and the watermark could not be generated.'),
+				$e,
+			);
+		}
+	}
+
+	/**
+	 * Render the watermarked copy to serve for one **old version** of $source, or null when
+	 * $source is not protected and the version should be served as stored.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * A VERSION IS THE SAME DOCUMENT, AND IT WAS THE OTHER WAY OUT.
+	 *
+	 * Nothing this app does writes to storage, so every version `files_versions` keeps of a
+	 * marked file is a clean copy of it - and the Versions tab offers each one for download,
+	 * to the owner and to every share recipient. The version node has a file id of its own,
+	 * which no mark names, so nothing stood in the way.
+	 *
+	 * The decision is therefore asked of the *source* file - its mark, and whether this
+	 * reader's fetch of it is a share the policy watermarks - and the bytes rendered are the
+	 * version's. The watermark names the reader exactly as a download of the current file
+	 * would.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * A protected file's version that cannot be rendered - a type this app does not draw on,
+	 * or a failed render - is refused rather than served, the same posture as the file itself.
+	 *
+	 * @param File $source the versioned file, as the reader sees it
+	 * @param callable():mixed $openVersion a fresh read stream of the version's bytes per call
+	 * @return ?string path of a temp copy the caller owns and must delete
+	 * @throws WatermarkRequiredException
+	 */
+	public function watermarkVersionForDownload(
+		File $source,
+		callable $openVersion,
+		string $versionMime,
+		int|float $versionSize,
+	): ?string {
+		$id = $source->getId();
+		$protected = ($id !== null && $this->isMarked($id)) || $this->isForcedByShare($source);
+		if (!$protected) {
+			return null;
+		}
+
+		try {
+			$mime = $this->isSupported($versionMime)
+				? $versionMime
+				: $this->sniffStream($openVersion, $source->getPath());
+			if ($mime === null) {
+				throw new \RuntimeException('this version is not a type the app can watermark');
+			}
+
+			$this->assertBytesAllowed((int)$versionSize);
+			$config = $this->resolveConfig();
+			[$tmpPath, $resolved] = $this->renderToTemp($source, $config, null, $mime, $openVersion);
+			$this->recordLog($source, self::TRIGGER_DELIVERED, $resolved);
+
+			return $tmpPath;
+		} catch (\Throwable $e) {
+			$this->logger->error('files_watermark: failed to watermark a version on delivery: ' . $e->getMessage(), [
+				'exception' => $e,
+				'path' => $source->getPath(),
+			]);
+
+			throw new WatermarkRequiredException(
+				$source->getPath(),
 				$this->l->t('This file is watermarked on download, and the watermark could not be generated.'),
 				$e,
 			);
@@ -418,20 +679,19 @@ class WatermarkService {
 	public function isDeliveryCandidate(FileInfo $node): bool {
 		$id = $node->getId();
 
-		if (!$this->isSupported($node->getMimetype())) {
-			// The *name* says this is nothing we can watermark. Only a mark makes it worth
-			// asking the bytes, and only a `File` can be asked - so an unmarked file still
-			// costs one indexed lookup and no read at all. {@see deliveryMime}.
-			return $node instanceof File
-				&& $id !== null
-				&& $this->isMarked($id)
-				&& $this->deliveryMime($node) !== null;
-		}
-
 		if ($id !== null && $this->isMarked($id)) {
-			return true;
+			if ($this->isSupported($node->getMimetype())) {
+				return true;
+			}
+
+			// The *name* says this is nothing we can watermark, so ask the bytes - and only a
+			// `File` can be asked. {@see deliveryMime}.
+			return $node instanceof File && $this->deliveryMime($node) !== null;
 		}
 
+		// The share switches sniff a misleading name too, but only once a switch actually
+		// claims this fetch - an unmarked file outside a share still costs one indexed lookup
+		// and no read at all.
 		return $this->isForcedByShare($node);
 	}
 
@@ -486,9 +746,19 @@ class WatermarkService {
 	 * cannot name is one the renderers could not have drawn on anyway.
 	 */
 	private function sniffMime(File $file): ?string {
+		return $this->sniffStream(fn () => $file->fopen('rb'), $file->getPath());
+	}
+
+	/**
+	 * {@see sniffMime}, for bytes that are not the current content of a `File` - an old
+	 * version, most of all.
+	 *
+	 * @param callable():mixed $open returns a fresh read stream
+	 */
+	private function sniffStream(callable $open, string $path): ?string {
 		try {
-			$handle = $file->fopen('rb');
-			if ($handle === false) {
+			$handle = $open();
+			if (!is_resource($handle)) {
 				return null;
 			}
 			$header = fread($handle, self::SNIFF_BYTES);
@@ -504,7 +774,7 @@ class WatermarkService {
 			// going out clean. That is precisely the failure this whole path exists to close,
 			// so it is left to crash loudly instead.
 			$this->logger->warning('files_watermark: could not read {path} to detect its type: {reason}', [
-				'path' => $file->getPath(),
+				'path' => $path,
 				'reason' => $e->getMessage(),
 				'exception' => $e,
 			]);
@@ -563,13 +833,45 @@ class WatermarkService {
 	 * they bound what one render may cost - and they are checked in
 	 * {@see watermarkForDownload}, at the point where exceeding one has to become a refusal.
 	 */
-	public function isForcedByShare(FileInfo $node): bool {
+	public function isForcedByShare(FileInfo $node, bool $inspectContent = true): bool {
+		return $this->shareForcedMime($node, $inspectContent) !== null;
+	}
+
+	/**
+	 * The type a share-forced fetch of $node is rendered as, or null when the share switches
+	 * do not claim this fetch.
+	 *
+	 * **A misleading name is seen through, as it is for a marked file.** With only the cached
+	 * type to go on, renaming `report.pdf` to `report.txt` took a shared file out of both the
+	 * switch and the scope at once and downloaded it clean. The bytes are only read once a
+	 * switch has claimed the fetch *and* the name says nothing renderable, so a file outside a
+	 * share - every file the owner lists - is never opened here.
+	 *
+	 * @param bool $inspectContent false to trust the name, for a caller that would otherwise
+	 *                             open every unsupported file in a listing - the
+	 *                             `is-watermarked` badge. Delivery always inspects.
+	 */
+	private function shareForcedMime(FileInfo $node, bool $inspectContent = true): ?string {
 		$config = $this->resolveConfig();
 
 		$forced = ($config->getWatermarkExternalShares() && $this->shareAccess->isExternalShareAccess())
 			|| ($config->getWatermarkInternalShares() && $this->shareAccess->isInternalShareAccess($node));
+		if (!$forced) {
+			return null;
+		}
 
-		return $forced && $this->isInScope($node, $config);
+		$mime = $node->getMimetype();
+		if (!$this->isSupported($mime)) {
+			if (!$inspectContent || !($node instanceof File)) {
+				return null;
+			}
+			$mime = $this->sniffMime($node);
+			if ($mime === null) {
+				return null;
+			}
+		}
+
+		return $this->isInScope($node, $config, $mime) ? $mime : null;
 	}
 
 	/**
@@ -580,14 +882,18 @@ class WatermarkService {
 	 * answer decides whether this fetch is watermarked, and "no" means serve the file as it
 	 * is stored.
 	 *
+	 * **The type tested is what the file holds**, not what it is called - see
+	 * {@see shareForcedMime}. A whitelist of `image/png` still excludes a PDF renamed to
+	 * `.png`, and still includes a PNG renamed to `.txt`.
+	 *
 	 * **The folder tag is only checked for a real node.** It reads the file's parent, which
 	 * `FileInfo` cannot give us; every delivery path in this app passes a `File`, so the
 	 * fallback is theoretical, and it is deliberately the *inclusive* one - a scope test this
 	 * cannot perform must not quietly hand out a clean copy of a shared file.
 	 */
-	private function isInScope(FileInfo $node, WatermarkConfig $config): bool {
+	private function isInScope(FileInfo $node, WatermarkConfig $config, string $mime): bool {
 		try {
-			$this->assertMimeAllowed($node->getMimetype(), $config);
+			$this->assertMimeAllowed($mime, $config);
 			if ($node instanceof File) {
 				$this->assertFolderTagMatches($node, $config);
 			}
@@ -627,17 +933,14 @@ class WatermarkService {
 	 */
 	public function watermarkPreviewImage(File $file, string $srcPath, string $destPath, int $shorterSide): void {
 		$config = $this->scaledForPreview($this->resolveConfig(), $shorterSide);
+		$placeholders = $this->buildPlaceholders($file);
 
 		$logoTmp = $this->imageStore->localPath($config->getImagePath());
 		$config = $this->withImagePath($config, $logoTmp);
 
 		try {
-			$this->imageWatermarker->apply(
-				$srcPath,
-				$destPath,
-				$config,
-				$this->buildPlaceholders($file),
-			);
+			$this->assertDrawable($config, $placeholders);
+			$this->imageWatermarker->apply($srcPath, $destPath, $config, $placeholders);
 		} finally {
 			$this->discardLogo($logoTmp);
 		}
@@ -666,15 +969,6 @@ class WatermarkService {
 		return $scaled;
 	}
 
-	/**
-	 * Render a watermarked copy of $file to a temp path.
-	 *
-	 * @param ?string $mime the type to render as, when the caller has already resolved it
-	 *                      from the bytes ({@see deliveryMime}); null falls back to the
-	 *                      cached type, which is derived from the file's name
-	 * @return array{0: string, 1: WatermarkConfig} the temp path and the config the render
-	 *                                              resolved to (callers need its id for the audit row)
-	 */
 	/**
 	 * Render the file once, now, so its download has a promised length before anyone asks.
 	 *
@@ -740,32 +1034,60 @@ class WatermarkService {
 			]);
 		} finally {
 			// This render exists only to be counted; nothing is served from it.
-			if ($tmpPath !== null && file_exists($tmpPath)) {
-				@unlink($tmpPath);
-				@rmdir(dirname($tmpPath));
+			if ($tmpPath !== null) {
+				$this->discardTemp($tmpPath);
 			}
 		}
 	}
 
-	private function renderToTemp(File $file, WatermarkConfig $config, ?IUser $actor = null, ?string $mime = null): array {
+	/**
+	 * Render a watermarked copy of $file to a temp path.
+	 *
+	 * **The working names are the app's own, never the file's.** They used to be the stored
+	 * name plus `_src` / `_flat`, which put a 255-byte name - about 127 Arabic characters -
+	 * four bytes past what the filesystem allows, so the copy silently failed to write and
+	 * every download of such a file was refused.
+	 *
+	 * **The source is streamed to disk, not loaded.** `getContent()` held the whole file in
+	 * PHP memory before the renderer had even started.
+	 *
+	 * @param ?string $mime the type to render as, when the caller has already resolved it
+	 *                      from the bytes ({@see deliveryMime}); null falls back to the
+	 *                      cached type, which is derived from the file's name
+	 * @param ?callable():mixed $openSource where the bytes come from when they are not the
+	 *                                      file's current content - an old version
+	 * @return array{0: string, 1: WatermarkConfig} the temp path and the config the render
+	 *                                              resolved to (callers need its id for the audit row)
+	 */
+	private function renderToTemp(
+		File $file,
+		WatermarkConfig $config,
+		?IUser $actor = null,
+		?string $mime = null,
+		?callable $openSource = null,
+	): array {
 		$mime ??= $file->getMimeType();
 		$this->assertSupported($mime, $file);
 
 		$placeholders = $this->buildPlaceholders($file, $actor);
-		$tmpPath = $this->createTempPath($file->getName());
+		$dir = $this->createTempDir();
+		$tmpPath = $dir . '/render.' . self::EXTENSIONS[$mime];
+		$srcTmp = $dir . '/source';
 
-		$srcTmp = $tmpPath . '_src';
-		file_put_contents($srcTmp, $file->getContent());
-
-		// The renderers open the logo as a plain file path, but the config only holds an
-		// opaque reference to an uploaded image - resolve it to a temp copy for the render
-		// and hand them a config pointing at that. Anything the store does not recognise
-		// (notably a legacy hand-typed absolute path) resolves to null and renders as
-		// text-only rather than reading the server's filesystem.
-		$logoTmp = $this->imageStore->localPath($config->getImagePath());
-		$config = $this->withImagePath($config, $logoTmp);
-
+		$logoTmp = null;
 		try {
+			$this->copySource($openSource ?? fn () => $file->fopen('rb'), $srcTmp);
+
+			// The renderers open the logo as a plain file path, but the config only holds an
+			// opaque reference to an uploaded image - resolve it to a temp copy for the render
+			// and hand them a config pointing at that. Anything the store does not recognise
+			// (notably a legacy hand-typed absolute path) resolves to null rather than reading
+			// the server's filesystem - and a policy left with nothing to draw is refused
+			// below rather than rendered as a "watermarked" file carrying no watermark.
+			$logoTmp = $this->imageStore->localPath($config->getImagePath());
+			$config = $this->withImagePath($config, $logoTmp);
+			$this->assertDrawable($config, $placeholders);
+
 			if (in_array($mime, self::SUPPORTED_PDF, true)) {
 				$this->pdfWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
 				$this->flattenInPlace($tmpPath, $config);
@@ -782,19 +1104,101 @@ class WatermarkService {
 				$this->imageWatermarker->apply($srcTmp, $tmpPath, $config, $placeholders);
 			}
 		} catch (\Throwable $e) {
-			$this->discardLogo($logoTmp);
 			// $srcTmp holds a plaintext copy of the file. A render failure is routine
 			// (unparseable PDFs above all), so without this it accumulates readable copies
 			// of user content in the temp dir indefinitely - the caller only ever gets an
 			// exception, never a path it could clean up itself.
 			$this->discardTemp($tmpPath, $srcTmp);
 			throw $e;
+		} finally {
+			$this->discardLogo($logoTmp);
 		}
 
-		$this->discardLogo($logoTmp);
-		unlink($srcTmp);
+		@unlink($srcTmp);
 
 		return [$tmpPath, $config];
+	}
+
+	/**
+	 * Copy the bytes $open hands back to $dest, a stream at a time.
+	 *
+	 * @param callable():mixed $open returns a fresh read stream
+	 * @throws \RuntimeException when the source will not open or the copy comes up short
+	 */
+	private function copySource(callable $open, string $dest): void {
+		$in = $open();
+		if (!is_resource($in)) {
+			throw new \RuntimeException('the file could not be opened for reading');
+		}
+
+		$out = @fopen($dest, 'wb');
+		if ($out === false) {
+			fclose($in);
+			throw new \RuntimeException('the working copy could not be created');
+		}
+
+		try {
+			if (stream_copy_to_stream($in, $out) === false) {
+				throw new \RuntimeException('the file could not be copied for rendering');
+			}
+		} finally {
+			fclose($in);
+			fclose($out);
+		}
+	}
+
+	/**
+	 * Refuse a render that would draw nothing at all.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * A WATERMARKED FILE WITH NO WATERMARK IS THE WORST OUTCOME AVAILABLE.
+	 *
+	 * Both renderers skip what they cannot draw - a logo that did not resolve, a template
+	 * that came out blank - and say nothing. An `image` policy whose logo was deleted, or a
+	 * `text` policy whose template is empty or resolves to nothing for this reader, therefore
+	 * rendered successfully, was served as watermarked and audited as delivered, and carried
+	 * not one changed pixel. Every other failure in this app refuses the fetch; this one
+	 * handed out the clean document while reporting the opposite.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * A `combined` policy that has lost only its logo still names the reader, so it renders
+	 * the text and the missing logo is logged - the watermark that matters is still there.
+	 *
+	 * @param array<string, string> $placeholders
+	 * @throws \RuntimeException
+	 */
+	private function assertDrawable(WatermarkConfig $config, array $placeholders): void {
+		$type = $config->getType();
+		$wantsText = in_array($type, ['text', 'combined'], true);
+		$wantsLogo = in_array($type, ['image', 'combined'], true);
+
+		$drawsText = $wantsText && trim($this->resolveTemplate($config, $placeholders)) !== '';
+		$drawsLogo = $wantsLogo && $config->getImagePath() !== null;
+
+		if ($wantsLogo && !$drawsLogo) {
+			$this->logger->warning('files_watermark: the watermark policy {config} has no usable logo; re-upload it in the watermark settings', [
+				'app' => 'files_watermark',
+				'config' => $config->getId(),
+			]);
+		}
+
+		if (!$drawsText && !$drawsLogo) {
+			throw new \RuntimeException('the watermark policy draws nothing for this file: no text resolved and no logo is available');
+		}
+	}
+
+	/**
+	 * The text the renderers will draw, by the same rule they apply.
+	 *
+	 * @param array<string, string> $placeholders
+	 */
+	private function resolveTemplate(WatermarkConfig $config, array $placeholders): string {
+		$replace = [];
+		foreach ($placeholders as $key => $value) {
+			$replace['{' . $key . '}'] = $value;
+		}
+
+		return strtr($config->getTextTemplate() ?? self::DEFAULT_TEMPLATE, $replace);
 	}
 
 	/**
@@ -1024,10 +1428,18 @@ class WatermarkService {
 	 * @throws FileTooLargeException
 	 */
 	private function assertSizeAllowed(File $file): void {
-		$maxBytes = $this->applyLimits->maxBytes();
 		// `getSize()` is documented as float|int - the cache widens it so a size can
 		// outrun a 32-bit int. Narrowed once here rather than at each use.
-		$size = (int)$file->getSize();
+		$this->assertBytesAllowed((int)$file->getSize());
+	}
+
+	/**
+	 * {@see assertSizeAllowed}, for a byte count that is not a `File`'s - an old version's.
+	 *
+	 * @throws FileTooLargeException
+	 */
+	private function assertBytesAllowed(int $size): void {
+		$maxBytes = $this->applyLimits->maxBytes();
 
 		if ($size <= $maxBytes) {
 			return;
@@ -1347,9 +1759,13 @@ class WatermarkService {
 		}
 	}
 
-	private function createTempPath(string $filename): string {
+	/** A private 0700 directory for one render's working files. */
+	private function createTempDir(): string {
 		$dir = sys_get_temp_dir() . '/nc_watermark_' . bin2hex(random_bytes(8));
-		mkdir($dir, 0700, true);
-		return $dir . '/' . $filename;
+		if (!@mkdir($dir, 0700, true) && !is_dir($dir)) {
+			throw new \RuntimeException('no temp directory is available for the render');
+		}
+
+		return $dir;
 	}
 }

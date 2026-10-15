@@ -108,6 +108,33 @@ final class PdfDecryptor {
 	}
 
 	/**
+	 * Whether `$raw` is encrypted with something other than the empty password.
+	 *
+	 * The question {@see decrypt()} answers with `null` alongside every other "not our case",
+	 * asked on its own because one caller needs it told apart: a document locked with a real
+	 * password is *skipped* by policy, where a document that is merely broken is not. False
+	 * for an unencrypted document, for one the empty password opens, and for anything the
+	 * parser cannot read at all - "cannot tell" is not "locked".
+	 */
+	public function isLocked(string $raw): bool {
+		try {
+			$parser = new Parser(['decode_streams' => false, 'ignore_filter_errors' => true]);
+			[$xref, $objects] = $parser->parse($raw);
+		} catch (\Throwable) {
+			return false;
+		}
+
+		$encryptRef = (string)($xref['trailer']['encrypt'] ?? '');
+		if ($encryptRef === '' || !isset($objects[$encryptRef])) {
+			return false;
+		}
+
+		$fileId = self::binaryFileId($xref['trailer']['id'][0] ?? '');
+
+		return $this->openHandler(self::dictionary($objects[$encryptRef]), $fileId) === null;
+	}
+
+	/**
 	 * Authenticate the empty user password against `$encrypt` and return the cipher.
 	 *
 	 * `null` means "not a document this class can open": the public-key handler, a

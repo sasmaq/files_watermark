@@ -5,15 +5,18 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\AppInfo;
 
 use Composer\Autoload\ClassLoader;
+use OCA\DAV\Events\BeforeFileDirectDownloadedEvent;
 use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\Files\Event\LoadAdditionalScriptsEvent;
 use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
+use OCA\FilesWatermark\EventListener\DirectDownloadListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeCopiedListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
+use OCA\FilesWatermark\EventListener\UserDeletedListener;
 use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
@@ -31,6 +34,7 @@ use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\Preview\BeforePreviewFetchedEvent;
 use OCP\Share\IManager as IShareManager;
+use OCP\User\Events\UserDeletedEvent;
 use OCP\Util;
 use Psr\Container\ContainerInterface;
 
@@ -174,6 +178,11 @@ class Application extends App implements IBootstrap {
 			PublicShareScriptsListener::class,
 		);
 		$context->registerEventListener(BeforePreviewFetchedEvent::class, BeforePreviewFetchedListener::class);
+		// `/remote.php/direct/{token}` is a third DAV server, and the only one that announces
+		// itself to no app. Its one hook is this event, fired just before it opens the stored
+		// file - see DirectDownloadListener for why refusing is all that can be done there.
+		$context->registerEventListener(BeforeFileDirectDownloadedEvent::class, DirectDownloadListener::class);
+		$context->registerEventListener(UserDeletedEvent::class, UserDeletedListener::class);
 
 		// The preview pair. The listener notes *which* file a preview request is for - it
 		// is the only hook every preview endpoint passes through - and the middleware

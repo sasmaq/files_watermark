@@ -85,6 +85,34 @@ class ApiControllerWatermarkedStatusTest extends TestCase {
 		$this->assertSame(['watermarked' => [], 'locked' => []], $response->getData());
 	}
 
+	/**
+	 * **The list is bounded.** Every id costs a filesystem lookup and a bound parameter, and an
+	 * unbounded list let any account send tens of thousands in one request. The Files app asks
+	 * in chunks of 100, so the cap never touches it.
+	 */
+	public function testAnOversizedListIsRefusedBeforeAnythingIsLookedUp(): void {
+		$this->loginAlice();
+		$this->rootFolder->expects($this->never())->method('getUserFolder');
+		$this->watermarkService->expects($this->never())->method('markedFileIds');
+
+		$ids = implode(',', range(1, ApiController::MAX_STATUS_IDS + 1));
+		$response = $this->controller->getWatermarkedStatus($ids);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+	}
+
+	/** Exactly at the cap is still answered - duplicates do not count against it. */
+	public function testAListAtTheCapIsAnswered(): void {
+		$this->loginAlice();
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getById')->willReturn([]);
+		$this->rootFolder->method('getUserFolder')->willReturn($folder);
+
+		$ids = implode(',', array_merge(range(1, ApiController::MAX_STATUS_IDS), [1, 2, 3]));
+
+		$this->assertSame(Http::STATUS_OK, $this->controller->getWatermarkedStatus($ids)->getStatus());
+	}
+
 	public function testReturnsEmptyWhenIdsAreAllInvalid(): void {
 		$this->loginAlice();
 		$this->watermarkService->expects($this->never())->method('markedFileIds');

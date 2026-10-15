@@ -127,6 +127,37 @@ class WatermarkRenditionMapper extends QBMapper {
 	}
 
 	/**
+	 * Delete the reservations of up to $limit files that no longer exist, and say how many
+	 * rows went. The same sweep {@see WatermarkMarkMapper::deleteOrphans} makes, for the same
+	 * reason: nothing else ever deletes a row here once its file is gone.
+	 */
+	public function deleteOrphans(int $limit = InList::MAX): int {
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectDistinct('t.file_id')
+			->from($this->getTableName(), 't')
+			->leftJoin('t', 'filecache', 'f', $qb->expr()->eq('t.file_id', 'f.fileid'))
+			->where($qb->expr()->isNull('f.fileid'))
+			->setMaxResults($limit);
+
+		$result = $qb->executeQuery();
+		$ids = [];
+		while ($row = $result->fetch()) {
+			$ids[] = (int)$row['file_id'];
+		}
+		$result->closeCursor();
+
+		if ($ids === []) {
+			return 0;
+		}
+
+		$delete = $this->db->getQueryBuilder();
+		$delete->delete($this->getTableName())
+			->where($delete->expr()->in('file_id', $delete->createNamedParameter($ids, IQueryBuilder::PARAM_INT_ARRAY)));
+
+		return $delete->executeStatement();
+	}
+
+	/**
 	 * Drop every reservation measured for $uid, for when the user is gone.
 	 */
 	public function deleteByUid(string $uid): void {
@@ -151,25 +182,26 @@ class WatermarkRenditionMapper extends QBMapper {
 	 * @return array<int, WatermarkRendition>
 	 */
 	public function findByFileIds(array $fileIds, string $uid): array {
-		if ($fileIds === []) {
-			return [];
-		}
-
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->getTableName())
-			->where($qb->expr()->in('file_id', $qb->createNamedParameter($fileIds, IQueryBuilder::PARAM_INT_ARRAY)))
-			->andWhere($qb->expr()->eq('uid', $qb->createNamedParameter($uid)));
-
-		try {
-			$found = $this->findEntities($qb);
-		} catch (DbException) {
-			return [];
-		}
-
 		$byFileId = [];
-		foreach ($found as $rendition) {
-			$byFileId[$rendition->getFileId()] = $rendition;
+		// One query per thousand ids - see {@see InList} for why not one per call.
+		foreach (InList::chunks($fileIds) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('*')
+				->from($this->getTableName())
+				->where($qb->expr()->in('file_id', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)))
+				->andWhere($qb->expr()->eq('uid', $qb->createNamedParameter($uid)));
+
+			try {
+				$found = $this->findEntities($qb);
+			} catch (DbException) {
+				// Advisory, like every read here: a chunk that fails is a chunk with nothing
+				// promised, and the rows it would have held are re-measured.
+				continue;
+			}
+
+			foreach ($found as $rendition) {
+				$byFileId[$rendition->getFileId()] = $rendition;
+			}
 		}
 
 		return $byFileId;

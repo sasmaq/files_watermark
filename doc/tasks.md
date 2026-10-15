@@ -66,15 +66,14 @@ Things that produce a wrong file, or say something untrue about one.
   policy rather than a gap.
 - [ ] **Public file-drop uploads** are watermarked by neither the inline path nor the job:
   there is no session to attribute the watermark to.
-- [ ] **A marked file's earlier versions are not marked, and go out clean.** A version is a
-  *copy* with its own file id, and a mark is a row against the live file's id - so
-  `isMarked()` is false for every revision. `files_versions`' preview controller previews
-  the version node, and a version download resolves to it too, which makes this wider than
-  a thumbnail: the last revision of a marked document is one click away in the sidebar,
-  unwatermarked. The trash is *not* this bug and is closed - a delete is a move, so the id
-  and the mark carry over - but it took its own fix on the download path. Needs a decision
-  before it needs code: whether a mark reaches a file's history at all, or whether the
-  answer is that versions of marked files are not offered.
+- [ ] **Marking replaces the owner's synced copy with a watermarked one.** Measuring a
+  delivery length bumps the file's etag so sync clients re-read it - which is what makes
+  the first virtual-file open work - but a client holding a *full* local copy reads the
+  same bump as a server-side change and downloads the watermarked rendering over the clean
+  original. An edit to it then uploads the watermark into the stored file. Kept, because
+  the alternative is the Windows VFS first-open failure the bump exists to prevent; the
+  client-side guard is in [clients/README.md](clients/README.md). Needs a decision on
+  whether the bump should skip the owner.
 
 ## Features not built
 
@@ -91,8 +90,6 @@ Things that produce a wrong file, or say something untrue about one.
   viewer's locale or a config field. The bundled font carries both digit sets, so the font is
   not the obstacle. (The timezone half is done: they read `default_timezone` from
   `config.php`.)
-- [ ] **Folder downloads through `/api/v1/download`** - accept a folder path, or document
-  that archives go through the DAV route.
 **Dropped: the file-versions undo option**.
 Eight items, all of them about making the destructive burn cheaper to undo. The rework
 deletes the burn and `OriginalStore` with it, so there is no second copy to give back and
@@ -104,10 +101,10 @@ them.
 ## Security and operations
 
 - [ ] **Emit `CriticalActionPerformedEvent`** into the Nextcloud admin audit log.
-- [ ] **Enforce the one-exception `exec()` rule mechanically** - a static-analysis rule or
+- [ ] **Enforce the one-exception process rule mechanically** - a static-analysis rule or
   a CI grep. `PdfFlattener` is the single permitted call site, so the check to write is
-  "no `exec(` outside `lib/Service/PdfFlattener.php`". Nothing stops a future contributor
-  adding a second shell-out.
+  "no `proc_open(`, `exec(`, `shell_exec(`, `system(` or `passthru(` outside
+  `lib/Service/PdfFlattener.php`". Nothing stops a future contributor adding a second one.
 - [ ] **Verify the public share page badge against a running instance.** The server half is
   tested (`PropFindPluginTest`, public mode) and the client half degrades to drawing
   nothing, but two things were reasoned about rather than observed on NC 31: that
@@ -182,7 +179,7 @@ them.
 
 ## Docs and release
 
-- [ ] Document every API endpoint (including `/api/v1/download`) with request and response
+- [ ] Document every API endpoint with request and response
   shapes.
 - [ ] Developer guide: how to add a new file-type renderer.
 - [ ] Localisation section: which languages ship, how to add one.

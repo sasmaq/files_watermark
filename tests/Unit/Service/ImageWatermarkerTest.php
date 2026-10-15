@@ -759,4 +759,136 @@ class ImageWatermarkerTest extends TestCase {
 		}
 		return function_exists('imagecreatefromwebp') && function_exists('imagewebp');
 	}
+
+	// -----------------------------------------------------------------------
+	// GD: what the default engine used to get wrong
+	// -----------------------------------------------------------------------
+
+	private function gd(): ImageWatermarker {
+		if (!extension_loaded('gd')) {
+			$this->markTestSkipped('GD is not available.');
+		}
+		return new ImageWatermarker('gd');
+	}
+
+	/**
+	 * **Transparency survives.** GD decodes the alpha channel and then, unless told to, writes
+	 * the image without one: a fully transparent PNG came back 100% opaque black.
+	 */
+	public function testATransparentPngKeepsItsTransparency(): void {
+		$img = imagecreatetruecolor(200, 200);
+		imagesavealpha($img, true);
+		imagealphablending($img, false);
+		imagefill($img, 0, 0, imagecolorallocatealpha($img, 0, 0, 0, 127));
+		$source = $this->tmpDir . '/clear.png';
+		imagepng($img, $source);
+
+		$dest = $this->tmpDir . '/clear-out.png';
+		$this->gd()->apply($source, $dest, $this->makeConfig('text', fontSize: 10), ['username' => 'Alice']);
+
+		// The tiled text covers the edges too, so no single pixel is safe to sample - but most
+		// of the image is untouched by it, and every one of those must still be transparent.
+		// Before the fix the count was zero: the whole image came back opaque black.
+		$out = imagecreatefrompng($dest);
+		$transparent = 0;
+		for ($x = 0; $x < 200; $x++) {
+			for ($y = 0; $y < 200; $y++) {
+				if ((imagecolorat($out, $x, $y) >> 24) === 127) {
+					$transparent++;
+				}
+			}
+		}
+		$this->assertGreaterThan(200 * 200 / 2, $transparent, 'the untouched pixels must still be transparent');
+	}
+
+	/**
+	 * **A full palette is not a refusal.** A PNG-8 using all 256 entries - what pngquant and
+	 * friends produce - had no slot for the watermark colour, so every download of one was
+	 * refused with a 403.
+	 */
+	public function testAPngWithAFullPaletteIsWatermarked(): void {
+		$img = imagecreate(64, 64);
+		for ($i = 0; $i < 256; $i++) {
+			imagesetpixel($img, $i % 64, intdiv($i, 64), imagecolorallocate($img, $i, 255 - $i, ($i * 7) % 256));
+		}
+		$source = $this->tmpDir . '/palette.png';
+		imagepng($img, $source);
+
+		$dest = $this->tmpDir . '/palette-out.png';
+		$this->gd()->apply($source, $dest, $this->makeConfig('text', fontSize: 10), ['username' => 'Alice']);
+
+		$this->assertNotFalse(getimagesize($dest));
+	}
+
+	/**
+	 * **A phone photo stays upright.** It is stored as landscape pixels with Orientation 6;
+	 * GD ignored the tag and wrote no EXIF back, so the delivered copy lay on its side.
+	 */
+	public function testAJpegIsTurnedUprightFromItsExifOrientation(): void {
+		$source = $this->jpegWithOrientation(40, 20, 6);
+		$dest = $this->tmpDir . '/upright.jpg';
+
+		$this->gd()->apply($source, $dest, $this->makeConfig('text', fontSize: 6), ['username' => 'A']);
+
+		[$width, $height] = getimagesize($dest);
+		$this->assertSame([20, 40], [$width, $height]);
+	}
+
+	/**
+	 * **A transparent logo is not a box.** `imagecopymerge()` ignores the logo's alpha, so the
+	 * transparent margin of a PNG logo - most of any logo - was painted in as a solid block.
+	 */
+	public function testATransparentLogoLeavesItsMarginUntouched(): void {
+		$source = $this->createImage('image/png', 'png', 400, 300);
+
+		// A 120x90 logo, transparent but for a red square in its middle.
+		$logo = imagecreatetruecolor(120, 90);
+		imagesavealpha($logo, true);
+		imagealphablending($logo, false);
+		imagefill($logo, 0, 0, imagecolorallocatealpha($logo, 0, 0, 0, 127));
+		imagefilledrectangle($logo, 55, 40, 65, 50, imagecolorallocatealpha($logo, 255, 0, 0, 0));
+		$logoPath = $this->tmpDir . '/logo.png';
+		imagepng($logo, $logoPath);
+
+		$config = $this->makeConfig('image', opacity: 100);
+		$config->setImagePath($logoPath);
+		$dest = $this->tmpDir . '/logo-out.png';
+		$this->gd()->apply($source, $dest, $config, []);
+
+		$out = imagecreatefrompng($dest);
+		// The logo lands at (140, 105). Its transparent corner must leave the white page white.
+		$margin = imagecolorsforindex($out, imagecolorat($out, 142, 107));
+		$this->assertSame([255, 255, 255], [$margin['red'], $margin['green'], $margin['blue']]);
+		// And its opaque middle is drawn.
+		$middle = imagecolorsforindex($out, imagecolorat($out, 200, 150));
+		$this->assertGreaterThan(200, $middle['red']);
+		$this->assertLessThan(60, $middle['green']);
+	}
+
+	/**
+	 * A logo-only watermark whose logo cannot be drawn is refused, not rendered as an image
+	 * with no watermark on it.
+	 */
+	public function testALogoOnlyWatermarkWithoutItsLogoIsRefused(): void {
+		$source = $this->createImage('image/png', 'png', 100, 100);
+
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessage('logo could not be drawn');
+
+		$this->gd()->apply($source, $this->tmpDir . '/nologo.png', $this->makeConfig('image'), []);
+	}
+
+	/** A JPEG of $w x $h pixels carrying an EXIF APP1 with the given orientation. */
+	private function jpegWithOrientation(int $w, int $h, int $orientation): string {
+		$img = imagecreatetruecolor($w, $h);
+		imagefilledrectangle($img, 0, 0, $w - 1, $h - 1, imagecolorallocate($img, 255, 255, 255));
+		ob_start();
+		imagejpeg($img, null, 95);
+		$jpeg = (string)ob_get_clean();
+
+		$path = $this->tmpDir . '/oriented.jpg';
+		file_put_contents($path, substr($jpeg, 0, 2) . ExifOrientationTest::app1($orientation) . substr($jpeg, 2));
+
+		return $path;
+	}
 }

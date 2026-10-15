@@ -33,7 +33,14 @@ document is whoever uploaded it rather than whoever walked out with it.
 - Diagonal tiled placement at 45° rotation, light grey (`#d3d3d3`) and 40% opacity by default
 - Two trigger modes, deciding **which files are marked**: **on demand** (the file action
   menu) and **on upload** (every supported file, as it arrives). Under both, a marked file
-  is watermarked on every download *and* every preview
+  is watermarked on every download *and* every preview - including a folder or
+  multi-select archive, a download out of the trash, and an **old version** downloaded or
+  previewed from the Versions tab
+- **Direct links are refused** for a file that would be watermarked:
+  `/remote.php/direct/{token}` opens the stored file itself and cannot be watermarked, so it
+  answers 403 and the file is fetched through the ordinary routes instead
+- A share whose **download permission is off** keeps that restriction for watermarked
+  files too: core's view-only check runs before the watermark is drawn
 - Two **share** switches, deciding which *fetches* are watermarked whether or not the file
   is marked: **internal shares** and **public links** - see
   [Watermarking shared files](#watermarking-shared-files)
@@ -51,6 +58,7 @@ document is whoever uploaded it rather than whoever walked out with it.
 | --- | --- |
 | Nextcloud | 31.x |
 | PHP | 8.2 or 8.3 |
+| Background jobs | Cron recommended - measures delivery lengths after on-upload marking, and cleans up after deleted files nightly |
 | PHP extension | `gd` (required; the image renderer - `imagick` optional, see below) |
 | PHP extension | `bcmath` (required by the PDF renderer) |
 | System package | `poppler-utils` (**optional**; supplies `pdftoppm` for PDF flattening) |
@@ -78,8 +86,8 @@ system fonts and fall back to GD's built-in bitmap font when it found none.
 ### One optional external binary, and nothing else
 
 The app runs inside PHP. It spawns no processes at all except for one optional feature:
-**PDF flattening** shells out to `pdftoppm` (poppler-utils) to rasterise a watermarked
-page. Nothing else does - no `qpdf`, no Ghostscript, no `exec()` anywhere else in the
+**PDF flattening** runs `pdftoppm` (poppler-utils) to rasterise a watermarked page.
+Nothing else does - no `qpdf`, no Ghostscript, no other `proc_open()` anywhere in the
 codebase - so a host that installs nothing beyond the PHP extensions above watermarks
 every supported file exactly as a fully equipped one does.
 
@@ -104,10 +112,15 @@ Three consequences worth knowing:
   do not carry over.
 - **Password-protected PDFs are skipped.** A document with a real user password is
   refused: the app never guesses a password and never uses the owner entry as a bypass.
-  Such a file is left exactly as it was, an entry is written to the audit log, and an
-  on-demand apply returns an error naming it. Nothing is corrupted and no unwatermarked
-  copy is served in place of a watermarked one - the watermark simply does not get
-  applied.
+  Such a file is left unmarked and served as stored - its password is what protects it -
+  and the audit log records it as **Skipped: password-protected**. On upload that is all
+  that happens; an on-demand **Apply watermark** answers with an error naming the reason.
+  Nothing is corrupted, and the file is never marked into a state where every download is
+  refused.
+- **On-demand Apply checks the file can be watermarked first.** It renders the file once
+  before marking it, so a document the renderer cannot read is refused with a message
+  rather than marked and then refused on every download. Marking on upload does not render
+  in the request; the owner's delivery length is measured by a background job.
 
 The watermark is a real content stream, so **the text layer survives**: selection, copy,
 search and screen-reader access all keep working. The user's file is never modified.
@@ -132,11 +145,16 @@ setting the server could not honour.
 **Security note.** This is the only feature in the app that runs an external program. Every
 flattened download starts `pdftoppm` and hands it a PDF built from a user's file, so
 poppler parses user-supplied content on your server - **keep `poppler-utils` patched**, the
-same way you would for any other component that reads untrusted input. The command line
-itself carries nothing a user controls (two app-generated absolute paths and two integers,
-all escaped), page bitmaps are written into a `0700` directory rather than shared `/tmp`,
-and a PHP with `exec` disabled reports the feature unavailable instead of failing. Leave
-flattening off if system packages are not patched on a schedule.
+same way you would for any other component that reads untrusted input. No shell is
+involved: the arguments go to `proc_open()` as an array, and carry nothing a user controls
+(two app-generated absolute paths and two integers). Each page has **60 seconds**, after
+which the renderer is killed and the ordinary watermarked PDF is delivered instead - PHP's
+`max_execution_time` does not count time spent waiting on a child process, so without a
+deadline a PDF that sent poppler into a loop held a PHP worker indefinitely. Page bitmaps
+are written into a `0700` directory rather than shared `/tmp`, and a PHP with `proc_open`
+(or `proc_get_status`, `proc_terminate`, `proc_close`) in `disable_functions` reports the
+feature unavailable instead of failing. Leave flattening off if system packages are not
+patched on a schedule.
 
 What it costs, stated plainly:
 
@@ -405,7 +423,6 @@ bound on marking from the UI, which is why it is still there. It is not configur
 | `POST` | `/apps/files_watermark/api/v1/apply` | Mark a file, so every fetch of it is watermarked |
 | `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
-| `GET` | `/apps/files_watermark/api/v1/download` | Download a file, watermarked if it is marked |
 
 ## Usage
 

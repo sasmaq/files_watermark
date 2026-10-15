@@ -39,7 +39,7 @@ Features:
 - سجل تدقيق كامل لكل حدث علامة مائية
 - مقاومة اختيارية للعبث: يعاد بناء ملفات PDF الموسومة كصور صفحات فلا يمكن نزع العلامة (تحتاج حزمة poppler-utils على الخادم، وبدونها تسلم العلامة المائية المعتادة)
     ]]></description>
-    <version>1.8.5</version>
+    <version>1.9.0</version>
     <licence>agpl</licence>
     <author mail="">Saleh Almuqwishi</author>
     <namespace>FilesWatermark</namespace>
@@ -63,6 +63,12 @@ Features:
         <lib>gd</lib>
         <nextcloud min-version="31" max-version="31"/>
     </dependencies>
+    <background-jobs>
+        <!-- Daily: drops marks and reservations of files deleted for good, and logos that
+             no policy references. Registered from here, so it reaches an existing install
+             through the version bump that shipped it. -->
+        <job>OCA\FilesWatermark\BackgroundJob\CleanupJob</job>
+    </background-jobs>
     <commands>
         <!-- occ files_watermark:prune-log - retention for the audit table. -->
         <command>OCA\FilesWatermark\Command\PruneLog</command>
