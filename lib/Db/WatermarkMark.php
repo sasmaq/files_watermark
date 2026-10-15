@@ -39,13 +39,17 @@ class WatermarkMark extends Entity {
 	protected string $trigger = '';
 	protected ?int $configId = null;
 	/**
-	 * The uid whose file this protection descends from, or null when the mark was placed
-	 * directly on a file rather than inherited from one.
+	 * The uid whose protection this is: the file's owner when the mark was placed on it, or -
+	 * for an inherited mark - the owner of the file it descends from.
 	 *
-	 * Set only by {@see \OCA\FilesWatermark\Service\WatermarkService::inheritMark}, and read
-	 * only by the remove gate: once it is set, *it* decides who may unmark, in place of
-	 * ownership. That is the whole point - copying a marked file makes the copier the owner,
-	 * so ownership alone stopped being an answer the moment marks began to travel.
+	 * Read only by the remove gate: once it is set, *it* decides who may unmark, in place of
+	 * ownership. Copying a marked file makes the copier the owner, and so does **moving** one
+	 * out of a shared folder into your own - the file id survives a move, so the mark comes
+	 * along, but the owner is now the recipient. Asking the current owner handed a recipient
+	 * with delete permission the off switch in two steps.
+	 *
+	 * Null only on a mark placed before the owner was recorded at mark time (and on an
+	 * inherited mark whose origin could not be resolved); see {@see isForeignTo}.
 	 */
 	protected ?string $originOwner = null;
 	/** Which file this mark was inherited from. Audit, not behaviour. */
@@ -68,13 +72,15 @@ class WatermarkMark extends Entity {
 	 * Files app offers the button at all. A button offered where the server refuses is a
 	 * user discovering the rule by being told no.
 	 *
-	 * A mark placed directly on a file is foreign to nobody - ownership governs it, as it
-	 * always has. An inherited one that names nobody is foreign to everybody, which is the
-	 * fail-closed direction and the same call the ownership check makes for a node whose
-	 * owner will not resolve. An empty uid never matches an origin.
+	 * A mark placed directly on a file is foreign to everybody but the owner it recorded. One
+	 * that recorded nobody predates the column's use for direct marks, and is foreign to
+	 * nobody - the current owner governs it, as it always did. An inherited one that names
+	 * nobody is foreign to everybody, which is the fail-closed direction and the same call the
+	 * ownership check makes for a node whose owner will not resolve. An empty uid never
+	 * matches an origin.
 	 */
 	public function isForeignTo(?string $uid): bool {
-		if ($this->trigger !== WatermarkService::TRIGGER_INHERITED) {
+		if ($this->trigger !== WatermarkService::TRIGGER_INHERITED && $this->originOwner === null) {
 			return false;
 		}
 

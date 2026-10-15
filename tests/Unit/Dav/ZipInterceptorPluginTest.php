@@ -267,6 +267,39 @@ class ZipInterceptorPluginTest extends TestCase {
 	}
 
 	/**
+	 * A share-forced member renamed to an extension this app does not draw on is still
+	 * watermarked inside an archive.
+	 *
+	 * The plugin used to pre-filter unmarked members on their cached type, so `report.pdf`
+	 * renamed to `report.txt` came out clean in a folder download while the single download
+	 * of the same file was watermarked. The decision belongs to `isForcedByShare()`, which
+	 * reads the bytes when the name says nothing renderable.
+	 */
+	public function testARenamedShareForcedMemberIsStillWatermarked(): void {
+		$renamed = $this->file(1, '/bob/files/Shared/report.txt', 'report.txt', '%PDF-1.4 secret', mime: 'text/plain');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$renamed]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+
+		$this->marked([]);
+		$this->watermarkService->method('isForcedByShare')
+			->willReturnCallback(static function (File $file): bool {
+				$stream = $file->fopen('rb');
+				$header = fread($stream, 1024);
+				fclose($stream);
+
+				return str_contains($header, '%PDF-');
+			});
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->willReturn($this->renderedCopy());
+
+		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
+
+		$this->assertSame('WATERMARKED', Streamer::members()['/Shared/report.txt']['contents']);
+	}
+
+	/**
 	 * Every member's declared size must be the size of the bytes that member actually
 	 * carries - the watermarked length for a substituted member, its own for one
 	 * streamed untouched.

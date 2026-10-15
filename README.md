@@ -36,11 +36,13 @@ document is whoever uploaded it rather than whoever walked out with it.
 - Two trigger modes, deciding **which files are marked**: **on demand** (the file action
   menu) and **on upload** (every supported file, as it arrives). Under both, a marked file
   is watermarked on every download *and* every preview - including a folder or
-  multi-select archive, a download out of the trash, and an **old version** downloaded or
-  previewed from the Versions tab
-- **Direct links are refused** for a file that would be watermarked:
-  `/remote.php/direct/{token}` opens the stored file itself and cannot be watermarked, so it
-  answers 403 and the file is fetched through the ordinary routes instead
+  multi-select archive, a download out of the trash, an **old version** downloaded or
+  previewed from the Versions tab, a photo downloaded from a **Photos album** (shared or
+  public), and a file served as a **Text attachment**
+- **Direct links are refused** for a file that would be watermarked - marked, or reached
+  through a share the policy watermarks: `/remote.php/direct/{token}` opens the stored file
+  itself and cannot be watermarked, so it answers 403 and the file is fetched through the
+  ordinary routes instead
 - A share whose **download permission is off** keeps that restriction for watermarked
   files too: core's view-only check runs before the watermark is drawn
 - Two **share** switches, deciding which *fetches* are watermarked whether or not the file
@@ -354,14 +356,27 @@ that comes out, so they live in the app config instead of on the form:
 | `archive_max_bytes` | `268435456` (256 MiB) | Source bytes rendered for one such download |
 | `apply_max_bytes` | `67108864` (64 MiB) | Size of a single file accepted for an on-demand apply |
 | `image_max_pixels` | `40000000` (40 MP) | Decoded size of an image, on every trigger |
+| `anon_render_limit` | `60` | Watermarked downloads one anonymous address may ask for per period |
+| `anon_render_period` | `600` (seconds) | The period `anon_render_limit` is counted over |
 
 ```bash
 occ config:app:set files_watermark archive_max_members --value 500
 occ config:app:set files_watermark archive_max_bytes   --value 1073741824
 occ config:app:set files_watermark apply_max_bytes     --value 134217728
 occ config:app:set files_watermark image_max_pixels    --value 80000000
+occ config:app:set files_watermark anon_render_limit   --value 200
 occ config:app:delete files_watermark archive_max_members   # back to the default
 ```
+
+**Anonymous renders are rate limited.** Every download of a protected file is rendered
+fresh, so a public link to a large marked PDF turns each anonymous `GET` into real CPU
+work. Past `anon_render_limit` within `anon_render_period`, an address gets **429** with a
+`Retry-After` header - never the clean file. Signed-in readers are not counted; a folder
+archive counts once; previews are not counted. The count lives in Nextcloud's own rate-limit
+store, so `'ratelimit.protection.enabled' => false` in `config.php` switches it off along with
+core's limits. **Federated shares count as anonymous**: another server syncing a large
+folder of protected files from this one will meet the limit, so raise it on an instance
+that federates heavily.
 
 An archive is rendered member by member **before** any bytes are sent - that is what lets a
 share that must be watermarked fail with a clean 403 instead of a truncated download - so
@@ -511,9 +526,10 @@ Applying asks for write permission, because it is a change to the file's policy 
 people who can change the file are the people who can change that. Applying the same rule
 to removal would hand the off switch to a share recipient with edit permission - and
 whoever the shared copy would have named is exactly whoever has an interest in it naming
-nobody. So removal asks who *owns* the file rather than who may write it. For a file that
-is not shared the two are the same person and nothing changes; the rule only ever bites on
-a share.
+nobody. So removal asks who *owned* the file when it was marked, rather than who may write
+it - or who owns it now, which a recipient can change by moving it. For a file that is not
+shared these are all the same person and nothing changes; the rule only ever bites on a
+share.
 
 The reverse is deliberately not restricted: a recipient may still *apply* a watermark to a
 file they can write. That direction only ever adds protection, and it cannot lock the owner
@@ -541,8 +557,12 @@ is unaffected: you are the origin, so you keep control of both.
 a file somebody else owns - the button is hidden rather than shown and refused, so the rule
 is not something a user has to discover by clicking.
 
-Moving a file changes nothing, in either direction: Nextcloud keeps the file's identity
-across a move, so the watermark simply travels with it.
+Moving a file keeps its watermark: Nextcloud keeps the file's identity across a move, so the
+mark travels with it. What a move does **not** carry is the right to remove it. The owner is
+recorded when the file is marked, so a recipient who moves a file out of a shared folder and
+into their own home - and so becomes its owner - still cannot remove the watermark. A file
+that was watermarked only because it sat in an internal share keeps that protection when it
+is moved out, the same way a copy of it does.
 
 Earlier versions burned the watermark into the stored file and kept a copy of the original
 in the owner's storage to undo it with. That whole apparatus is gone - no copies against

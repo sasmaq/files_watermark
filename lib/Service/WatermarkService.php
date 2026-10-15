@@ -135,6 +135,7 @@ class WatermarkService {
 		private InstanceTimeZone $timeZone,
 		private ?DeliveryReservation $reservation = null,
 		private ?IJobList $jobList = null,
+		private ?AnonymousRenderLimit $renderLimit = null,
 	) {
 	}
 
@@ -197,6 +198,9 @@ class WatermarkService {
 				$user?->getUID() ?? 'system',
 				$trigger,
 				$config->getId(),
+				// Whose protection this is, fixed now: the file id survives a move into
+				// somebody else's storage, and the owner does not. See unmarkVerdict().
+				$this->ownerOf($file)?->getUID(),
 			);
 
 			if (!$placed) {
@@ -435,6 +439,25 @@ class WatermarkService {
 		$origin = $this->markMapper->findByFileId($sourceId)?->getOriginOwner()
 			?? $source->getOwner()?->getUID();
 
+		return $this->carryMark($target, $sourceId, $origin);
+	}
+
+	/**
+	 * Place an inherited mark on $target, naming $origin as the person who may release it.
+	 *
+	 * {@see inheritMark} for a copy, and for a **move** that takes a protected file out of a
+	 * share into somebody else's storage - where the source no longer exists to be asked
+	 * whose it was, so the caller says ({@see \OCA\FilesWatermark\EventListener\NodeMovedListener}).
+	 *
+	 * @return bool true when this call placed the mark, false when $target was already marked
+	 *              or has no id
+	 */
+	public function carryMark(File $target, int $sourceId, ?string $origin): bool {
+		$targetId = $target->getId();
+		if ($targetId === null) {
+			return false;
+		}
+
 		$placed = $this->markMapper->mark(
 			$targetId,
 			$this->userSession->getUser()?->getUID() ?? 'system',
@@ -491,6 +514,18 @@ class WatermarkService {
 	 * and is removable by nobody. That is the fail-closed direction, and it is the same call
 	 * the ownership check itself makes for a node whose owner will not resolve.
 	 *
+	 * ---------------------------------------------------------------------------
+	 * A DIRECT MARK IS ANSWERED BY WHO OWNED THE FILE WHEN IT WAS MARKED, NOT BY WHO OWNS IT NOW.
+	 *
+	 * A move keeps the file id, so the mark follows a file anywhere - including out of a
+	 * shared folder and into the recipient's own home, which a recipient with delete
+	 * permission can do in one request. The recipient then *owns* the file, and the
+	 * ownership test passed them straight through: move, remove, download clean. So `mark()`
+	 * records the owner, and that is who is asked. A mark recorded before that (origin null)
+	 * still falls back to the current owner; the migration that shipped with this backfills
+	 * those it can resolve.
+	 * ---------------------------------------------------------------------------
+	 *
 	 * @return string one of {@see UNMARK_OK}, {@see UNMARK_NOT_OWNER}, {@see UNMARK_INHERITED}
 	 */
 	public function unmarkVerdict(File $file, string $uid): string {
@@ -499,6 +534,10 @@ class WatermarkService {
 
 		if ($mark !== null && $mark->getTrigger() === self::TRIGGER_INHERITED) {
 			return $mark->isForeignTo($uid) ? self::UNMARK_INHERITED : self::UNMARK_OK;
+		}
+
+		if ($mark !== null && $mark->getOriginOwner() !== null) {
+			return $mark->isForeignTo($uid) ? self::UNMARK_NOT_OWNER : self::UNMARK_OK;
 		}
 
 		return $file->getOwner()?->getUID() === $uid ? self::UNMARK_OK : self::UNMARK_NOT_OWNER;
@@ -514,6 +553,23 @@ class WatermarkService {
 	 */
 	public function markedFileIds(array $fileIds): array {
 		return $this->markMapper->markedFileIds($fileIds);
+	}
+
+	/**
+	 * The recorded origin of each marked file among $fileIds - who may release it.
+	 *
+	 * Only marked files have a key; a mark that recorded nobody maps to null.
+	 *
+	 * @param int[] $fileIds
+	 * @return array<int, ?string>
+	 */
+	public function markOrigins(array $fileIds): array {
+		$origins = [];
+		foreach ($this->markMapper->findByFileIds($fileIds) as $id => $mark) {
+			$origins[$id] = $mark->getOriginOwner();
+		}
+
+		return $origins;
 	}
 
 	/**
@@ -551,12 +607,17 @@ class WatermarkService {
 	 * The identity is resolved per call, which is the point of the whole design - see
 	 * {@see buildPlaceholders}.
 	 *
+	 * @param bool $chargeRender false when the caller has already charged this request against
+	 *                           {@see AnonymousRenderLimit} - an archive, which renders many
+	 *                           members and is charged once
 	 * @return string|null path of a temp copy the caller owns and must delete, or null when
 	 *                     the file carries no mark
 	 * @throws WatermarkRequiredException the file is marked and the render failed; the
 	 *                                    caller must deny the fetch rather than serve the original
+	 * @throws RenderRateLimitedException an anonymous address has used up its renders; the
+	 *                                    caller answers 429, and the original is not served
 	 */
-	public function watermarkForDownload(File $file): ?string {
+	public function watermarkForDownload(File $file, bool $chargeRender = true): ?string {
 		$id = $file->getId();
 		$marked = $id !== null && $this->isMarked($id);
 
@@ -570,6 +631,13 @@ class WatermarkService {
 
 		if ($mime === null) {
 			return null;
+		}
+
+		// Charged only now, once this fetch is known to cost a render - an unprotected file
+		// served by core costs no more here than it does anywhere else. Outside the try below,
+		// which would otherwise turn a temporary refusal into a permanent-looking 403.
+		if ($chargeRender) {
+			$this->chargeAnonymousRender();
 		}
 
 		try {
@@ -623,6 +691,7 @@ class WatermarkService {
 	 * @param callable():mixed $openVersion a fresh read stream of the version's bytes per call
 	 * @return ?string path of a temp copy the caller owns and must delete
 	 * @throws WatermarkRequiredException
+	 * @throws RenderRateLimitedException see {@see watermarkForDownload}
 	 */
 	public function watermarkVersionForDownload(
 		File $source,
@@ -635,6 +704,8 @@ class WatermarkService {
 		if (!$protected) {
 			return null;
 		}
+
+		$this->chargeAnonymousRender();
 
 		try {
 			$mime = $this->isSupported($versionMime)
@@ -662,6 +733,18 @@ class WatermarkService {
 				$e,
 			);
 		}
+	}
+
+	/**
+	 * Count one render against an anonymous caller's allowance - see {@see AnonymousRenderLimit}.
+	 *
+	 * Public so an archive can charge once for the whole request and then render its members
+	 * with `$chargeRender = false`. A no-op for a signed-in reader.
+	 *
+	 * @throws RenderRateLimitedException
+	 */
+	public function chargeAnonymousRender(): void {
+		$this->renderLimit?->charge();
 	}
 
 	/**

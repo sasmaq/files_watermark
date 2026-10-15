@@ -10,6 +10,7 @@ use OCA\FilesWatermark\Db\WatermarkConfigMapper;
 use OCA\FilesWatermark\Db\WatermarkLogMapper;
 use OCA\FilesWatermark\Db\WatermarkMark;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
+use OCA\FilesWatermark\Service\AnonymousRenderLimit;
 use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\FileTooLargeException;
@@ -20,6 +21,7 @@ use OCA\FilesWatermark\Service\InstanceTimeZone;
 use OCA\FilesWatermark\Service\PasswordProtectedPdfException;
 use OCA\FilesWatermark\Service\PdfFlattener;
 use OCA\FilesWatermark\Service\PdfWatermarker;
+use OCA\FilesWatermark\Service\RenderRateLimitedException;
 use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\ShareRecipient;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
@@ -1733,6 +1735,16 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertSame([2], $this->service->lockedFileIds([1, 2, 3], 'bob'));
 	}
 
+	/** A direct mark that recorded its owner locks everybody else - the Remove button too. */
+	public function testLockedFileIdsIncludesADirectMarkWhoseRecordedOwnerIsSomebodyElse(): void {
+		$this->markMapper->method('findByFileIds')->with([1, 2])->willReturn([
+			1 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
+			2 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'bob'),
+		]);
+
+		$this->assertSame([1], $this->service->lockedFileIds([1, 2], 'bob'));
+	}
+
 	public function testLockedFileIdsIsEmptyWhenNothingIsMarked(): void {
 		$this->markMapper->method('findByFileIds')->willReturn([]);
 
@@ -1759,6 +1771,50 @@ class WatermarkServiceTest extends TestCase {
 			WatermarkService::UNMARK_NOT_OWNER,
 			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'bob'),
 		);
+	}
+
+	/**
+	 * **The move.** Alice marked her file in a folder she shares with Bob, with delete
+	 * permission. Bob moved it into his own home: the file id came along, and so did the
+	 * mark, but Bob now *owns* the file. Asking the current owner let him remove the mark
+	 * and download the clean original; the mark records Alice, so he is refused.
+	 */
+	public function testARecipientWhoMovedAMarkedFileIntoTheirOwnHomeMayNotUnmarkIt(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_NOT_OWNER,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('bob')), 'bob'),
+		);
+	}
+
+	public function testTheRecordedOwnerMayStillUnmark(): void {
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_OK,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'alice'),
+		);
+	}
+
+	/**
+	 * A mark is placed with the file's owner as its origin - not the person marking, who may
+	 * be a recipient with edit permission marking the owner's file.
+	 */
+	public function testMarkingRecordsTheFilesOwnerAsTheOrigin(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$file = $this->file(owner: $this->user('alice'));
+
+		$this->markMapper->expects($this->once())
+			->method('mark')
+			->with(42, 'bob', WatermarkService::TRIGGER_ON_UPLOAD, null, 'alice')
+			->willReturn(true);
+
+		$this->service->mark($file, WatermarkService::TRIGGER_ON_UPLOAD, $this->user('bob'));
 	}
 
 	/**
@@ -2055,6 +2111,82 @@ class WatermarkServiceTest extends TestCase {
 		$this->expectException(WatermarkRequiredException::class);
 
 		$this->service->watermarkForDownload($this->file(size: ApplyLimits::DEFAULT_MAX_BYTES + 1));
+	}
+
+	// -----------------------------------------------------------------------
+	// Anonymous render limit
+	// -----------------------------------------------------------------------
+
+	private function serviceLimitedBy(AnonymousRenderLimit $limit): WatermarkService {
+		return new WatermarkService(
+			$this->configMapper,
+			$this->logMapper,
+			$this->markMapper,
+			$this->pdfWatermarker,
+			$this->pdfFlattener,
+			$this->imageWatermarker,
+			$this->userSession,
+			$this->tagObjectMapper,
+			$this->logger,
+			$this->imageStore,
+			$this->imageLimits,
+			$this->applyLimits,
+			$this->shareAccess,
+			$this->shareRecipient,
+			$this->l10n(),
+			$this->timeZone,
+			$this->reservation,
+			$this->jobList,
+			$limit,
+		);
+	}
+
+	/** A file core serves as stored costs this app nothing, so it is not counted. */
+	public function testAnUnprotectedFetchIsNotCharged(): void {
+		$limit = $this->createMock(AnonymousRenderLimit::class);
+		$limit->expects($this->never())->method('charge');
+
+		$this->assertNull($this->serviceLimitedBy($limit)->watermarkForDownload($this->file()));
+	}
+
+	/**
+	 * A spent allowance is a 429, not the 403 a failed render becomes - and nothing is
+	 * rendered for it.
+	 */
+	public function testARateLimitedRenderIsRefusedBeforeItRendersAndIsNotTurnedIntoA403(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$this->pdfWatermarker->expects($this->never())->method('apply');
+		$limit = $this->createMock(AnonymousRenderLimit::class);
+		$limit->method('charge')->willThrowException(new RenderRateLimitedException(600));
+
+		$this->expectException(RenderRateLimitedException::class);
+
+		$this->serviceLimitedBy($limit)->watermarkForDownload($this->file());
+	}
+
+	/** An archive charges once for itself and renders its members uncharged. */
+	public function testAMemberRenderedForAnArchiveIsNotChargedAgain(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$limit = $this->createMock(AnonymousRenderLimit::class);
+		$limit->expects($this->never())->method('charge');
+
+		// Past the ceiling, so the render is refused without needing a renderer - all this
+		// asserts is that the charge was not asked for.
+		$this->expectException(WatermarkRequiredException::class);
+
+		$this->serviceLimitedBy($limit)->watermarkForDownload($this->file(size: ApplyLimits::DEFAULT_MAX_BYTES + 1), false);
+	}
+
+	public function testAProtectedVersionIsCharged(): void {
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$limit = $this->createMock(AnonymousRenderLimit::class);
+		$limit->expects($this->once())->method('charge')->willThrowException(new RenderRateLimitedException(600));
+
+		$this->expectException(RenderRateLimitedException::class);
+
+		$this->serviceLimitedBy($limit)->watermarkVersionForDownload($this->file(), $this->versionBytes('%PDF-1.4'), 'application/pdf', 8);
 	}
 
 	// -----------------------------------------------------------------------

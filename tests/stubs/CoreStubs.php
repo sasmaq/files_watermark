@@ -166,6 +166,93 @@ namespace OCA\Files_Versions\Controller {
 	}
 }
 
+namespace OCA\Text\Controller {
+
+	if (!interface_exists(ISessionAwareController::class)) {
+		/**
+		 * Mirrors `interface ISessionAwareController` (text/lib/Controller/
+		 * ISessionAwareController.php). Only the two getters `TextAttachmentMiddleware` asks
+		 * are reproduced: Text's own middleware has set both by the time the controller has
+		 * answered, and they are where Text itself reads the document and the reader from.
+		 */
+		interface ISessionAwareController {
+			/** ISessionAwareController.php:16 */
+			public function getDocumentId(): int;
+
+			/** ISessionAwareController.php:20 */
+			public function getUserId(): string;
+		}
+	}
+
+	if (!class_exists(AttachmentController::class)) {
+		/**
+		 * Stands in for `class AttachmentController extends ApiController implements
+		 * ISessionAwareController` (text/lib/Controller/AttachmentController.php). Recognised
+		 * by name after it has answered; `text` is an app and can be disabled, in which case
+		 * the `instanceof` simply never matches.
+		 */
+		abstract class AttachmentController extends \OCP\AppFramework\ApiController implements ISessionAwareController {
+		}
+	}
+}
+
+namespace OCA\Photos\Sabre {
+
+	if (!class_exists(CollectionPhoto::class)) {
+		/**
+		 * Mirrors `class CollectionPhoto` (photos/lib/Sabre/CollectionPhoto.php).
+		 *
+		 * The base of every photo a Photos collection serves over DAV. Only the file id is
+		 * reproduced - it is the one member `DownloadInterceptorPlugin` asks of the base.
+		 * `photos` is an app and can be disabled, in which case the `instanceof` tests on
+		 * its subclasses simply never match.
+		 */
+		abstract class CollectionPhoto {
+			/** CollectionPhoto.php:55 */
+			abstract public function getFileId(): int;
+		}
+	}
+}
+
+namespace OCA\Photos\Sabre\Album {
+
+	if (!class_exists(AlbumPhoto::class)) {
+		/**
+		 * Mirrors `class AlbumPhoto extends CollectionPhoto implements IFile`
+		 * (photos/lib/Sabre/Album/AlbumPhoto.php). Serves `/remote.php/dav/photos/{uid}/
+		 * albums/...` and `sharedalbums/...` with `get()` = `fopen('r')` on the owner's node.
+		 */
+		abstract class AlbumPhoto extends \OCA\Photos\Sabre\CollectionPhoto implements \Sabre\DAV\IFile {
+			/** AlbumPhoto.php:61 - the node resolved through the album owner's folder. */
+			abstract public function getFileInfo(): \OCP\Files\Node;
+		}
+	}
+
+	if (!class_exists(PublicAlbumPhoto::class)) {
+		/**
+		 * Mirrors `class PublicAlbumPhoto extends AlbumPhoto implements IFile`
+		 * (photos/lib/Sabre/Album/PublicAlbumPhoto.php) - `/remote.php/dav/photospublic/
+		 * {token}/...`, a public album link served from the authenticated DAV server.
+		 */
+		abstract class PublicAlbumPhoto extends AlbumPhoto {
+		}
+	}
+}
+
+namespace OCA\Photos\Sabre\Place {
+
+	if (!class_exists(PlacePhoto::class)) {
+		/**
+		 * Mirrors `class PlacePhoto extends CollectionPhoto implements IFile`
+		 * (photos/lib/Sabre/Place/PlacePhoto.php).
+		 */
+		abstract class PlacePhoto extends \OCA\Photos\Sabre\CollectionPhoto implements \Sabre\DAV\IFile {
+			/** PlacePhoto.php:60 */
+			abstract public function getFileInfo(): \OCP\Files\Node;
+		}
+	}
+}
+
 namespace OC {
 
 	use OCP\IDateTimeZone;

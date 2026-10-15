@@ -36,6 +36,21 @@ use OCP\IUserSession;
  * makes (nobody to name, so name the owner), and it errs towards watermarking, which is the
  * error whose cost is visible.
  *
+ * ---------------------------------------------------------------------------
+ * NO SESSION IS NOT THE SAME THING AS "NOT A SHARE".
+ *
+ * The internal test used to give up on any request without a session user, on the theory
+ * that such a request could only be a public link. `/remote.php/direct/{token}` is the
+ * counter-example: it has no session, and it serves a node resolved through the *creator's*
+ * own folder - so a recipient's direct link to a file in a received share sits on that
+ * share's mount, and the internal switch never saw it. A recipient could mint a direct link
+ * and download the file clean.
+ *
+ * The internal test is therefore excluded only by the explicit public-link flag. Every
+ * route that serves a public link raises it, and their nodes come off the owner's own
+ * storage regardless, so the two switches stay as independent as they were.
+ * ---------------------------------------------------------------------------
+ *
  * Request-scoped, because {@see notePublicRequest} is: registered as a shared service in
  * {@see \OCA\FilesWatermark\AppInfo\Application} so the listener that raises the flag and
  * the service that reads it are looking at one instance.
@@ -52,6 +67,12 @@ class ShareAccess {
 	 */
 	private bool $publicRequest = false;
 
+	/**
+	 * True once a route has established that this reader reached the file through a share
+	 * that is not a mount. See {@see noteIndirectShareAccess}.
+	 */
+	private bool $indirectShare = false;
+
 	public function __construct(
 		private IUserSession $userSession,
 	) {
@@ -59,6 +80,19 @@ class ShareAccess {
 
 	public function notePublicRequest(): void {
 		$this->publicRequest = true;
+	}
+
+	/**
+	 * Note that the reader is fetching somebody else's file through a share the storage
+	 * cannot see.
+	 *
+	 * Two apps share files without mounting them: a Photos album shared with collaborators,
+	 * and a Text document whose attachments are read through the *owner's* folder whatever
+	 * the reader can see. Both hand over the owner's node, so the storage test says "the
+	 * owner is reading their own file". The route that knows better says so here.
+	 */
+	public function noteIndirectShareAccess(): void {
+		$this->indirectShare = true;
 	}
 
 	/** Whether this fetch is an external one: a public link, or nobody at all. */
@@ -69,13 +103,18 @@ class ShareAccess {
 	/**
 	 * Whether $node is being read through a share mounted from somebody else's storage.
 	 *
-	 * External access is excluded rather than folded in, so the two admin switches stay
+	 * A public link is excluded rather than folded in, so the two admin switches stay
 	 * independent: an instance that watermarks internal shares and not public links must not
-	 * watermark public links through this method by accident.
+	 * watermark public links through this method by accident. A request with no session but
+	 * no public-link flag is still asked - see the class docblock for the direct link.
 	 */
 	public function isInternalShareAccess(FileInfo $node): bool {
-		if ($this->isExternalShareAccess()) {
+		if ($this->publicRequest) {
 			return false;
+		}
+
+		if ($this->indirectShare) {
+			return true;
 		}
 
 		try {

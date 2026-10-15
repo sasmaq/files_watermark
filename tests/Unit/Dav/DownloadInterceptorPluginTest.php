@@ -10,11 +10,17 @@ use OCA\Files_Trashbin\Sabre\ITrash;
 use OCA\Files_Versions\Sabre\VersionFile;
 use OCA\Files_Versions\Versions\IVersion;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
+use OCA\FilesWatermark\Dav\TooManyRendersException;
 use OCA\FilesWatermark\Db\WatermarkRendition;
 use OCA\FilesWatermark\Service\DeliveryPadder;
 use OCA\FilesWatermark\Service\DeliveryReservation;
+use OCA\FilesWatermark\Service\RenderRateLimitedException;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\Photos\Sabre\Album\AlbumPhoto;
+use OCA\Photos\Sabre\Album\PublicAlbumPhoto;
+use OCA\Photos\Sabre\Place\PlacePhoto;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
@@ -74,7 +80,7 @@ class DownloadInterceptorPluginTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function plugin(): DownloadInterceptorPlugin {
+	private function plugin(?ShareAccess $shareAccess = null): DownloadInterceptorPlugin {
 		$plugin = new DownloadInterceptorPlugin(
 			$this->watermarkService,
 			$this->rootFolder,
@@ -83,6 +89,8 @@ class DownloadInterceptorPluginTest extends TestCase {
 			// has no collaborators of its own worth standing in for.
 			new DeliveryPadder(new NullLogger()),
 			$this->userSession,
+			new NullLogger(),
+			$shareAccess,
 		);
 		$plugin->initialize($this->server);
 		return $plugin;
@@ -847,6 +855,176 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->watermarkService->method('isMarked')->with(42)->willReturn(true);
 
 		$this->expectException(Forbidden::class);
+
+		$this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), new Response());
+	}
+
+	// -----------------------------------------------------------------------
+	// Photos collections
+	// -----------------------------------------------------------------------
+
+	/** A file owned by $owner, as Photos resolves it through the album owner's folder. */
+	private function photoFile(string $owner = 'bob'): File&MockObject {
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn($owner);
+
+		$file = $this->createMock(File::class);
+		$file->method('getMimeType')->willReturn('image/png');
+		$file->method('getName')->willReturn('pic.png');
+		$file->method('getOwner')->willReturn($user);
+		return $file;
+	}
+
+	/** @param File[] $readersView what the reader's own folder resolves the photo's id to */
+	private function readerSees(array $readersView): void {
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getById')->with(1471)->willReturn($readersView);
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+	}
+
+	/**
+	 * A collaborator on a shared album gets the album owner's file - and, for the first time,
+	 * a watermark on it.
+	 *
+	 * Photos serves `sharedalbums/...` from the same DAV server with `fopen()` on the stored
+	 * file, and its node was neither a DAV file nor a trash node, so every marked photo in a
+	 * shared album went to the collaborators clean. The album is also a share the storage
+	 * cannot see, which the internal-share switch has to be told.
+	 */
+	public function testAPhotoInAnAlbumSharedWithTheReaderIsWatermarked(): void {
+		$owners = $this->photoFile('bob');
+		$node = $this->createMock(AlbumPhoto::class);
+		$node->method('getFileId')->willReturn(1471);
+		$node->method('getFileInfo')->willReturn($owners);
+		$this->tree->method('getNodeForPath')->willReturn($node);
+		$this->readerSees([]);
+
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->with($owners)
+			->willReturn($this->renderedCopy());
+
+		$shareAccess = new ShareAccess($this->userSession);
+		$response = new Response();
+
+		$this->assertFalse($this->plugin($shareAccess)->httpGet(
+			$this->request('photos/alice/sharedalbums/Alb (bob)/1471-pic.png'),
+			$response,
+		));
+		$this->assertSame('WATERMARKED-BYTES', stream_get_contents($response->getBody()));
+
+		$ownStorage = $this->createMock(\OCP\Files\Storage\IStorage::class);
+		$ownStorage->method('instanceOfStorage')->willReturn(false);
+		$onOwnersStorage = $this->createMock(\OCP\Files\FileInfo::class);
+		$onOwnersStorage->method('getStorage')->willReturn($ownStorage);
+		$this->assertTrue(
+			$shareAccess->isInternalShareAccess($onOwnersStorage),
+			'an album shared with the reader is a share, though the storage cannot say so',
+		);
+	}
+
+	/**
+	 * A reader who reaches the photo in their own folder is read through it - their own file,
+	 * or a share mounted for them, which the storage then reports by itself.
+	 */
+	public function testAPhotoTheReaderCanReachIsReadThroughTheirOwnFolder(): void {
+		$readers = $this->photoFile('alice');
+		$node = $this->createMock(PlacePhoto::class);
+		$node->method('getFileId')->willReturn(1471);
+		$node->expects($this->never())->method('getFileInfo');
+		$this->tree->method('getNodeForPath')->willReturn($node);
+		$this->readerSees([$readers]);
+
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->with($readers)
+			->willReturn($this->renderedCopy());
+
+		$shareAccess = new ShareAccess($this->userSession);
+		$this->assertFalse($this->plugin($shareAccess)->httpGet(
+			$this->request('photos/alice/places/Paris/1471-pic.png'),
+			new Response(),
+		));
+
+		$ownStorage = $this->createMock(\OCP\Files\Storage\IStorage::class);
+		$ownStorage->method('instanceOfStorage')->willReturn(false);
+		$own = $this->createMock(\OCP\Files\FileInfo::class);
+		$own->method('getStorage')->willReturn($ownStorage);
+		$this->assertFalse($shareAccess->isInternalShareAccess($own), 'the reader\'s own photo is not a share');
+	}
+
+	/** A public album link is a public link, whoever happens to be signed in. */
+	public function testAPhotoInAPublicAlbumIsAPublicLink(): void {
+		$owners = $this->photoFile('bob');
+		$node = $this->createMock(PublicAlbumPhoto::class);
+		$node->method('getFileId')->willReturn(1471);
+		$node->method('getFileInfo')->willReturn($owners);
+		$this->tree->method('getNodeForPath')->willReturn($node);
+
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->with($owners)
+			->willReturn($this->renderedCopy());
+
+		$shareAccess = new ShareAccess($this->userSession);
+		$this->plugin($shareAccess)->httpGet($this->request('photospublic/TOKEN/1471-pic.png'), new Response());
+
+		$this->assertTrue($shareAccess->isExternalShareAccess());
+	}
+
+	public function testAMarkedPhotoThatCannotBeResolvedIsRefused(): void {
+		$node = $this->createMock(AlbumPhoto::class);
+		$node->method('getFileId')->willReturn(1471);
+		$node->method('getFileInfo')->willThrowException(new NotFound('Photo not found for user'));
+		$this->tree->method('getNodeForPath')->willReturn($node);
+		$this->readerSees([]);
+		$this->watermarkService->method('isMarked')->with(1471)->willReturn(true);
+
+		$this->expectException(Forbidden::class);
+
+		$this->plugin()->httpGet($this->request('photos/alice/albums/Alb/1471-pic.png'), new Response());
+	}
+
+	public function testAnUnmarkedPhotoThatCannotBeResolvedIsLeftToPhotos(): void {
+		$node = $this->createMock(AlbumPhoto::class);
+		$node->method('getFileId')->willReturn(1471);
+		$node->method('getFileInfo')->willThrowException(new NotFound('Photo not found for user'));
+		$this->tree->method('getNodeForPath')->willReturn($node);
+		$this->readerSees([]);
+		$this->watermarkService->method('isMarked')->with(1471)->willReturn(false);
+
+		$this->assertTrue($this->plugin()->httpGet($this->request('photos/alice/albums/Alb/1471-pic.png'), new Response()));
+	}
+
+	// -----------------------------------------------------------------------
+	// Anonymous render limit
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Past the limit the answer is a 429 that says when to come back - not a 403, which a
+	 * client reads as permanent, and never the stored file.
+	 */
+	public function testAnAnonymousAddressPastItsRenderLimitIsToldToComeBack(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
+		$this->watermarkService->method('watermarkForDownload')
+			->willThrowException(new RenderRateLimitedException(600));
+
+		try {
+			$this->plugin()->httpGet($this->request(), new Response());
+			$this->fail('a rate-limited render must not be served or left to core');
+		} catch (TooManyRendersException $e) {
+			$this->assertSame(429, $e->getHTTPCode());
+			$this->assertSame(['Retry-After' => '600'], $e->getHTTPHeaders($this->server));
+		}
+	}
+
+	public function testAVersionPastTheRenderLimitIsToldToComeBackToo(): void {
+		[$node] = $this->versionNode();
+		$this->tree->method('getNodeForPath')->willReturn($node);
+		$this->watermarkService->method('watermarkVersionForDownload')
+			->willThrowException(new RenderRateLimitedException(600));
+
+		$this->expectException(TooManyRendersException::class);
 
 		$this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), new Response());
 	}

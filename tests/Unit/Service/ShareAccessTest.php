@@ -120,15 +120,63 @@ class ShareAccessTest extends TestCase {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * External access is never *also* internal, so the two admin switches stay independent:
+	 * A public link is never *also* internal, so the two admin switches stay independent:
 	 * an instance that watermarks internal shares and leaves public links alone must not
 	 * watermark a public link through the internal test.
 	 */
-	public function testAnExternalRequestIsNeverInternalShareAccess(): void {
+	public function testAPublicLinkIsNeverInternalShareAccess(): void {
 		$this->userSession->method('getUser')->willReturn(null);
+		$shareAccess = $this->shareAccess();
+		$shareAccess->notePublicRequest();
 
 		// Even on a storage that reports itself shared, which is the shape that would make a
 		// naive implementation answer yes to both.
-		$this->assertFalse($this->shareAccess()->isInternalShareAccess($this->node(true)));
+		$this->assertFalse($shareAccess->isInternalShareAccess($this->node(true)));
+	}
+
+	/**
+	 * The direct link: no session, and a node resolved through the creator's own folder.
+	 *
+	 * This used to answer false - no session was taken to mean "a public link" - so a
+	 * recipient could mint a direct link to a file in a received share and fetch it clean on
+	 * an instance that watermarks internal shares.
+	 */
+	public function testASessionlessFetchOfAReceivedShareMountIsInternalShareAccess(): void {
+		$this->userSession->method('getUser')->willReturn(null);
+
+		$this->assertTrue($this->shareAccess()->isInternalShareAccess($this->node(true)));
+	}
+
+	public function testASessionlessFetchOfTheOwnersStorageIsNot(): void {
+		$this->userSession->method('getUser')->willReturn(null);
+
+		$this->assertFalse($this->shareAccess()->isInternalShareAccess($this->node(false)));
+	}
+
+	// -----------------------------------------------------------------------
+	// Indirect shares
+	// -----------------------------------------------------------------------
+
+	/**
+	 * A Photos album or a Text attachment hands over the owner's node, so only the route
+	 * can say the reader is not the owner.
+	 */
+	public function testANotedIndirectShareIsInternalShareAccessOnTheOwnersStorage(): void {
+		$this->signedIn();
+		$shareAccess = $this->shareAccess();
+
+		$shareAccess->noteIndirectShareAccess();
+
+		$this->assertTrue($shareAccess->isInternalShareAccess($this->node(false)));
+	}
+
+	public function testAPublicLinkOutranksANotedIndirectShare(): void {
+		$this->signedIn();
+		$shareAccess = $this->shareAccess();
+
+		$shareAccess->noteIndirectShareAccess();
+		$shareAccess->notePublicRequest();
+
+		$this->assertFalse($shareAccess->isInternalShareAccess($this->node(false)));
 	}
 }

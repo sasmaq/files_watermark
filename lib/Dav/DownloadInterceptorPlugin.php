@@ -9,8 +9,13 @@ use OCA\Files_Trashbin\Sabre\ITrash;
 use OCA\Files_Versions\Sabre\VersionFile;
 use OCA\FilesWatermark\Service\DeliveryPadder;
 use OCA\FilesWatermark\Service\DeliveryReservation;
+use OCA\FilesWatermark\Service\RenderRateLimitedException;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\Photos\Sabre\Album\AlbumPhoto;
+use OCA\Photos\Sabre\Album\PublicAlbumPhoto;
+use OCA\Photos\Sabre\Place\PlacePhoto;
 use OCP\Files\File;
 use OCP\Files\FileInfo;
 use OCP\Files\IRootFolder;
@@ -106,6 +111,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		private ?DeliveryPadder $padder = null,
 		private ?IUserSession $userSession = null,
 		private LoggerInterface $logger = new NullLogger(),
+		private ?ShareAccess $shareAccess = null,
 	) {
 	}
 
@@ -178,6 +184,11 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			// a 403 rather than a file that looks fine and identifies nobody.
 			$this->trace('refusing: the render failed', $request, ['reason' => $e->getMessage()]);
 			throw new Forbidden($e->getMessage(), 0, $e);
+		} catch (RenderRateLimitedException $e) {
+			// An anonymous address past its allowance. Temporary, so a 429 that says when to
+			// come back - and the stored bytes are not the fallback here either.
+			$this->trace('refusing: anonymous render limit reached', $request);
+			throw TooManyRendersException::from($e);
 		}
 
 		if ($tmpPath === null) {
@@ -257,6 +268,9 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		} catch (WatermarkRequiredException $e) {
 			$this->trace('refusing a version: the render failed', $request, ['reason' => $e->getMessage()]);
 			throw new Forbidden($e->getMessage(), 0, $e);
+		} catch (RenderRateLimitedException $e) {
+			$this->trace('refusing a version: anonymous render limit reached', $request);
+			throw TooManyRendersException::from($e);
 		}
 
 		if ($tmpPath === null) {
@@ -291,18 +305,28 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		$uid = $this->userSession?->getUser()?->getUID();
 
 		if ($id !== null && $uid !== null) {
-			try {
-				foreach ($this->rootFolder->getUserFolder($uid)->getById($id) as $candidate) {
-					if ($candidate instanceof File) {
-						return $candidate;
-					}
-				}
-			} catch (\Throwable) {
-				// Fall through to the owner's node.
+			$file = $this->readersFile($id, $uid);
+			if ($file !== null) {
+				return $file;
 			}
 		}
 
 		return $source instanceof File ? $source : null;
+	}
+
+	/** File $id as user $uid reaches it in their own folder, or null when they cannot. */
+	private function readersFile(int $id, string $uid): ?File {
+		try {
+			foreach ($this->rootFolder->getUserFolder($uid)->getById($id) as $candidate) {
+				if ($candidate instanceof File) {
+					return $candidate;
+				}
+			}
+		} catch (\Throwable) {
+			// Not reachable from this reader's folder; the caller decides what that means.
+		}
+
+		return null;
 	}
 
 	/**
@@ -568,6 +592,10 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			return $file instanceof File ? $file : null;
 		}
 
+		if ($node instanceof AlbumPhoto || $node instanceof PlacePhoto) {
+			return $this->photoFile($node);
+		}
+
 		if (!($node instanceof ITrash)) {
 			return null;
 		}
@@ -581,6 +609,77 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		}
 
 		return null;
+	}
+
+	/**
+	 * The stored file behind a photo that a Photos collection serves, as this reader sees it.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * A THIRD NODE KIND, BECAUSE PHOTOS SERVES FILES OF ITS OWN.
+	 *
+	 * `/remote.php/dav/photos/{uid}/albums/...`, `sharedalbums/...` and `places/...`, and the
+	 * public `/remote.php/dav/photospublic/{token}/...`, all live on this same Sabre server
+	 * and answer GET with `fopen()` on the stored file. Their nodes are neither a DAV `File`
+	 * nor `ITrash`, so this plugin passed them all to core - and an album shared with
+	 * collaborators, or published as a link, handed every one of them the clean original of
+	 * any marked photo in it.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * **The node is resolved through the reader's own folder when it can be**, exactly as for a
+	 * version, so a photo the reader also holds through an ordinary share is read through
+	 * that share's mount and the share switches see it. A collaborator who has the photo only
+	 * through the album gets the owner's node - Photos resolves it there - and the album is
+	 * then reported as a share the storage cannot see ({@see ShareAccess::noteIndirectShareAccess}).
+	 * A public album is a public link, whoever is signed in.
+	 *
+	 * @throws Forbidden a marked photo whose file could not be resolved; it is not served clean
+	 */
+	private function photoFile(AlbumPhoto|PlacePhoto $node): ?File {
+		if ($node instanceof PublicAlbumPhoto) {
+			$this->shareAccess?->notePublicRequest();
+
+			return $this->ownersPhoto($node);
+		}
+
+		$uid = $this->userSession?->getUser()?->getUID();
+		$file = $uid === null ? null : $this->readersFile($node->getFileId(), $uid);
+		if ($file !== null) {
+			return $file;
+		}
+
+		$file = $this->ownersPhoto($node);
+		if ($file === null) {
+			// The same posture as a version this reader cannot resolve: the mark is asked by
+			// id, and a marked photo does not go out on a lookup that failed.
+			if ($this->watermarkService->isMarked($node->getFileId())) {
+				throw new Forbidden('This file is watermarked on download, and the watermark could not be generated.');
+			}
+
+			return null;
+		}
+
+		$owner = null;
+		try {
+			$owner = $file->getOwner()?->getUID();
+		} catch (\Throwable) {
+			// An owner that will not resolve is not this reader.
+		}
+		if ($owner !== $uid) {
+			$this->shareAccess?->noteIndirectShareAccess();
+		}
+
+		return $file;
+	}
+
+	/** The photo's file as the album's or place's owner holds it, or null. */
+	private function ownersPhoto(AlbumPhoto|PlacePhoto $node): ?File {
+		try {
+			$file = $node->getFileInfo();
+		} catch (\Throwable) {
+			return null;
+		}
+
+		return $file instanceof File ? $file : null;
 	}
 
 	/**
