@@ -208,7 +208,7 @@ namespace OCA\Photos\Sabre {
 		 * its subclasses simply never match.
 		 */
 		abstract class CollectionPhoto {
-			/** CollectionPhoto.php:55 */
+			/** CollectionPhoto.php:56 */
 			abstract public function getFileId(): int;
 		}
 	}
@@ -247,7 +247,7 @@ namespace OCA\Photos\Sabre\Place {
 		 * (photos/lib/Sabre/Place/PlacePhoto.php).
 		 */
 		abstract class PlacePhoto extends \OCA\Photos\Sabre\CollectionPhoto implements \Sabre\DAV\IFile {
-			/** PlacePhoto.php:60 */
+			/** PlacePhoto.php:63 */
 			abstract public function getFileInfo(): \OCP\Files\Node;
 		}
 	}
