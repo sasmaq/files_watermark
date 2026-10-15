@@ -54,8 +54,11 @@ Then carry the fields from `RemoteInfo` on `SyncFileItem`, and persist them on
 `SyncJournalDb`, the way the lock and end-to-end encryption columns were added). The Explorer
 menu and the badge are answered from the journal, not from a live PROPFIND.
 
-Record at account level whether any listing has returned `is-watermarked` with a `200`. Use
-that to decide whether to show the menu entries at all.
+Decide at account level whether to show the menu entries at all from the `files_watermark`
+entry in the account's capabilities (README, *The capability entry*). `Capabilities` keeps
+the raw map, so this is one more accessor beside the existing ones, reading `trigger` and
+`mimetypes` as well. For a server whose app predates the entry, fall back to recording whether
+any listing has returned `is-watermarked` with a `200`.
 
 Things discovery must not do with a watermarked file:
 

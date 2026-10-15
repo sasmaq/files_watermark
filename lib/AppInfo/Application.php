@@ -8,6 +8,7 @@ use Composer\Autoload\ClassLoader;
 use OCA\DAV\Events\BeforeFileDirectDownloadedEvent;
 use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\Files\Event\LoadAdditionalScriptsEvent;
+use OCA\FilesWatermark\Capabilities;
 use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\DirectDownloadListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
@@ -183,6 +184,10 @@ class Application extends App implements IBootstrap {
 		// file - see DirectDownloadListener for why refusing is all that can be done there.
 		$context->registerEventListener(BeforeFileDirectDownloadedEvent::class, DirectDownloadListener::class);
 		$context->registerEventListener(UserDeletedEvent::class, UserDeletedListener::class);
+
+		// For the native clients: the trigger, the types and the limits they gate the file
+		// actions on, none of which an account that is not an admin could read before.
+		$context->registerCapability(Capabilities::class);
 
 		// The preview pair. The listener notes *which* file a preview request is for - it
 		// is the only hook every preview endpoint passes through - and the middleware

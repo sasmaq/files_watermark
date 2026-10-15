@@ -7,7 +7,7 @@ do with it, and what a client must not do.
 
 | File | Covers |
 | --- | --- |
-| [README.md](README.md) (this file) | The server contract all clients share: properties, endpoints, download behaviour, rules |
+| [README.md](README.md) (this file) | The server contract all clients share: capability, properties, endpoints, download behaviour, rules |
 | [windows.md](windows.md) | The desktop sync client on Windows: discovery, virtual files (CfAPI), Explorer badge and menu, read-only local copies |
 | [android.md](android.md) | The Android app: listing, badge, file actions, the SAF provider, thumbnails, downloads |
 | [ios.md](ios.md) | The iOS app: listing, badge, file actions, the File Provider extension, previews, downloads |
@@ -60,6 +60,48 @@ falls into four areas:
 | Owner | The file's `oc:owner-id`. Only the owner may remove a mark |
 | Inherited mark | Copying a marked file marks the copy. Only the owner of the *original* may remove that mark, so the person who made the copy can't, even though they own the copy |
 | Trigger | Admin setting: `on_demand` (users mark files by hand) or `on_upload` (every supported upload is marked) |
+
+### The capability entry
+
+Every client already fetches `GET /ocs/v2.php/cloud/capabilities` after login and caches it.
+For a signed-in account, the app adds an entry there with what a client needs before its
+first listing:
+
+```json
+"files_watermark": {
+  "version": "2.1.0",
+  "api_version": 1,
+  "mimetypes": ["application/pdf", "image/jpeg", "image/png", "image/webp"],
+  "apply_max_bytes": 67108864,
+  "image_max_pixels": 40000000,
+  "trigger": "on_demand"
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `version` | The app's version. For logs and support requests only. Don't gate anything on it: it moves for fixes this contract never sees, and it runs on a different line for each Nextcloud version |
+| `api_version` | The revision of the contract this folder describes, currently `1`. It goes up only when the contract changes in a way a client has to act on. Gate on this |
+| `mimetypes` | The types the server watermarks. Gate the actions on this list rather than a hard-coded one |
+| `apply_max_bytes` | *Apply* refuses a file larger than this many bytes, with `413` |
+| `image_max_pixels` | *Apply* refuses an image larger than this many pixels (width × height), with `413` |
+| `trigger` | `on_demand` or `on_upload`. Offer *Apply* and *Remove* only when it is exactly `on_demand`; any other value means no actions, as in the web client |
+
+How to read it:
+
+- **Present means the app is enabled.** Absent means it isn't, or it is a version from before
+  the entry existed. The DAV properties work in both versions, so fall back to the `404`
+  propstat check in [section 1](#1-status-two-webdav-properties), and treat the trigger as
+  `on_demand` and the types as the four above.
+- **`trigger` can be missing from a present entry.** The server leaves it out when it can't
+  read the policy. Treat that as `on_demand`, as for an older server.
+- **Signed-in accounts only.** An anonymous request doesn't get the entry, so a client browsing
+  a public link never sees it. There are no actions to offer there anyway.
+- **It can be stale.** Clients cache capabilities, so an admin's change arrives with the next
+  refresh. The server enforces the policy on every call regardless: a stale value costs an
+  action offered that the server then answers, or a `413` the client could have predicted.
+- **The limits are the ones in force.** A mistyped `occ` value is refused on the server and the
+  default used instead, and the entry shows the default.
 
 ## 1. Status: two WebDAV properties
 
@@ -127,7 +169,8 @@ How to read them:
   nothing about what is inside it.
 - **Detecting the feature.** A server without the app, or with it disabled, returns both
   properties in a `404 Not Found` propstat. Treat that as "feature absent": no badge and no
-  actions. The app publishes no capability entry.
+  actions. The [capability entry](#the-capability-entry) tells a client the same thing before
+  its first listing. This check is the fallback for an app version that predates the entry.
 - **The trash listing** (`/remote.php/dav/trashbin/{user}/trash`) answers `is-watermarked` as
   well, for marks only. Show the badge there, but offer no actions.
 - **`SEARCH` and `REPORT` listings** (favourites, recent, media) resolve properties through the
@@ -227,7 +270,7 @@ language. Show the message as it is.
 | 403 | The account can't read or can't modify the file | The account can't read the file, isn't its owner, or the mark is inherited from someone else's file | Show the message and refresh the file's properties |
 | 404 | File not found | File not found | Refresh the listing |
 | 412 | `OCS-APIRequest` header missing | Same | Add the header |
-| 413 | The file is over the server's size limit (`apply_max_bytes`, 64 MiB by default) or pixel limit (`image_max_pixels`, 40 MP by default) | - | Show the message; it names both the size and the limit |
+| 413 | The file is over the server's size limit (`apply_max_bytes`, 64 MiB by default) or pixel limit (`image_max_pixels`, 40 MP by default) | - | Show the message; it names both the size and the limit. Both limits are in the [capability entry](#the-capability-entry), so a client that knows the size, or an image's dimensions, can disable *Apply* instead |
 | 415 | Unsupported file type | - | Fix the gating; it should never happen |
 | 422 | The admin's policy excludes this file (type filter or tagged-folder scope) | - | Show the message |
 | 429 | More than 120 calls to this action from this account within a minute | Same | Back off and try later; never retry in a loop |
@@ -240,7 +283,7 @@ row in its column holds:
 | Condition | Apply | Remove |
 | --- | --- | --- |
 | Exactly one item is selected, and it is a file | Required | Required |
-| `d:getcontenttype` is one of the four supported types | Required | Required |
+| `d:getcontenttype` is in the capability's `mimetypes` (the four supported types) | Required | Required |
 | The normal files view: not the trash, not a version, not a public link | Required | Required |
 | `nc:is-watermarked` | Must be `0` | Must be `1` |
 | `oc:permissions` contains `W` | Recommended (the server enforces it; the web client doesn't check first) | - |
@@ -248,11 +291,11 @@ row in its column holds:
 | `nc:watermark-locked` | - | Must be `0` |
 | The trigger is `on_demand` | Required | Required |
 
-**The last row can't be checked by a native client today.** The web client reads the trigger
-from its own page, and no API exposes it to accounts that aren't admins. Treat the trigger as
-`on_demand`, which is also the web client's own fallback. The server accepts both actions
-under either trigger. The one difference under `on_upload` is that an owner can unmark a file
-from the client, where the web menu would not have offered it.
+**Read the trigger from the [capability entry](#the-capability-entry).** When the entry or its
+`trigger` key is missing, treat the trigger as `on_demand`, which is also the web client's own
+fallback. The server accepts both actions under either trigger, so a client that falls back,
+or holds a stale value, is not refused. The one difference under `on_upload` is that an owner
+can then unmark a file from the client, where the web menu would not have offered it.
 
 Compare the owner against the user id in the account's DAV URL
 (`/remote.php/dav/files/{userId}`), not against the login name. With LDAP the two can differ.
@@ -414,7 +457,7 @@ at <https://docs.nextcloud.com/server/latest/developer_manual/client_apis/Client
 That would put Apply and Remove into stock clients, with limits:
 
 - The server needs OCS wrappers for the two actions that answer with a translated `tooltip`,
-  plus the capability entry.
+  plus a `client_integration` entry in its capabilities.
 - Entries are filtered by MIME type only, so both actions appear on every supported file, and
   the server's answer ("already watermarked", "only the owner…") does the gating.
 - It draws no badge.
@@ -474,3 +517,4 @@ Every client should pass these checks. The platform files add their own.
 | 10 | A download of a marked file is interrupted, then resumed | It completes, the file opens, and the checksum check passes |
 | 11 | 121 apply calls within a minute, from a script | The `429` is handled without looping |
 | 12 | Two accounts on one device open the same shared marked file | Each sees only their own name, in previews and in downloads |
+| 13 | Admin switches the trigger to *On upload*; the client refreshes its capabilities | Neither Apply nor Remove offered on any file; badges unchanged |

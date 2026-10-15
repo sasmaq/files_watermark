@@ -97,7 +97,8 @@ gating from README section 2. The Android-specific inputs:
 
 | Check | Source |
 | --- | --- |
-| Supported type | `OCFile.mimeType` |
+| Supported type | `OCFile.mimeType`, against `mimetypes` from the capability entry |
+| Trigger | `trigger` from the capability entry (README, *The capability entry*). The library's capabilities parser keeps the keys it knows about; if it drops `files_watermark`, teach it this entry |
 | Write permission (Apply) | `W` in `OCFile.permissions` |
 | Owner (Remove) | `OCFile.ownerId` equals the account's user id: the id in its DAV URL (`KEY_USER_ID` in the account's user data), not the account name |
 | Status | The two new `OCFile` fields |
