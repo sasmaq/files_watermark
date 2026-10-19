@@ -21,6 +21,10 @@ const name = 'trashed.pdf'
 describe('Watermark badge in the trash', () => {
 	before(() => {
 		cy.ncLogin()
+		// The trash is shared with every spec that ran before this one, and their folders
+		// sort ahead of this file and push it out of the virtualised list.
+		cy.task('nc:emptyTrash', { user: Cypress.env('ncUser'), password: Cypress.env('ncPassword') })
+			.its('status').should('be.oneOf', [204, 404])
 		cy.wmSetPolicy({ trigger: 'on_upload', textTemplate: 'E2E - {displayname}' })
 		cy.wmFolder(folder)
 		cy.task('fixture:pdf', { text: 'trash badge' })

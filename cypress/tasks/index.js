@@ -22,6 +22,7 @@ module.exports = {
 	'nc:putMany': http.davPutMany,
 	'nc:download': http.davGet,
 	'nc:delete': http.davDelete,
+	'nc:emptyTrash': http.davEmptyTrash,
 	'nc:copy': http.davCopy,
 	'nc:mkcol': http.davMkcol,
 	'nc:propfind': http.davPropfind,
