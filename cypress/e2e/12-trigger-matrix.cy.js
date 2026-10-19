@@ -199,8 +199,13 @@ describe('Trigger × access matrix', () => {
 			 * that wrote its result back would pass every assertion above while destroying
 			 * the original. Unmarking is what exposes the stored bytes to look at: it
 			 * restores nothing, so what comes back is whatever has been there all along.
+			 *
+			 * Only on_demand allows unmarking - under on_upload nobody may, the owner
+			 * included (`16-unmark-policy`) - so every row unmarks under on_demand. The next
+			 * row's `before` sets its own trigger.
 			 */
 			it('leaves the stored bytes alone through all of it', () => {
+				cy.wmSetPolicy({ trigger: 'on_demand' })
 				cy.wmRemove(`${folder}/${files[trigger]}`).its('status').should('eq', 200)
 				cy.wmDownload(`${folder}/${files[trigger]}`).then((base64) => {
 					cy.task('probe:pdf', { base64 }).then((pdf) => {

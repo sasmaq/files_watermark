@@ -81,8 +81,12 @@ describe('On-upload watermarking', () => {
 			})
 		})
 
-		// And the stored file is still the second upload, untouched.
-		cy.wmRemove(file)
+		// And the stored file is still the second upload, untouched. Unmarking is what
+		// exposes it, and nobody may unmark under on_upload (`16-unmark-policy`), so the
+		// trigger steps back to on_demand for that one request.
+		cy.wmSetPolicy({ trigger: 'on_demand' })
+		cy.wmRemove(file).its('status').should('eq', 200)
+		cy.wmSetPolicy({ trigger: 'on_upload' })
 		cy.wmDownload(file).then((base64) => {
 			expect(base64, 'the stored file is not the one that was uploaded').to.eq(second)
 		})

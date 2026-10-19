@@ -79,6 +79,7 @@ effect - a suite re-run inside that window is testing the code you just replaced
 | `12-trigger-matrix` | both triggers × all six access paths, in one table |
 | `13-share-switches` | the two share switches, on a file nobody marked: each audience watermarked by its own switch and by no other, the owner left untouched, and clean bytes returning the moment both go off |
 | `14-trash-indicator` | the badge on a deleted file - the one listing whose status cannot come from the DAV property |
+| `16-unmark-policy` | nobody unmarks under on_upload, the owner included: the 403, a mark placed on demand before the switch, the lock over DAV and the status endpoint, and the action coming back with on_demand |
 
 `03-on-download` and `04-on-share` are gone with the triggers they were named after. What
 they covered is not: per-fetch rendering, the public DAV server, the share page's download
