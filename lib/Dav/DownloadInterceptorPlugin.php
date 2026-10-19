@@ -153,7 +153,7 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			return true;
 		}
 
-		if ($this->isHeadRequest($request)) {
+		if (self::isHeadRequest($this->server, $request)) {
 			$this->trace('deferring a HEAD to core', $request);
 			return true;
 		}
@@ -695,9 +695,26 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	 * PROPFIND already reports the stored file's size, never the watermarked copy's, so a
 	 * HEAD that answered with the render's length was the odd one out - and paid a full
 	 * render for a response with no body.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE MARKER ALONE PROVES NOTHING: ANY CLIENT CAN SEND IT.
+	 *
+	 * `X-Sabre-Original-Method` is an ordinary request header. Sabre sets it on its clone,
+	 * but it never strips it from what arrives off the wire, so a plain GET carrying
+	 * `X-Sabre-Original-Method: HEAD` used to land here looking exactly like the clone - and
+	 * walk past the render and the audit row straight to core. That core happens to send no
+	 * body for it today is a detail of sabre/dav, not something to stand on.
+	 *
+	 * What the client cannot forge is the method of the request it actually sent. Sabre's
+	 * `httpRequest` is built from `REQUEST_METHOD` and is never the clone, so a GET is only
+	 * ever a HEAD when *that* says HEAD - and a real HEAD has no body to leak.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * Public and static because {@see ZipInterceptorPlugin} has to answer the same question.
 	 */
-	private function isHeadRequest(RequestInterface $request): bool {
-		return $request->getHeader('X-Sabre-Original-Method') === 'HEAD';
+	public static function isHeadRequest(Server $server, RequestInterface $request): bool {
+		return $request->getHeader('X-Sabre-Original-Method') === 'HEAD'
+			&& strtoupper($server->httpRequest->getMethod()) === 'HEAD';
 	}
 
 	private function cleanup(string $tmpPath): void {

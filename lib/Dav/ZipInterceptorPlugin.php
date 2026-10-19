@@ -91,8 +91,9 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		// Sabre serves HEAD by re-dispatching the request as a GET, so a HEAD on a folder
 		// would build the entire archive - rendering every member - for a response with no
 		// body, and record an audit row per member while doing it. See
-		// DownloadInterceptorPlugin::isHeadRequest().
-		if ($request->getHeader('X-Sabre-Original-Method') === 'HEAD') {
+		// DownloadInterceptorPlugin::isHeadRequest() - which also checks the method the client
+		// really sent, since the marker header on its own is anyone's to set.
+		if (DownloadInterceptorPlugin::isHeadRequest($this->server, $request)) {
 			return true;
 		}
 
