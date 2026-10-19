@@ -274,3 +274,22 @@ Cypress.Commands.add('wmIsWatermarkedProp', (path) => {
 		return match === null ? null : match[1].trim()
 	})
 })
+
+/**
+ * The `nc:watermark-locked` DAV property: whether the Files app may offer Remove.
+ *
+ * Absent is `null`, for the same reason as {@link wmIsWatermarkedProp}.
+ */
+Cypress.Commands.add('wmIsLockedProp', (path) => {
+	cy.task('nc:propfind', {
+		...admin(),
+		path,
+		depth: 0,
+		body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">'
+			+ '<d:prop><nc:watermark-locked /></d:prop></d:propfind>',
+	}).then((response) => {
+		expect(response.status, `propfind ${path}`).to.eq(207)
+		const match = response.text.match(/<nc:watermark-locked>([^<]*)<\/nc:watermark-locked>/)
+		return match === null ? null : match[1].trim()
+	})
+})
