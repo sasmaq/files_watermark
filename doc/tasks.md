@@ -33,6 +33,16 @@ follows it. **Office support** and **release packaging** are what stand between 
 Not yet sorted into the sections below. Most severe first. **Confirmed** items were
 reproduced on the dev instance; the rest come from reading the code against core's.
 
+- [ ] **Text's session API hands out the stored bytes of any file.** *Confirmed* on
+  `Photos/Vineyard.jpg` (marked), both signed in and anonymously through a public link.
+  `SessionController::create` / `PublicSessionController::create` take any file id or share
+  token, have no MIME check, and return the file's content in the JSON `content` field after
+  a reversible charset conversion, so the result is the clean original. It goes past
+  delivery, the share switches and the anonymous render limit. `TextAttachmentMiddleware`
+  only covers attachments. Extend it (or add a sibling) to refuse `create` on both
+  controllers when the file is a delivery candidate, and check the `outsideChange` field
+  that `sync`/`push`/`save` fill with `getContent()`. Then sweep the other bundled apps for
+  controllers that read a node and return its bytes in any form, not just as a download.
 - [ ] **`MeasureDeliveryJob` never measures anything.** *Confirmed.* It resolves the file
   with `IRootFolder::getById()`, which finds nothing under cron because no user filesystem
   is set up (the same CLI gotcha `Version1010` works around). `occ background-job:execute`
@@ -55,7 +65,26 @@ reproduced on the dev instance; the rest come from reading the code against core
   `report.bin`, rename it to `report.pdf`, and the policy never sees it. That is the user
   off switch `marksAreRemovable()` was written to take away. Mark on `NodeRenamedEvent`
   too, or sniff the bytes at write time as delivery already does.
-- [ ] **Watermarked PDFs lose their links, bookmarks and page labels.** *Confirmed* on
+- [ ] **An archive lists the folder twice, and only the first listing is checked.**
+  `ZipInterceptorPlugin::preRender()` decides which members to render from one walk;
+  `streamNode()` walks the subfolders again with fresh `getDirectoryListing()` calls and
+  streams anything missing from `$rendered` with `$node->fopen()`. A protected file that
+  lands in a subfolder between the two walks goes into the archive clean. Rendering is slow,
+  so that window is seconds long. Stream from the list `preRender()` built, and fail closed
+  on any member that is not in `$rendered` but is marked or share-forced when it is streamed.
+- [ ] **The default template names the reader by a field the reader can edit.**
+  `defaultConfig()` uses `{displayname} - {date}`, and display names (like `{email}`) can
+  be changed by the user unless the admin turns that off. A reader can make a copy name a
+  colleague, or name nobody. `assertDrawable()` uses `trim()`, which keeps NBSP,
+  zero-width and other invisible characters, so " - 2026-10-19" counts as a drawn watermark.
+  Put `{username}` in the default, warn in the admin form when a template has no
+  `{username}`, and treat text that is only invisible or whitespace as nothing drawn.
+- [ ] **Anonymous deliveries are audited as the owner.** `recordLog()` falls back to
+  `readerIdentity()`, which is the owner when there is no session, so every public-link
+  download shows up as the owner downloading their own file, and the two can't be told
+  apart. Record `anonymous` (and the share token) instead. That also makes
+  `MeasureDeliveryJob`'s and other no-session rows honest.
+ *Confirmed* on
   `Nextcloud Manual.pdf`: the stored file has 213 link annotations, an outline and page
   labels; the delivered copy has none. Importing pages as Form XObjects carries only page
   content, so form fields and the tag tree (accessibility) very likely go the same way (not
@@ -66,6 +95,25 @@ reproduced on the dev instance; the rest come from reading the code against core
   unencrypted, so the `/P` flags ("no printing", "no copying") are gone: the watermarked
   copy allows what the original forbade. Re-encrypt the render with the source's `/P` and a
   random owner password; `tc-lib-pdf-encrypt` is already in `vendor/`.
+- [ ] **`on_upload` only sees writes made through Nextcloud.** Files that reach external
+  storage (SMB, local, S3 buckets fed by other systems) and are picked up by a scan or
+  `occ files:scan` fire no `NodeWrittenEvent`, so they are never marked. A file renamed or
+  replaced on the backend directly, or a whole mount removed and re-added, gets new file
+  ids, and its marks are dropped silently (then reaped by `CleanupJob`). Decide whether
+  scanner events should mark too, and say in the README that marks are tied to file ids.
+- [ ] **Under `on_upload`, moving a file into the tagged folder never marks it.** This is
+  the folder-tag version of the rename item above: scope is only checked on write. A file
+  uploaded somewhere else and then moved into the tagged folder stays unmarked, and so does
+  everything already in a folder when the tag is added. Re-run the policy on
+  `NodeRenamedEvent` when the destination is in scope.
+- [ ] **Saving from an in-browser editor may write the watermarked render back.** *Not
+  checked.* The Viewer's image editor loads the image through a watermarked route and
+  saves over the stored file (or as a copy). If so, saving burns the editor's name into the
+  stored original. For a share recipient with edit rights, that is the "names the wrong
+  person" problem the rework removed, and the copy carries no mark. Check what URL the
+  editor loads and what `files_pdfviewer` saves back. If either does this, mark the
+  written-back file, or refuse the write when a marked file's new content matches a
+  render.
 - [ ] **The folder-tag scope only looks at the immediate parent.** `assertFolderTagMatches()`
   tests `$file->getParent()`, so a file one level below the tagged folder is outside the
   policy: not marked on upload, refused on demand, not watermarked through a share. The form
