@@ -517,11 +517,34 @@ class ZipInterceptorPluginTest extends TestCase {
 		$this->marked();
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
+		$this->server->httpRequest = new Request('HEAD', '/files/bob/Shared');
 		$request = $this->zipRequest();
 		$request->setHeader('X-Sabre-Original-Method', 'HEAD');
 
 		$this->assertTrue($this->plugin()->httpGet($request, new Response()));
 		$this->assertSame([], Streamer::$constructed);
+	}
+
+	/**
+	 * The marker is anyone's to send. A real GET carrying it must not be mistaken for the
+	 * HEAD clone, or it walks past this plugin to core's own, unwatermarked archive.
+	 */
+	public function testAGetForgingTheHeadMarkerIsStillWatermarked(): void {
+		$file = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$file]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->marked();
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->willReturn($this->renderedCopy());
+
+		$request = $this->zipRequest();
+		$request->setHeader('X-Sabre-Original-Method', 'HEAD');
+		$this->server->httpRequest = $request;
+
+		$this->assertFalse($this->plugin()->httpGet($request, new Response()));
+		$this->assertCount(1, Streamer::$constructed);
 	}
 
 	/**

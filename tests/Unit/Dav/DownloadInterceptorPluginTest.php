@@ -249,8 +249,8 @@ class DownloadInterceptorPluginTest extends TestCase {
 	 * arrived here as downloads, so one click rendered the whole watermarked file twice
 	 * and wrote two audit rows.
 	 *
-	 * `X-Sabre-Original-Method` is the marker Sabre leaves on the clone, and the only
-	 * thing that distinguishes the two.
+	 * `X-Sabre-Original-Method` is the marker Sabre leaves on the clone; the request that
+	 * actually came in - `$server->httpRequest` - is the HEAD itself.
 	 */
 	public function testASabreHeadSubRequestIsLeftToCore(): void {
 		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
@@ -258,10 +258,29 @@ class DownloadInterceptorPluginTest extends TestCase {
 		// is pure waste - and it is the expensive half.
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 
+		$this->server->httpRequest = new Request('HEAD', '/files/alice/report.pdf');
 		$request = $this->request();
 		$request->setHeader('X-Sabre-Original-Method', 'HEAD');
 
 		$this->assertTrue($this->plugin()->httpGet($request, new Response()));
+	}
+
+	/**
+	 * The marker is an ordinary header, and Sabre does not strip it from what a client
+	 * sends. A plain GET that carries it used to be taken for the HEAD clone and handed to
+	 * core unwatermarked and unlogged.
+	 */
+	public function testAGetForgingTheHeadMarkerIsStillWatermarked(): void {
+		$this->tree->method('getNodeForPath')->willReturn($this->davFile());
+		$this->watermarkService->expects($this->once())
+			->method('watermarkForDownload')
+			->willReturn($this->renderedCopy());
+
+		$request = $this->request();
+		$request->setHeader('X-Sabre-Original-Method', 'HEAD');
+		$this->server->httpRequest = $request;
+
+		$this->assertFalse($this->plugin()->httpGet($request, new Response()));
 	}
 
 	public function testARealGetIsStillHandled(): void {
