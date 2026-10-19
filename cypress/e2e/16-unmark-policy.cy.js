@@ -89,9 +89,13 @@ describe('Unmarking under the on_upload trigger', () => {
 			})
 		})
 
+		// Built inside the callback: `ids` is filled by the commands above, which have not
+		// run yet when the test body does.
 		cy.then(() => cy.wmApi('GET', `/api/v1/watermarked?ids=${Object.values(ids).join(',')}`))
 			.its('body.locked')
-			.should('have.members', [ids.uploaded, ids.applied])
+			.then((locked) => {
+				expect(locked).to.have.members([ids.uploaded, ids.applied])
+			})
 	})
 
 	/**

@@ -123,6 +123,20 @@ const davDelete = ({ user, password, path }) =>
 	})
 
 /** Server-side copy, for pulling a skeleton file into a spec's own folder. */
+/**
+ * Empty the user's trash bin.
+ *
+ * Every spec's `after` deletes its folder, and a deleted folder lands in the trash - so
+ * by the time a spec looks *in* the trash it is full of other specs' folders, which the
+ * Files list sorts first and virtualises out of the DOM.
+ */
+const davEmptyTrash = ({ user, password }) =>
+	raw({
+		url: `${BASE}/remote.php/dav/trashbin/${encodeURIComponent(user)}/trash`,
+		method: 'DELETE',
+		auth: { user, password },
+	})
+
 const davCopy = ({ user, password, from, to }) =>
 	raw({
 		url: `${davRoot(user)}/${encodePath(from)}`,
@@ -225,6 +239,7 @@ module.exports = {
 	davPutMany,
 	davGet,
 	davDelete,
+	davEmptyTrash,
 	davCopy,
 	davMkcol,
 	davPropfind,
