@@ -28,6 +28,88 @@ follows it. **Office support** and **release packaging** are what stand between 
 
 ---
 
+## Task to be resolved
+
+Not yet sorted into the sections below. Most severe first. **Confirmed** items were
+reproduced on the dev instance; the rest come from reading the code against core's.
+
+- [ ] **`MeasureDeliveryJob` never measures anything.** *Confirmed.* It resolves the file
+  with `IRootFolder::getById()`, which finds nothing under cron because no user filesystem
+  is set up (the same CLI gotcha `Version1010` works around). `occ background-job:execute`
+  on a queued job for an existing marked file reports success and writes no reservation.
+  So no `on_upload` or inherited mark is ever measured before its first download, and the
+  Windows VFS first-open failure the job exists to prevent happens on every one of them,
+  with nothing in the log. Resolve through `IUserMountCache::getMountsForFileId()` +
+  `getUserFolder()`. `MeasureDeliveryJobTest` mocks `getById()`, which is why it passes.
+- [ ] **`occ files:transfer-ownership` marks every transferred file when "watermark public
+  links" is on.** `ShareAccess` reads "no session user" as a public-link fetch, and
+  `NodeMovedListener` asks `isForcedByShare()` about every file in a move that crosses
+  owners. Under `occ` there is never a session, so each file the policy covers gets an
+  inherited mark naming the old owner: one the new owner can never remove, and nobody can
+  once the old account is deleted. `NodeCopiedListener` has the same shape, and so does any
+  move or copy made without a session. The share switches describe a fetch, and a
+  server-side move is not one.
+- [ ] **Under `on_upload`, renaming a file into a supported type keeps it unmarked.**
+  `NodeWrittenListener` checks the MIME of the name at write time, and a rename fires no
+  write event (core's `View::rename` emits write hooks only for `.part` files). Upload
+  `report.bin`, rename it to `report.pdf`, and the policy never sees it. That is the user
+  off switch `marksAreRemovable()` was written to take away. Mark on `NodeRenamedEvent`
+  too, or sniff the bytes at write time as delivery already does.
+- [ ] **Watermarked PDFs lose their links, bookmarks and page labels.** *Confirmed* on
+  `Nextcloud Manual.pdf`: the stored file has 213 link annotations, an outline and page
+  labels; the delivered copy has none. Importing pages as Form XObjects carries only page
+  content, so form fields and the tag tree (accessibility) very likely go the same way (not
+  checked). Every reader of a marked PDF, the owner included, gets a degraded document.
+  Copy annotations, `/Outlines` and `/PageLabels` across, or say in the README that they go.
+- [ ] **Permission-restricted PDFs come out unrestricted.** `PdfDecryptor` strips an
+  empty-user-password encryption so the file can be imported, and the render is written
+  unencrypted, so the `/P` flags ("no printing", "no copying") are gone: the watermarked
+  copy allows what the original forbade. Re-encrypt the render with the source's `/P` and a
+  random owner password; `tc-lib-pdf-encrypt` is already in `vendor/`.
+- [ ] **The folder-tag scope only looks at the immediate parent.** `assertFolderTagMatches()`
+  tests `$file->getParent()`, so a file one level below the tagged folder is outside the
+  policy: not marked on upload, refused on demand, not watermarked through a share. The form
+  says "Limit to a tagged folder". Walk the ancestors, or say "direct children only" in the
+  UI. The same check also loads every object id carrying the tag on each call, once per row
+  of a share listing; `haveTag()` on the candidate ids would be one indexed query.
+- [ ] **The badge reads file contents on every share listing.** `PropFindPlugin` calls
+  `isForcedByShare()` without `inspectContent: false`, the parameter 391cba2 added for
+  exactly this caller; no caller passes it. With either share switch on, every file in a
+  recipient's or public visitor's listing whose name is not a supported type is opened and
+  1 KiB read. On S3 that is an object GET per file per PROPFIND, anonymous on public links
+  and outside the render rate limit. `PublicShareScriptsListener` does the same for up to
+  200 children on every share page load. The badge is an indicator; delivery sniffs for
+  itself.
+- [ ] **Preview stamping assumes one preview per request.** `PreviewRequestContext` keeps
+  only the first preview a request fetches, and the middleware replaces the whole response.
+  A controller that answers with several previews at once (Memories' batch preview endpoint
+  is the likely one) would send a marked file's thumbnail clean when an unmarked one came
+  first, or have its response swapped for a single image. Core and the stock apps fetch one
+  preview per request, so this is about third-party apps.
+- [ ] **Inventory the third-party egress routes.** Apps that read file bytes through their
+  own controllers are not intercepted. ONLYOFFICE and Collabora opening a PDF, and Memories'
+  full-size image endpoints, are the likely ones; none has been checked. At the least the
+  README should name the ones known not to watermark.
+- [ ] **The logo is re-read on every render and has no pixel ceiling.** Every download and
+  every thumbnail copies the logo out of appdata to a temp file (an object GET per thumbnail
+  on S3 primary storage). The upload checks type and bytes but not dimensions, so a 2 MiB
+  PNG that declares 30000 x 30000 is decoded on every render and takes every marked
+  download down with it. Apply `image_max_pixels` at upload, and keep one local copy per
+  request.
+- [ ] **Marks outlive their origin's account.** `UserDeletedListener` clears reservations
+  only. A mark naming a deleted user stays, so a new account created with the same uid can
+  remove it, and an inherited mark descending from that user is locked for good.
+- [ ] **`Depth: infinity` PROPFIND drops reserved lengths.** `primeReservations()` replaces
+  the cache for each directory in the walk, and a primed cache is trusted completely, so
+  files listed after a subdirectory get core's length and etag. Core disables infinity by
+  default; merge the batches instead of replacing them.
+- [ ] **Apply is offered on files the user cannot change.** `isApplyActionEnabled()` does
+  not check update permission, so a read-only share recipient gets the action and then a
+  403 toast.
+- [ ] **A marked file renamed to an unsupported extension cannot be unmarked from the UI.**
+  The badge still shows, since the server sniffs the bytes, but both actions gate on the
+  name's MIME, so Remove never appears. Renaming it back works.
+
 ## The trigger rework - **built**
 
 Landed on 2026-08-06: two triggers, neither of which touches the stored file, and a marked
