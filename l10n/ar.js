@@ -121,6 +121,7 @@ OC.L10N.register(
         "Downloads and previews of this file are watermarked": "تحمل تنزيلات هذا الملف ومعايناته علامة مائية",
         "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية.",
         "This file is a copy of a watermarked file owned by someone else. Only they can remove the watermark.": "هذا الملف نسخة من ملف يحمل علامة مائية ويملكه شخص آخر. هو وحده من يمكنه إزالة العلامة المائية.",
+        "Watermarks cannot be removed under the current watermark policy.": "لا يمكن إزالة العلامات المائية بموجب سياسة العلامة المائية الحالية.",
         "Watermark removed.": "أزيلت العلامة المائية.",
         "Shared files": "الملفات المشتركة",
         "Watermark files leaving through a share, whether or not anyone marked them. Decided per fetch, so it starts and stops when you save.": "ضع علامة مائية على الملفات الخارجة عبر مشاركة، سواء وسمها أحد أم لا. يتخذ القرار عند كل جلب، فيبدأ العمل به ويتوقف لحظة الحفظ.",

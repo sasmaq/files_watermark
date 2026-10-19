@@ -425,6 +425,35 @@ class PropFindPluginTest extends TestCase {
 	}
 
 	/**
+	 * Outside `on_demand` nobody may unmark, so the asker's own ordinary mark is locked -
+	 * the same answer the API gives them.
+	 */
+	public function testEveryMarkIsLockedWhenThePolicyIsNotOnDemand(): void {
+		$this->markMapper->method('findByFileIds')->willReturn($this->marks([7]));
+		$service = $this->createMock(WatermarkService::class);
+		$service->method('marksAreRemovable')->willReturn(false);
+
+		$propFind = $this->propFind(properties: [self::LOCKED]);
+		(new PropFindPlugin($this->markMapper, $service, $this->session('alice')))
+			->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('1', $propFind->get(self::LOCKED));
+	}
+
+	/** And under `on_demand` the ownership rule governs again. */
+	public function testAnOrdinaryMarkIsNotLockedWhenThePolicyIsOnDemand(): void {
+		$this->markMapper->method('findByFileIds')->willReturn($this->marks([7]));
+		$service = $this->createMock(WatermarkService::class);
+		$service->method('marksAreRemovable')->willReturn(true);
+
+		$propFind = $this->propFind(properties: [self::LOCKED]);
+		(new PropFindPlugin($this->markMapper, $service, $this->session('alice')))
+			->propFind($propFind, $this->davFile(7));
+
+		$this->assertSame('0', $propFind->get(self::LOCKED));
+	}
+
+	/**
 	 * The public server has no viewer to name and no Remove action to govern. Answering
 	 * "locked" there would report a property about a button that page does not have.
 	 */

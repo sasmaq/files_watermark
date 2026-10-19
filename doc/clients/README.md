@@ -57,7 +57,7 @@ falls into four areas:
 | --- | --- |
 | Marked file | A file with a mark on the server. Every download of it is watermarked, for everyone |
 | Reader | The account fetching the file. The watermark names the reader |
-| Owner | The file's `oc:owner-id`. Only the owner may remove a mark |
+| Owner | The file's `oc:owner-id`. Only the owner may remove a mark, and only while the trigger is `on_demand` |
 | Inherited mark | Copying a marked file marks the copy. Only the owner of the *original* may remove that mark, so the person who made the copy can't, even though they own the copy |
 | Trigger | Admin setting: `on_demand` (users mark files by hand) or `on_upload` (every supported upload is marked) |
 
@@ -128,7 +128,7 @@ cost one database query per listing, not one per row.
 | Property | Values | Meaning |
 | --- | --- | --- |
 | `nc:is-watermarked` | `1` / `0` | `1` when a `GET` of this file **by the requesting account** is watermarked, either because the file is marked or because it reaches this account through a share the policy watermarks |
-| `nc:watermark-locked` | `1` / `0` | `1` when the file carries an inherited mark that this account may not remove. Only ever `1` when `is-watermarked` is `1` |
+| `nc:watermark-locked` | `1` / `0` | `1` when the file is marked and this account may not remove the mark: always when the trigger isn't `on_demand`, otherwise when the mark is inherited from someone else's file. Only ever `1` when `is-watermarked` is `1` |
 
 A marked file on a server with the app, then the same properties on a server without it:
 
@@ -267,7 +267,7 @@ language. Show the message as it is.
 | --- | --- | --- | --- |
 | 400 | The path is a folder | The path is a folder | Fix the gating; it should never happen |
 | 401 | Bad credentials | Bad credentials | The usual re-authentication flow |
-| 403 | The account can't read or can't modify the file | The account can't read the file, isn't its owner, or the mark is inherited from someone else's file | Show the message and refresh the file's properties |
+| 403 | The account can't read or can't modify the file | The account can't read the file, isn't its owner, the mark is inherited from someone else's file, or the trigger isn't `on_demand` | Show the message and refresh the file's properties |
 | 404 | File not found | File not found | Refresh the listing |
 | 412 | `OCS-APIRequest` header missing | Same | Add the header |
 | 413 | The file is over the server's size limit (`apply_max_bytes`, 64 MiB by default) or pixel limit (`image_max_pixels`, 40 MP by default) | - | Show the message; it names both the size and the limit. Both limits are in the [capability entry](#the-capability-entry), so a client that knows the size, or an image's dimensions, can disable *Apply* instead |
@@ -293,9 +293,10 @@ row in its column holds:
 
 **Read the trigger from the [capability entry](#the-capability-entry).** When the entry or its
 `trigger` key is missing, treat the trigger as `on_demand`, which is also the web client's own
-fallback. The server accepts both actions under either trigger, so a client that falls back,
-or holds a stale value, is not refused. The one difference under `on_upload` is that an owner
-can then unmark a file from the client, where the web menu would not have offered it.
+fallback. The server accepts Apply under either trigger, so a client that falls back, or holds
+a stale value, is not refused. It refuses Remove with 403 under any trigger other than
+`on_demand`, the owner included: under `on_upload` the policy placed the mark, not the owner,
+so an owner who could remove it could switch the policy off for their own uploads.
 
 Compare the owner against the user id in the account's DAV URL
 (`/remote.php/dav/files/{userId}`), not against the login name. With LDAP the two can differ.

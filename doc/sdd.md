@@ -197,7 +197,7 @@ because the log is history and this is a statement about what happens next.
 | `POST` | `/apps/files_watermark/api/v1/config` | Create or update the global config (admin only) |
 | `DELETE` | `/apps/files_watermark/api/v1/config/{id}` | Remove the global config (admin only) |
 | `POST` | `/apps/files_watermark/api/v1/apply` | Mark a file on demand |
-| `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file (**owner only**) |
+| `POST` | `/apps/files_watermark/api/v1/remove` | Unmark a file (**owner only**, and only under `on_demand`) |
 | `GET` | `/apps/files_watermark/api/v1/log` | Retrieve audit log (admin only) |
 
 All endpoints require a valid Nextcloud session or app password. Admin-only endpoints enforce an admin-group check via `\OCP\IGroupManager::isAdmin()`.

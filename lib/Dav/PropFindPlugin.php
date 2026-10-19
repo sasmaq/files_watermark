@@ -387,15 +387,17 @@ class PropFindPlugin extends ServerPlugin {
 	/**
 	 * Whether the viewer is barred from removing this file's mark.
 	 *
-	 * Only an *inherited* mark can lock anybody out, so an unmarked file and a file marked
-	 * in the ordinary way both answer false and the Files app's existing ownership rule goes
-	 * on governing them untouched. The rule itself is {@see WatermarkMark::isForeignTo},
-	 * which is also what the API enforces - one definition, so the offered button and the
-	 * server's answer cannot drift apart.
+	 * An unmarked file answers false. A marked one is locked for everybody when the policy is
+	 * not `on_demand` ({@see WatermarkService::marksAreRemovable}), and otherwise by
+	 * {@see WatermarkMark::isForeignTo} - the same two rules the API enforces, so the
+	 * offered button and the server's answer cannot drift apart.
 	 *
 	 * **With no session this is false, not true.** The only server where that happens is the
 	 * public-link one, which offers no Remove action to lock; answering true there would
 	 * report every inherited mark as locked to a page that has nothing to do with it.
+	 *
+	 * The service is null only where this plugin is built by hand without one; the
+	 * authenticated server's instance comes from the container, which supplies it.
 	 */
 	private function isLocked(int $fileId): bool {
 		$uid = $this->userSession?->getUser()?->getUID();
@@ -404,8 +406,20 @@ class PropFindPlugin extends ServerPlugin {
 		}
 
 		$mark = $this->markFor($fileId);
+		if ($mark === false) {
+			return false;
+		}
 
-		return $mark !== false && $mark->isForeignTo($uid);
+		try {
+			if ($this->watermarkService !== null && !$this->watermarkService->marksAreRemovable()) {
+				return true;
+			}
+		} catch (\Throwable) {
+			// Locked: the cost is a hidden button the server would have refused anyway.
+			return true;
+		}
+
+		return $mark->isForeignTo($uid);
 	}
 
 	/**

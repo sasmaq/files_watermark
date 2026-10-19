@@ -112,6 +112,8 @@ class WatermarkService {
 	public const UNMARK_NOT_OWNER = 'not_owner';
 	/** They own it, and the mark came from somebody else's file. */
 	public const UNMARK_INHERITED = 'inherited';
+	/** Nobody may: the policy is not `on_demand` - {@see marksAreRemovable}. */
+	public const UNMARK_POLICY = 'policy';
 
 	/** Per-request memo for {@see resolveConfig}. One policy, so one slot. */
 	private ?WatermarkConfig $configCache = null;
@@ -485,14 +487,20 @@ class WatermarkService {
 	 *
 	 * The batched form of the same rule {@see unmarkVerdict} enforces, for the status
 	 * endpoint that stands in for the DAV property on a listing that arrived without it.
-	 * One query, and only marked files produce a row.
+	 * One query, and only marked files produce a row. Outside `on_demand` that is every
+	 * one of them.
 	 *
 	 * @param int[] $fileIds
 	 * @return int[]
 	 */
 	public function lockedFileIds(array $fileIds, string $uid): array {
+		$marks = $this->markMapper->findByFileIds($fileIds);
+		if (!$this->marksAreRemovable()) {
+			return array_keys($marks);
+		}
+
 		$locked = [];
-		foreach ($this->markMapper->findByFileIds($fileIds) as $id => $mark) {
+		foreach ($marks as $id => $mark) {
 			if ($mark->isForeignTo($uid)) {
 				$locked[] = $id;
 			}
@@ -526,9 +534,17 @@ class WatermarkService {
 	 * those it can resolve.
 	 * ---------------------------------------------------------------------------
 	 *
-	 * @return string one of {@see UNMARK_OK}, {@see UNMARK_NOT_OWNER}, {@see UNMARK_INHERITED}
+	 * Ahead of all of that sits the policy: outside `on_demand` nobody may unmark anything,
+	 * owner included - {@see marksAreRemovable}.
+	 *
+	 * @return string one of {@see UNMARK_OK}, {@see UNMARK_NOT_OWNER}, {@see UNMARK_INHERITED},
+	 *                {@see UNMARK_POLICY}
 	 */
 	public function unmarkVerdict(File $file, string $uid): string {
+		if (!$this->marksAreRemovable()) {
+			return self::UNMARK_POLICY;
+		}
+
 		$id = $file->getId();
 		$mark = $id === null ? null : $this->markMapper->findByFileId($id);
 
@@ -541,6 +557,32 @@ class WatermarkService {
 		}
 
 		return $file->getOwner()?->getUID() === $uid ? self::UNMARK_OK : self::UNMARK_NOT_OWNER;
+	}
+
+	/**
+	 * Whether the policy lets anybody take a mark off at all. Only `on_demand` does.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * UNDER `on_upload` THE MARK IS THE ADMIN'S DECISION, NOT THE OWNER'S.
+	 *
+	 * The owner rule in {@see unmarkVerdict} assumes the owner chose the mark, which is true
+	 * under `on_demand` and false under `on_upload`, where the policy marks every supported
+	 * file as it is written. The owner of a file is also the person who uploaded it, so
+	 * letting them unmark it handed every user an off switch for the policy: upload, remove,
+	 * download clean - or share it clean. Hiding the Files action was not enough on its own,
+	 * because the API endpoint did not ask.
+	 *
+	 * A stored trigger this version does not recognise is refused too. Nothing is marked
+	 * under it ({@see effectiveTrigger}), but it is not the policy that lets users decide,
+	 * and an unrecognised value is not to be read as the permissive one.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * The raw trigger rather than {@see effectiveTrigger()}, which logs a warning per call
+	 * for a stale value and is asked here once per row of a listing. Both agree on which
+	 * value is `on_demand`, and that is the only question this asks.
+	 */
+	public function marksAreRemovable(): bool {
+		return $this->resolveConfig()->getTrigger() === self::TRIGGER_ON_DEMAND;
 	}
 
 	public function isMarked(int $fileId): bool {
