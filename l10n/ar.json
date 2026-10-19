@@ -127,6 +127,7 @@
         "Only the owner of this file can remove its watermark.": "مالك هذا الملف وحده يمكنه إزالة علامته المائية.",
         "This file is a copy of a watermarked file owned by someone else. Only they can remove the watermark.": "هذا الملف نسخة من ملف يحمل علامة مائية ويملكه شخص آخر. هو وحده من يمكنه إزالة العلامة المائية.",
         "The file itself does not change. Downloads and previews of it simply stop being watermarked, and you can apply the watermark again at any time.": "لا يتغير الملف نفسه. تتوقف تنزيلاته ومعايناته عن حمل العلامة المائية فحسب، ويمكنك تطبيق العلامة عليه مجددا في أي وقت.",
+        "Watermarks cannot be removed under the current watermark policy.": "لا يمكن إزالة العلامات المائية بموجب سياسة العلامة المائية الحالية.",
         "Watermark removed.": "أزيلت العلامة المائية.",
         "Shared files": "الملفات المشتركة",
         "Watermark files leaving through a share, whether or not anyone marked them. Decided per fetch, so it starts and stops when you save.": "ضع علامة مائية على الملفات الخارجة عبر مشاركة، سواء وسمها أحد أم لا. يتخذ القرار عند كل جلب، فيبدأ العمل به ويتوقف لحظة الحفظ.",

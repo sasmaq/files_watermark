@@ -450,7 +450,7 @@ contract.
   file is not modified; from then on every download and preview of it carries a watermark
 - **On upload:** set the global trigger to *On upload*, and every supported file is marked
   as it arrives. The manual actions are hidden in this mode, since the policy already covers
-  everything
+  everything, and the server refuses to remove a watermark from anyone, the owner included
 - **Removing a watermark:** right-click → **Remove watermark**. Instant, and complete -
   there is nothing to restore, because nothing was overwritten. **Only the file's owner can
   do this**, even on a share with edit permission - and on a copy of somebody else's
@@ -511,6 +511,14 @@ out, since the owner can remove a watermark from anything they own.
 In the Files app the action is simply not offered on a file somebody else owns. The server
 refuses it either way - the hidden button is so the refusal is not something a user has to
 discover by clicking.
+
+**All of this applies under the *On demand* trigger only.** Under *On upload* the policy marked
+the file, not its owner - and the owner is whoever uploaded it, so letting them remove the mark
+would let every user switch the policy off for their own files: upload, remove, download clean.
+So nobody can remove a watermark while *On upload* is in force, the owner included, and that
+covers watermarks placed on demand before the switch too. The server refuses the request with
+403 whatever sent it; hiding the action in the Files app was never the control. An admin who
+wants users to be able to remove watermarks again switches the trigger back to *On demand*.
 
 ### Copies keep the watermark
 

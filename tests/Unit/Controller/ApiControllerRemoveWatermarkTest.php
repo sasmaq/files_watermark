@@ -235,6 +235,28 @@ class ApiControllerRemoveWatermarkTest extends TestCase {
 		$this->assertStringContainsString('copy', $response->getData()['error']);
 	}
 
+	/**
+	 * **Under `on_upload` the owner is refused too.** The Files app hides the action in that
+	 * mode, but this endpoint is a plain POST away from any account, so hiding it never was
+	 * the control. Note the ownership: this is alice's own file.
+	 */
+	public function testTheOwnerCannotUnmarkUnderAPolicyThatIsNotOnDemand(): void {
+		$this->loginAlice();
+		$this->mockFile(
+			readable: true,
+			updateable: true,
+			ownerUid: 'alice',
+			verdict: WatermarkService::UNMARK_POLICY,
+		);
+
+		$this->watermarkService->expects($this->never())->method('unmark');
+
+		$response = $this->controller->removeWatermark('doc.pdf');
+
+		$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		$this->assertStringContainsString('policy', $response->getData()['error']);
+	}
+
 	public function testUnmarksTheFile(): void {
 		$this->loginAlice();
 		$node = $this->mockFile(readable: true, updateable: true);

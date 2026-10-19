@@ -1718,6 +1718,11 @@ class WatermarkServiceTest extends TestCase {
 	// Who may take a mark off
 	// -----------------------------------------------------------------------
 
+	/** The only policy under which the ownership rules below are asked at all. */
+	private function onDemandPolicy(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+	}
+
 	/**
 	 * The batched form of the same rule, for the status endpoint.
 	 *
@@ -1726,6 +1731,7 @@ class WatermarkServiceTest extends TestCase {
 	 * themselves. Only the middle one comes back.
 	 */
 	public function testLockedFileIdsReturnsOnlyMarksForeignToTheAsker(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileIds')->with([1, 2, 3])->willReturn([
 			1 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND),
 			2 => $this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
@@ -1737,6 +1743,7 @@ class WatermarkServiceTest extends TestCase {
 
 	/** A direct mark that recorded its owner locks everybody else - the Remove button too. */
 	public function testLockedFileIdsIncludesADirectMarkWhoseRecordedOwnerIsSomebodyElse(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileIds')->with([1, 2])->willReturn([
 			1 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
 			2 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'bob'),
@@ -1746,12 +1753,14 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	public function testLockedFileIdsIsEmptyWhenNothingIsMarked(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileIds')->willReturn([]);
 
 		$this->assertSame([], $this->service->lockedFileIds([1, 2], 'bob'));
 	}
 
 	public function testTheOwnerOfADirectlyMarkedFileMayUnmarkIt(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_ON_DEMAND),
 		);
@@ -1763,6 +1772,7 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	public function testANonOwnerMayNotUnmark(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_ON_DEMAND),
 		);
@@ -1780,6 +1790,7 @@ class WatermarkServiceTest extends TestCase {
 	 * and download the clean original; the mark records Alice, so he is refused.
 	 */
 	public function testARecipientWhoMovedAMarkedFileIntoTheirOwnHomeMayNotUnmarkIt(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
 		);
@@ -1791,6 +1802,7 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	public function testTheRecordedOwnerMayStillUnmark(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
 		);
@@ -1822,6 +1834,7 @@ class WatermarkServiceTest extends TestCase {
 	 * he copied it - and he is still refused.
 	 */
 	public function testTheOwnerOfAnInheritedMarkMayNotUnmarkIt(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
 		);
@@ -1839,6 +1852,7 @@ class WatermarkServiceTest extends TestCase {
 	 * door: the protection belongs to whoever it protects.
 	 */
 	public function testTheOriginOfAnInheritedMarkMayUnmarkIt(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_INHERITED, 'alice'),
 		);
@@ -1856,6 +1870,7 @@ class WatermarkServiceTest extends TestCase {
 	 * whose owner will not resolve. An empty uid must not match an unset origin.
 	 */
 	public function testAnInheritedMarkWithNoOriginIsRemovableByNobody(): void {
+		$this->onDemandPolicy();
 		$this->markMapper->method('findByFileId')->willReturn(
 			$this->mark(WatermarkService::TRIGGER_INHERITED, null),
 		);
@@ -1864,6 +1879,66 @@ class WatermarkServiceTest extends TestCase {
 			WatermarkService::UNMARK_INHERITED,
 			$this->service->unmarkVerdict($this->file(owner: $this->user('bob')), ''),
 		);
+	}
+
+	/**
+	 * **Under `on_upload` not even the owner may unmark.** The policy marked the file, not
+	 * its owner - who is also whoever uploaded it, so the owner rule was an off switch for
+	 * the policy: upload, unmark, download clean.
+	 */
+	public function testTheOwnerMayNotUnmarkWhileThePolicyIsOnUpload(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_UPLOAD, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_POLICY,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'alice'),
+		);
+	}
+
+	/**
+	 * A mark placed on demand before the switch is no different: the policy now in force is
+	 * what decides, not the one the mark was placed under.
+	 */
+	public function testAnOnDemandMarkIsNotRemovableOnceThePolicyIsOnUpload(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_POLICY,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'alice'),
+		);
+	}
+
+	/**
+	 * A trigger left behind by an older version marks nothing, but it is not `on_demand`
+	 * either, and an unrecognised value must not be read as the permissive one.
+	 */
+	public function testAnUnrecognisedTriggerDoesNotAllowUnmarking(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config('on_share'));
+		$this->markMapper->method('findByFileId')->willReturn(
+			$this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'alice'),
+		);
+
+		$this->assertSame(
+			WatermarkService::UNMARK_POLICY,
+			$this->service->unmarkVerdict($this->file(owner: $this->user('alice')), 'alice'),
+		);
+	}
+
+	/** The batched form agrees: every marked file is locked, the asker's own included. */
+	public function testLockedFileIdsLocksEveryMarkWhileThePolicyIsOnUpload(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->markMapper->method('findByFileIds')->with([1, 2, 3])->willReturn([
+			1 => $this->mark(WatermarkService::TRIGGER_ON_UPLOAD, 'bob'),
+			3 => $this->mark(WatermarkService::TRIGGER_ON_DEMAND, 'bob'),
+		]);
+
+		$this->assertSame([1, 3], $this->service->lockedFileIds([1, 2, 3], 'bob'));
 	}
 
 	// -----------------------------------------------------------------------

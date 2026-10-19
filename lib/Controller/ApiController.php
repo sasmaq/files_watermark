@@ -468,6 +468,11 @@ class ApiController extends Controller {
 	 * file they can write. That direction only ever adds protection, and it cannot lock the
 	 * owner out - the owner can unmark anything they own.
 	 * ---------------------------------------------------------------------------
+	 *
+	 * **All of that is under `on_demand` only.** Under `on_upload` the admin's policy placed
+	 * the mark, so nobody unmarks anything, owner included. The Files app hides the action
+	 * in that mode, but the refusal has to be here: this endpoint is one request away from
+	 * anyone with an account. See {@see WatermarkService::marksAreRemovable}.
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 120, period: 60)]
@@ -499,6 +504,13 @@ class ApiController extends Controller {
 		// cannot establish who owns the file has not established that this user does.
 		// See {@see WatermarkService::unmarkVerdict}.
 		$verdict = $this->watermarkService->unmarkVerdict($node, $user->getUID());
+
+		if ($verdict === WatermarkService::UNMARK_POLICY) {
+			return new DataResponse(
+				['error' => $this->l->t('Watermarks cannot be removed under the current watermark policy.')],
+				Http::STATUS_FORBIDDEN,
+			);
+		}
 
 		if ($verdict === WatermarkService::UNMARK_NOT_OWNER) {
 			return new DataResponse(
