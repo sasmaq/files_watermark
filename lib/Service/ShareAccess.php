@@ -125,4 +125,15 @@ class ShareAccess {
 			return false;
 		}
 	}
+
+	/**
+	 * Whether either switch *could* claim this fetch of $node, whether or not it is on.
+	 *
+	 * What a cacheable response has to ask: turning a switch on moves no etag and no URL, so
+	 * a clean copy that went out through a share must not be one the reader can go on using
+	 * without asking.
+	 */
+	public function isShareAccess(FileInfo $node): bool {
+		return $this->isExternalShareAccess() || $this->isInternalShareAccess($node);
+	}
 }

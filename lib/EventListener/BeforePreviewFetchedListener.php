@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\EventListener;
 
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
@@ -34,6 +35,7 @@ class BeforePreviewFetchedListener implements IEventListener {
 	public function __construct(
 		private WatermarkService $watermarkService,
 		private PreviewRequestContext $context,
+		private ShareAccess $shareAccess,
 	) {
 	}
 
@@ -76,6 +78,8 @@ class BeforePreviewFetchedListener implements IEventListener {
 			$event->getMode(),
 			$event->getMimeType(),
 			$subject === $node ? null : $subject,
+			// Only a clean preview needs it: a stamped one is never cached at all.
+			!$stamp && $this->shareAccess->isShareAccess($subject),
 		);
 	}
 }

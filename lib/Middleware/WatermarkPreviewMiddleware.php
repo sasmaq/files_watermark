@@ -230,11 +230,16 @@ class WatermarkPreviewMiddleware extends Middleware {
 	 * registered last and `afterController` runs in reverse), so on a marked file the stamped
 	 * response has already replaced core's before any 304 could be decided.
 	 *
-	 * Versioned URLs keep core's header. A whole Photos timeline revalidating on every visit
-	 * is the cost this avoids, and their etag already does the job.
+	 * Versioned URLs keep core's header - **unless the preview came through a share.** A
+	 * share switch claims the next fetch without moving the etag, so the versioned address
+	 * the recipient's browser holds a clean preview under is the same one after the switch
+	 * goes on, and the Viewer showed that clean image for a day. The owner's own previews
+	 * keep it: no switch ever claims them, and a whole Photos timeline revalidating on every
+	 * visit is the cost this avoids.
 	 */
 	private function revalidating(Response $response): Response {
-		if ($response->getStatus() !== Http::STATUS_OK || $this->carriesVersion()) {
+		if ($response->getStatus() !== Http::STATUS_OK
+			|| ($this->carriesVersion() && !$this->context->throughShare())) {
 			return $response;
 		}
 

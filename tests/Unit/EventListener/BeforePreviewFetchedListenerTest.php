@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\Tests\Unit\EventListener;
 
 use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
+use OCA\FilesWatermark\Service\ShareAccess;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\File;
 use OCP\Files\Folder;
@@ -26,16 +27,18 @@ use PHPUnit\Framework\TestCase;
 class BeforePreviewFetchedListenerTest extends TestCase {
 
 	private WatermarkService&MockObject $watermarkService;
+	private ShareAccess&MockObject $shareAccess;
 	private PreviewRequestContext $context;
 	private BeforePreviewFetchedListener $listener;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->watermarkService = $this->createMock(WatermarkService::class);
+		$this->shareAccess = $this->createMock(ShareAccess::class);
 		// The real one: it is a value holder, and mocking it would assert the calls made
 		// rather than the state they leave behind - which is the whole of its contract.
 		$this->context = new PreviewRequestContext();
-		$this->listener = new BeforePreviewFetchedListener($this->watermarkService, $this->context);
+		$this->listener = new BeforePreviewFetchedListener($this->watermarkService, $this->context, $this->shareAccess);
 	}
 
 	private function file(): File&MockObject {
@@ -115,6 +118,34 @@ class BeforePreviewFetchedListenerTest extends TestCase {
 			'an unmarked file must never be offered for stamping, or the middleware stamps every thumbnail on the server',
 		);
 		$this->assertTrue($this->context->previewsCleanCopy());
+		$this->assertFalse($this->context->throughShare());
+	}
+
+	/**
+	 * A clean preview read through a share is one a switch can claim next time without its
+	 * etag moving, so the middleware has to know.
+	 */
+	public function testACleanPreviewThroughAShareIsRecordedAsSuch(): void {
+		$file = $this->file();
+		$file->method('getMimetype')->willReturn('image/jpeg');
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(false);
+		$this->watermarkService->method('isSupported')->willReturn(true);
+		$this->shareAccess->method('isShareAccess')->with($file)->willReturn(true);
+
+		$this->listener->handle($this->event($file));
+
+		$this->assertTrue($this->context->previewsCleanCopy());
+		$this->assertTrue($this->context->throughShare());
+	}
+
+	/** A stamped preview is never cached, so it does not need the question asked. */
+	public function testAStampedPreviewDoesNotAskAboutShares(): void {
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(true);
+		$this->shareAccess->expects($this->never())->method('isShareAccess');
+
+		$this->listener->handle($this->event($this->file()));
+
+		$this->assertFalse($this->context->throughShare());
 	}
 
 	public function testAFileThisAppCannotWatermarkIsNotRecorded(): void {
