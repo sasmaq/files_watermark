@@ -129,6 +129,17 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	 */
 	public const GET_PRIORITY = 92;
 
+	/**
+	 * Where on `beforeMethod:GET` {@see beforeGet} runs: **after core's own setup**.
+	 *
+	 * Core sets the reader's filesystem up in a `beforeMethod:*` listener at the default
+	 * priority of 100, and until it has run a version node does not resolve - the lookup
+	 * throws NotFound, and at the default priority this hook did nothing on the live server
+	 * while every unit test passed. Any number past 100 is still before Sabre's precondition
+	 * check, which runs once `beforeMethod` is done.
+	 */
+	public const BEFORE_GET_PRIORITY = 200;
+
 	public function initialize(Server $server): void {
 		$this->server = $server;
 		// Hook the same event Sabre's CorePlugin streams file bodies on (`method:GET`),
@@ -137,11 +148,58 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 		// Sabre still runs `afterMethod` and flushes our response via `sendResponse`.
 		// (A false from `beforeMethod:GET` returns before `sendResponse`, sending 0 bytes.)
 		$server->on('method:GET', [$this, 'httpGet'], self::GET_PRIORITY);
+		// Once more *before* Sabre's precondition check, which sits between the two and can
+		// answer a GET with a 304 before `method:GET` is ever emitted. See {@see beforeGet}.
+		$server->on('beforeMethod:GET', [$this, 'beforeGet'], self::BEFORE_GET_PRIORITY);
 		// And again *after* core has had its say. `FilesPlugin::httpGet` listens on this
 		// same event at the default priority of 100, so a larger number here is what puts
 		// {@see afterGet} last and lets it overrule what core wrote. See that method for
 		// what needs overruling and why it cannot be set up front in `httpGet`.
 		$server->on('afterMethod:GET', [$this, 'afterGet'], 200);
+	}
+
+	/**
+	 * Drop the validators from a GET of an old version, so it is always answered in full.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * A VERSION'S ETAG CANNOT MOVE WHEN ITS FILE IS MARKED.
+	 *
+	 * A browser that opened an old version before the file was marked holds that clean copy
+	 * under `no-cache`, and revalidates it with `If-None-Match` on the next view. For the
+	 * current file that is safe: marking moves its etag ({@see DeliveryReservation::record}),
+	 * so the old validator fails and the render goes out. A version's etag is its revision
+	 * id, which nothing this app does can change - so Sabre's precondition check matched it
+	 * and answered 304 before {@see httpGet} was asked, and the browser kept showing the
+	 * clean copy. The Versions tab then showed the current version watermarked and every
+	 * older one clean.
+	 * ---------------------------------------------------------------------------
+	 *
+	 * Every version, protected or not: a validator that a mark or a share switch cannot move
+	 * cannot tell a copy fetched before either from one fetched after, so none is trusted.
+	 * The cost is a full body instead of a 304 for an old version opened twice, by hand.
+	 *
+	 * **Never returns false.** A false from `beforeMethod:GET` returns before `sendResponse`
+	 * and ships a 0-byte download.
+	 */
+	public function beforeGet(RequestInterface $request, ResponseInterface $response): bool {
+		if ($this->server === null
+			|| ($request->getHeader('If-None-Match') === null && $request->getHeader('If-Modified-Since') === null)) {
+			return true;
+		}
+
+		try {
+			$node = $this->server->tree->getNodeForPath($request->getPath());
+		} catch (NotFound) {
+			return true;
+		}
+
+		if ($node instanceof VersionFile) {
+			$this->trace('ignoring the validators on a version', $request);
+			$request->removeHeader('If-None-Match');
+			$request->removeHeader('If-Modified-Since');
+		}
+
+		return true;
 	}
 
 	/**

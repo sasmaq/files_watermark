@@ -759,9 +759,26 @@ class DownloadInterceptorPluginTest extends TestCase {
 		// CorePlugin streams file bodies at priority 100; this must run before it, and on
 		// `method:GET` rather than `beforeMethod:GET` so afterMethod still flushes the body.
 		$this->assertNotEmpty($this->server->listeners('method:GET'));
-		// Nothing may be registered on beforeMethod:GET - returning false there returns
-		// before sendResponse and would ship a 0-byte download.
-		$this->assertSame([], $this->server->listeners('beforeMethod:GET'));
+	}
+
+	/**
+	 * Returning false from `beforeMethod:GET` returns before sendResponse and would ship a
+	 * 0-byte download, so the one listener there may only ever let the request through.
+	 */
+	public function testTheBeforeGetHookNeverStopsTheRequest(): void {
+		$this->versionNode();
+		$this->plugin();
+
+		$listeners = $this->server->listeners('beforeMethod:GET');
+		$this->assertCount(1, $listeners);
+		// After core's own `beforeMethod:*` setup at 100, without which no version resolves.
+		$this->assertGreaterThan(100, DownloadInterceptorPlugin::BEFORE_GET_PRIORITY);
+
+		$conditional = $this->request('versions/alice/versions/42/1700000000');
+		$conditional->setHeader('If-None-Match', '1700000000');
+		foreach ([$this->request(), $conditional] as $request) {
+			$this->assertNotFalse($listeners[0]($request, new Response()));
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -876,6 +893,62 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$this->expectException(Forbidden::class);
 
 		$this->plugin()->httpGet($this->request('versions/alice/versions/42/1700000000'), new Response());
+	}
+
+	/**
+	 * Sabre, with its precondition check, and a sapi that sends nothing.
+	 *
+	 * The check is the point of these tests: it runs between `beforeMethod:GET` and
+	 * `method:GET`, and answers a matching validator with a 304 before this plugin is asked.
+	 */
+	private function invoke(Request $request): Response {
+		$this->tree->method('nodeExists')->willReturn(true);
+		$this->server->sapi = new class extends \Sabre\HTTP\Sapi {
+			public static function sendResponse(\Sabre\HTTP\ResponseInterface $response): void {
+			}
+		};
+
+		$response = new Response();
+		$this->server->invokeMethod($request, $response, false);
+		return $response;
+	}
+
+	/**
+	 * A version's etag is its revision id, and marking cannot move it. The browser that
+	 * opened an old version before the file was marked revalidated its clean copy with that
+	 * id and was told 304 - by Sabre, before this plugin ran - so the Versions tab went on
+	 * showing every old version clean while the current one was watermarked.
+	 */
+	public function testACleanCopyOfAVersionCachedBeforeTheMarkIsNotConfirmed(): void {
+		$this->versionNode();
+		$this->watermarkService->method('watermarkVersionForDownload')
+			->willReturn($this->renderedCopy('WATERMARKED-VERSION'));
+		$this->plugin();
+
+		$request = $this->request('versions/alice/versions/42/1700000000');
+		$request->setHeader('If-None-Match', '1700000000');
+		$request->setHeader('If-Modified-Since', 'Wed, 21 Oct 2026 02:29:28 GMT');
+		$response = $this->invoke($request);
+
+		$this->assertSame(200, $response->getStatus());
+		$this->assertSame('WATERMARKED-VERSION', stream_get_contents($response->getBody()));
+	}
+
+	/**
+	 * The current file keeps core's 304: marking moves its etag, so a validator from before
+	 * the mark no longer matches. The control for the test above.
+	 */
+	public function testTheCurrentFileStillHonoursItsValidators(): void {
+		$davFile = $this->davFile();
+		$davFile->method('getETag')->willReturn('"abc123"');
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
+		$this->plugin();
+
+		$request = $this->request();
+		$request->setHeader('If-None-Match', '"abc123"');
+
+		$this->assertSame(304, $this->invoke($request)->getStatus());
 	}
 
 	// -----------------------------------------------------------------------
