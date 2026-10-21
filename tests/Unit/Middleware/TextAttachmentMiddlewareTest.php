@@ -147,6 +147,17 @@ class TextAttachmentMiddlewareTest extends TestCase {
 		return new DataDownloadResponse('CLEAN-ORIGINAL', 'report.pdf', 'application/pdf');
 	}
 
+	/**
+	 * What `getImageFile` sends: `cacheFor(3600 * 24, false, true)`, written out because
+	 * `cacheFor()` reaches into the server container for the time.
+	 */
+	private function textsCachedImage(): DataDownloadResponse {
+		$response = $this->textsResponse();
+		$response->addHeader('Cache-Control', 'private, max-age=86400, immutable');
+		$response->addHeader('Expires', 'Thu, 22 Oct 2026 02:00:00 GMT');
+		return $response;
+	}
+
 	private function renderedCopy(string $contents = 'WATERMARKED'): string {
 		$dir = sys_get_temp_dir() . '/nc_watermark_test_' . uniqid('', true);
 		mkdir($dir);
@@ -213,6 +224,41 @@ class TextAttachmentMiddlewareTest extends TestCase {
 		$original = $this->textsResponse();
 
 		$this->assertSame($original, $this->middleware()->afterController($this->controller(), 'getMediaFile', $original));
+		// Core's default, which nothing here loosens.
+		$this->assertSame('no-cache, no-store, must-revalidate', $original->getHeaders()['Cache-Control']);
+	}
+
+	/**
+	 * Text keeps an image a day at an address no mark and no share switch changes, so the
+	 * clean copy went on showing after either.
+	 */
+	public function testACleanImageTextWouldCacheMustBeRevalidated(): void {
+		$this->params = ['imageFileName' => 'report.pdf', 'preferRawImage' => '1'];
+		$attachment = $this->aliceOwnsEverything();
+		$attachment->method('getMimeType')->willReturn('application/pdf');
+		$this->watermarkService->method('isSupported')->with('application/pdf')->willReturn(true);
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+		$original = $this->textsCachedImage();
+
+		$response = $this->middleware()->afterController($this->controller(), 'getImageFile', $original);
+
+		$this->assertSame($original, $response);
+		$this->assertSame('private, no-cache', $response->getHeaders()['Cache-Control']);
+		$this->assertArrayNotHasKey('Expires', $response->getHeaders());
+	}
+
+	public function testACleanAttachmentThisAppCannotWatermarkKeepsTextsCaching(): void {
+		$this->params = ['imageFileName' => 'report.pdf', 'preferRawImage' => '1'];
+		$attachment = $this->aliceOwnsEverything();
+		$attachment->method('getMimeType')->willReturn('text/markdown');
+		$this->watermarkService->method('isSupported')->willReturn(false);
+		$this->watermarkService->method('watermarkForDownload')->willReturn(null);
+		$original = $this->textsCachedImage();
+
+		$response = $this->middleware()->afterController($this->controller(), 'getImageFile', $original);
+
+		$this->assertSame($original, $response);
+		$this->assertSame('private, max-age=86400, immutable', $response->getHeaders()['Cache-Control']);
 	}
 
 	public function testAProtectedAttachmentThatCannotBeRenderedIsRefused(): void {

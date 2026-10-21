@@ -115,7 +115,7 @@ class TextAttachmentMiddleware extends Middleware {
 		}
 
 		if ($tmpPath === null) {
-			return $response;
+			return $this->revalidating($file, $response);
 		}
 
 		try {
@@ -141,6 +141,31 @@ class TextAttachmentMiddleware extends Middleware {
 		$watermarked->addHeader('Cache-Control', 'private, no-store');
 
 		return $watermarked;
+	}
+
+	/**
+	 * Text's clean copy of an attachment this app could watermark, made unable to outlive a
+	 * mark or a share switch.
+	 *
+	 * Text serves an image `private, max-age=86400, immutable`, at an address with no version
+	 * in it - `getImageFile?documentId=…&imageFileName=…`. Neither marking the attachment nor
+	 * turning a share switch on changes that address, so a clean copy fetched before either
+	 * was reused for a day after it. The same reasoning, and the same header, as
+	 * {@see WatermarkPreviewMiddleware::revalidating} gives an unversioned preview.
+	 *
+	 * A response Text did not allow to be kept carries core's `no-store` and is left so.
+	 */
+	private function revalidating(File $file, Response $response): Response {
+		$cacheControl = $response->getHeaders()['Cache-Control'];
+		if (str_contains($cacheControl, 'no-store') || !$this->watermarkService->isSupported($file->getMimeType())) {
+			return $response;
+		}
+
+		$response->addHeader('Cache-Control', 'private, no-cache');
+		/** @psalm-suppress NullArgument - `addHeader(…, null)` is how core deletes a header */
+		$response->addHeader('Expires', null);
+
+		return $response;
 	}
 
 	/**

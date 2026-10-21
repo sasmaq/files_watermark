@@ -159,24 +159,31 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 	}
 
 	/**
-	 * Drop the validators from a GET of an old version, so it is always answered in full.
+	 * Drop the validators from a GET that is going to be watermarked, and from any GET of an
+	 * old version, so neither is answered with a 304.
 	 *
 	 * ---------------------------------------------------------------------------
-	 * A VERSION'S ETAG CANNOT MOVE WHEN ITS FILE IS MARKED.
+	 * A 304 CONFIRMS WHATEVER COPY THE BROWSER HOLDS, AND THE ETAG CANNOT SAY WHICH.
 	 *
-	 * A browser that opened an old version before the file was marked holds that clean copy
-	 * under `no-cache`, and revalidates it with `If-None-Match` on the next view. For the
-	 * current file that is safe: marking moves its etag ({@see DeliveryReservation::record}),
-	 * so the old validator fails and the render goes out. A version's etag is its revision
-	 * id, which nothing this app does can change - so Sabre's precondition check matched it
-	 * and answered 304 before {@see httpGet} was asked, and the browser kept showing the
-	 * clean copy. The Versions tab then showed the current version watermarked and every
-	 * older one clean.
+	 * A browser that opened a file while it went out clean holds that copy under `no-cache`,
+	 * and revalidates it with `If-None-Match` on the next view. Sabre's precondition check
+	 * compares that against the stored etag and answers 304 before {@see httpGet} is asked -
+	 * and a watermarked copy often goes out under the stored etag too (see
+	 * {@see fitToReservation}), so a matching validator does not mean a watermarked copy.
+	 * Only a moved etag keeps a clean one from being confirmed, and two things never move it:
+	 *
+	 *  - **An old version.** Its etag is its revision id. Marking moves the current file's
+	 *    ({@see DeliveryReservation::record}) and nothing can move a version's, so the
+	 *    Versions tab showed the current version watermarked and every older one clean.
+	 *  - **A share switch.** Turning one on moves no etag at all, so a recipient or a
+	 *    public-link visitor who had opened the file before went on seeing it clean.
 	 * ---------------------------------------------------------------------------
 	 *
-	 * Every version, protected or not: a validator that a mark or a share switch cannot move
-	 * cannot tell a copy fetched before either from one fetched after, so none is trusted.
-	 * The cost is a full body instead of a 304 for an old version opened twice, by hand.
+	 * So a fetch this app watermarks is always answered in full, and so is every version,
+	 * protected or not - a validator nothing can move cannot tell a copy fetched before a mark
+	 * from one fetched after. The cost is a render, or for a clean version a body, where a 304
+	 * used to be; a signed-in reader's reserved download never got a 304 anyway, because it
+	 * goes out under the reservation's etag rather than the stored one.
 	 *
 	 * **Never returns false.** A false from `beforeMethod:GET` returns before `sendResponse`
 	 * and ships a 0-byte download.
@@ -193,13 +200,20 @@ class DownloadInterceptorPlugin extends ServerPlugin {
 			return true;
 		}
 
-		if ($node instanceof VersionFile) {
-			$this->trace('ignoring the validators on a version', $request);
+		if ($node instanceof VersionFile || $this->isWatermarked($node)) {
+			$this->trace('ignoring the validators', $request);
 			$request->removeHeader('If-None-Match');
 			$request->removeHeader('If-Modified-Since');
 		}
 
 		return true;
+	}
+
+	/** Whether this GET of $node will go out as a render rather than the stored bytes. */
+	private function isWatermarked(INode $node): bool {
+		$file = $this->fileFor($node);
+
+		return $file !== null && $this->watermarkService->isDeliveryCandidate($file);
 	}
 
 	/**

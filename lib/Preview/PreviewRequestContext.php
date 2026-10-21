@@ -67,6 +67,13 @@ class PreviewRequestContext {
 	private bool $stamp = false;
 
 	/**
+	 * Whether the recorded file is being read through a share, so a share switch could claim
+	 * the next fetch of it without its etag moving. See
+	 * {@see \OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware::revalidating}.
+	 */
+	private bool $throughShare = false;
+
+	/**
 	 * True while this app is itself asking for a preview.
 	 *
 	 * The middleware generates the clean preview by calling `IPreview::getPreview()`, which
@@ -93,6 +100,7 @@ class PreviewRequestContext {
 		?string $mode = null,
 		?string $mimeType = null,
 		?File $subject = null,
+		bool $throughShare = false,
 	): void {
 		if ($this->generating || $this->file !== null) {
 			return;
@@ -106,6 +114,7 @@ class PreviewRequestContext {
 		$this->mode = $mode;
 		$this->mimeType = $mimeType;
 		$this->subject = $subject;
+		$this->throughShare = $throughShare;
 	}
 
 	/** The node whose preview is to be watermarked, or null when there is none. */
@@ -173,6 +182,11 @@ class PreviewRequestContext {
 	/** Whether this request previews a file this app could watermark, and goes out clean. */
 	public function previewsCleanCopy(): bool {
 		return $this->file !== null && !$this->stamp;
+	}
+
+	/** Whether the previewed file is being read through a share. */
+	public function throughShare(): bool {
+		return $this->throughShare;
 	}
 
 	/**

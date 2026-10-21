@@ -329,6 +329,22 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 		$this->assertSame('private, max-age=86400, immutable', $headers['Cache-Control']);
 	}
 
+	/**
+	 * A share switch moves no etag, so the versioned address a recipient holds a clean preview
+	 * under is the same once the switch is on - and the Viewer went on showing it for a day.
+	 *
+	 * @dataProvider versionParamProvider
+	 */
+	public function testAVersionedCleanPreviewThroughAShareMustBeRevalidated(string $param): void {
+		$this->context->record($this->createMock(File::class), 256, 256, false, throughShare: true);
+		$this->params = ['x' => '256', $param => '65f4e7'];
+
+		$headers = $this->afterController($this->coresCleanResponse())->getHeaders();
+
+		$this->assertSame('private, no-cache', $headers['Cache-Control']);
+		$this->assertArrayNotHasKey('Expires', $headers);
+	}
+
 	/** A 304 has no lifetime of its own to correct; the stored response keeps the one it was given here. */
 	public function testANotModifiedCleanPreviewIsLeftAlone(): void {
 		$this->context->record($this->createMock(File::class), 2048, 2048, false);

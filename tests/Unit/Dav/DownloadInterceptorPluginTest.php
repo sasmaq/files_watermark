@@ -935,13 +935,14 @@ class DownloadInterceptorPluginTest extends TestCase {
 	}
 
 	/**
-	 * The current file keeps core's 304: marking moves its etag, so a validator from before
-	 * the mark no longer matches. The control for the test above.
+	 * An unprotected file keeps core's 304 - the cheap revalidation `no-cache` asks for. The
+	 * control for the tests around it.
 	 */
-	public function testTheCurrentFileStillHonoursItsValidators(): void {
+	public function testAnUnprotectedFileStillHonoursItsValidators(): void {
 		$davFile = $this->davFile();
 		$davFile->method('getETag')->willReturn('"abc123"');
 		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('isDeliveryCandidate')->willReturn(false);
 		$this->watermarkService->expects($this->never())->method('watermarkForDownload');
 		$this->plugin();
 
@@ -949,6 +950,27 @@ class DownloadInterceptorPluginTest extends TestCase {
 		$request->setHeader('If-None-Match', '"abc123"');
 
 		$this->assertSame(304, $this->invoke($request)->getStatus());
+	}
+
+	/**
+	 * A share switch moves no etag. A recipient - or a public-link visitor - who opened the
+	 * file before the switch went on revalidated their clean copy with the etag it came with,
+	 * which was still the file's, and was told 304 before this plugin was asked.
+	 */
+	public function testACleanCopyCachedBeforeAShareSwitchWentOnIsNotConfirmed(): void {
+		$davFile = $this->davFile();
+		$davFile->method('getETag')->willReturn('"abc123"');
+		$this->tree->method('getNodeForPath')->willReturn($davFile);
+		$this->watermarkService->method('isDeliveryCandidate')->with($davFile->getNode())->willReturn(true);
+		$this->watermarkService->method('watermarkForDownload')->willReturn($this->renderedCopy('WATERMARKED'));
+		$this->plugin();
+
+		$request = $this->request();
+		$request->setHeader('If-None-Match', '"abc123"');
+		$response = $this->invoke($request);
+
+		$this->assertSame(200, $response->getStatus());
+		$this->assertSame('WATERMARKED', stream_get_contents($response->getBody()));
 	}
 
 	// -----------------------------------------------------------------------
