@@ -170,6 +170,37 @@ class ShareAccessTest extends TestCase {
 		$this->assertTrue($shareAccess->isInternalShareAccess($this->node(false)));
 	}
 
+	/**
+	 * Asked on behalf of a copy, which serves nothing: the question sees an indirect share,
+	 * and the request goes on without one - even when the question throws.
+	 */
+	public function testAnIndirectShareAskedAboutIsOnlyThereForTheQuestion(): void {
+		$this->signedIn();
+		$shareAccess = $this->shareAccess();
+		$node = $this->node(false);
+
+		$this->assertTrue($shareAccess->asIndirectShareAccess(
+			fn (): bool => $shareAccess->isInternalShareAccess($node),
+		));
+		$this->assertFalse($shareAccess->isInternalShareAccess($node));
+
+		try {
+			$shareAccess->asIndirectShareAccess(fn () => throw new \RuntimeException('boom'));
+		} catch (\RuntimeException) {
+		}
+		$this->assertFalse($shareAccess->isInternalShareAccess($node));
+	}
+
+	public function testAnIndirectShareAlreadyNotedOutlivesTheQuestion(): void {
+		$this->signedIn();
+		$shareAccess = $this->shareAccess();
+		$shareAccess->noteIndirectShareAccess();
+
+		$shareAccess->asIndirectShareAccess(fn (): bool => true);
+
+		$this->assertTrue($shareAccess->isInternalShareAccess($this->node(false)));
+	}
+
 	public function testAPublicLinkOutranksANotedIndirectShare(): void {
 		$this->signedIn();
 		$shareAccess = $this->shareAccess();
