@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\BackgroundJob;
 use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\QueuedJob;
+use OCP\Files\Config\IUserMountCache;
 use OCP\Files\File;
 use OCP\Files\IRootFolder;
 use Psr\Log\LoggerInterface;
@@ -38,6 +39,7 @@ class MeasureDeliveryJob extends QueuedJob {
 	public function __construct(
 		ITimeFactory $time,
 		private IRootFolder $rootFolder,
+		private IUserMountCache $mountCache,
 		private WatermarkService $watermarkService,
 		private LoggerInterface $logger,
 	) {
@@ -53,11 +55,17 @@ class MeasureDeliveryJob extends QueuedJob {
 			return;
 		}
 
+		// **Not `IRootFolder::getById()`**, which answers nothing under cron - nobody's
+		// filesystem is set up there, so the root cannot see into any home, and every job
+		// returned as if its file were gone. The mount cache knows which users have the file,
+		// and their own folder resolves it; for a shared file that may be a recipient's mount,
+		// and the measurement still reads `getOwner()` for whom to measure.
 		try {
 			$file = null;
-			foreach ($this->rootFolder->getById($fileId) as $candidate) {
-				if ($candidate instanceof File) {
-					$file = $candidate;
+			foreach ($this->mountCache->getMountsForFileId($fileId) as $mount) {
+				$node = $this->rootFolder->getUserFolder($mount->getUser()->getUID())->getFirstNodeById($fileId);
+				if ($node !== null) {
+					$file = $node instanceof File ? $node : null;
 					break;
 				}
 			}
