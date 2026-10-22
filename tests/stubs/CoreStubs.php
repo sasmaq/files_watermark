@@ -194,6 +194,41 @@ namespace OCA\Text\Controller {
 		abstract class AttachmentController extends \OCP\AppFramework\ApiController implements ISessionAwareController {
 		}
 	}
+
+	if (!class_exists(SessionController::class)) {
+		/**
+		 * Stands in for `class SessionController extends ApiController implements
+		 * ISessionAwareController` (text/lib/Controller/SessionController.php). Recognised by
+		 * name after it has answered, by `TextSessionMiddleware`.
+		 */
+		abstract class SessionController extends \OCP\AppFramework\ApiController implements ISessionAwareController {
+		}
+	}
+
+	if (!class_exists(PublicSessionController::class)) {
+		/**
+		 * Stands in for `class PublicSessionController extends PublicShareController
+		 * implements ISessionAwareController` (text/lib/Controller/PublicSessionController.php)
+		 * - the same session API, authenticated by a share token.
+		 */
+		abstract class PublicSessionController extends \OCP\AppFramework\PublicShareController implements ISessionAwareController {
+		}
+	}
+}
+
+namespace OCA\Text\Service {
+
+	if (!class_exists(WorkspaceService::class)) {
+		/**
+		 * Mirrors `class WorkspaceService` (text/lib/Service/WorkspaceService.php). Only the
+		 * lookup is reproduced: it is how Text's `WorkspacePlugin` picks a folder's workspace
+		 * file, and `TextWorkspacePlugin` asks it the same question.
+		 */
+		abstract class WorkspaceService {
+			/** WorkspaceService.php:34 */
+			abstract public function getFile(\OCP\Files\Folder $folder): ?\OCP\Files\File;
+		}
+	}
 }
 
 namespace OCA\Photos\Sabre {

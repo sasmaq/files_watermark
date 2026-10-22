@@ -102,6 +102,7 @@ OC.L10N.register(
         "File type \"%1$s\" is not supported. Supported types: %2$s.": "نوع الملف \"%1$s\" غير مدعوم. الأنواع المدعومة: %2$s.",
         "This image is too large to watermark (%1$s megapixels; the limit is %2$s).": "هذه الصورة أكبر من أن تطبق عليها علامة مائية (%1$s ميجابكسل؛ الحد الأقصى %2$s).",
         "This file is watermarked on download, and the watermark could not be generated.": "تطبق على هذا الملف علامة مائية عند التنزيل، وتعذر توليد تلك العلامة.",
+        "This file is watermarked on download, so it cannot be opened here.": "تطبق على هذا الملف علامة مائية عند التنزيل، لذا لا يمكن فتحه هنا.",
         "This file is too large to watermark (%1$s; the limit is %2$s).": "هذا الملف أكبر من أن تطبق عليه علامة مائية (%1$s؛ الحد الأقصى %2$s).",
         "Too many watermark requests at once. Wait a moment and try again.": "طلبات كثيرة جدا للعلامة المائية دفعة واحدة. انتظر لحظة ثم أعد المحاولة.",
         "The uploaded image could not be read.": "تعذرت قراءة الصورة المرفوعة.",

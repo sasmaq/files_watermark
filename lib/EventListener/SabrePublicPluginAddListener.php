@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\EventListener;
 
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Dav\PropFindPlugin;
+use OCA\FilesWatermark\Dav\TextWorkspacePlugin;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
 use OCA\FilesWatermark\Db\WatermarkMarkMapper;
 use OCA\FilesWatermark\Service\ArchiveLimits;
@@ -97,6 +98,14 @@ class SabrePublicPluginAddListener implements IEventListener {
 			$this->container->get(IEventDispatcher::class),
 			$this->container->get(LoggerInterface::class),
 			$this->container->get(ArchiveLimits::class),
+		));
+
+		// The rich workspace - a folder share's `Readme.md`, read by Text and handed over in
+		// the PROPFIND - wherever Text's own plugin is on this server too.
+		$server->addPlugin(new TextWorkspacePlugin(
+			$this->container->get(WatermarkService::class),
+			$this->container,
+			$this->container->get(LoggerInterface::class),
 		));
 	}
 }

@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\EventListener;
 use OCA\DAV\Events\SabrePluginAddEvent;
 use OCA\FilesWatermark\Dav\DownloadInterceptorPlugin;
 use OCA\FilesWatermark\Dav\PropFindPlugin;
+use OCA\FilesWatermark\Dav\TextWorkspacePlugin;
 use OCA\FilesWatermark\Dav\ZipInterceptorPlugin;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
@@ -44,5 +45,8 @@ class SabrePluginAddListener implements IEventListener {
 		// Folder / multi-file downloads are served as an archive by core's
 		// ZipFolderPlugin, which the single-file interceptor never sees.
 		$server->addPlugin($this->container->get(ZipInterceptorPlugin::class));
+		// Text answers a folder's PROPFIND with its workspace file's content, which no GET
+		// carries.
+		$server->addPlugin($this->container->get(TextWorkspacePlugin::class));
 	}
 }
