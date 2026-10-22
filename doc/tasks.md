@@ -33,16 +33,20 @@ follows it. **Office support** and **release packaging** are what stand between 
 Not yet sorted into the sections below. Most severe first. **Confirmed** items were
 reproduced on the dev instance; the rest come from reading the code against core's.
 
-- [ ] **Text's session API hands out the stored bytes of any file.** *Confirmed* on
-  `Photos/Vineyard.jpg` (marked), both signed in and anonymously through a public link.
-  `SessionController::create` / `PublicSessionController::create` take any file id or share
-  token, have no MIME check, and return the file's content in the JSON `content` field after
-  a reversible charset conversion, so the result is the clean original. It goes past
-  delivery, the share switches and the anonymous render limit. `TextAttachmentMiddleware`
-  only covers attachments. Extend it (or add a sibling) to refuse `create` on both
-  controllers when the file is a delivery candidate, and check the `outsideChange` field
-  that `sync`/`push`/`save` fill with `getContent()`. Then sweep the other bundled apps for
-  controllers that read a node and return its bytes in any form, not just as a download.
+- [ ] **Theming's custom background copies any file the reader can see and serves it
+  back as stored.** *Read in NC 32's source, not reproduced.* Setting a custom background
+  from Files (`UserThemeController::setBackground`, type `custom`, `value` = a path) copies
+  `$userFolder->get($path)->fopen('r')` into the account's appdata as `background.jpg`
+  (`BackgroundService::setFileBackground`), and `GET /apps/theming/background` serves those
+  bytes unchanged. A marked JPEG or PNG comes back clean. The copy happens before the image
+  is checked, so a PDF comes back too once the account already has a custom background.
+  Refuse `setBackground` when the path is a delivery candidate.
+- [ ] **Core's avatar-from-file hands back a full-resolution copy.** *Read in NC 32's
+  source, not reproduced.* `POST /avatar/` with `path` (`AvatarController::postAvatar`)
+  reads any JPEG or PNG the user can see, up to 20 MB, and answers a non-square one with the
+  whole image re-encoded as a base64 `data:` URI in the JSON. The type check goes by the
+  cached MIME type, so by the name. Same refusal as theming; first check that a global
+  middleware reaches core's own controllers.
 - [ ] **`MeasureDeliveryJob` never measures anything.** *Confirmed.* It resolves the file
   with `IRootFolder::getById()`, which finds nothing under cron because no user filesystem
   is set up (the same CLI gotcha `Version1010` works around). `occ background-job:execute`
@@ -134,10 +138,18 @@ reproduced on the dev instance; the rest come from reading the code against core
   is the likely one) would send a marked file's thumbnail clean when an unmarked one came
   first, or have its response swapped for a single image. Core and the stock apps fetch one
   preview per request, so this is about third-party apps.
+- [ ] **Task processing streams the files a task names.** *Read in NC 32's source, not
+  reproduced; needs an AI provider app.* `GET /ocs/v2.php/taskprocessing/tasks/{taskId}/file/{fileId}`
+  (`TaskProcessingApiController::getFileContents`) returns any file in the user's own task
+  with `fopen('rb')`, and scheduling only checks that the user has a mount for the file id.
+  With a provider for a task type that takes files, naming a marked file in a task and
+  fetching it gets it clean; the ExApp route hands the same bytes to the provider. With no
+  provider nothing can be scheduled.
 - [ ] **Inventory the third-party egress routes.** Apps that read file bytes through their
   own controllers are not intercepted. ONLYOFFICE and Collabora opening a PDF, and Memories'
   full-size image endpoints, are the likely ones; none has been checked. At the least the
-  README should name the ones known not to watermark.
+  README should name the ones known not to watermark. Core and the bundled apps were swept
+  on 2026-10-22 against NC 32; the three items above are what that turned up.
 - [ ] **The logo is re-read on every render and has no pixel ceiling.** Every download and
   every thumbnail copies the logo out of appdata to a temp file (an object GET per thumbnail
   on S3 primary storage). The upload checks type and bytes but not dimensions, so a 2 MiB
