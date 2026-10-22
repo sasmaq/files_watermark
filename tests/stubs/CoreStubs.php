@@ -216,6 +216,34 @@ namespace OCA\Text\Controller {
 	}
 }
 
+namespace OCA\Theming\Controller {
+
+	if (!class_exists(UserThemeController::class)) {
+		/**
+		 * Stands in for `class UserThemeController extends OCSController`
+		 * (theming/lib/Controller/UserThemeController.php). `ThemingBackgroundMiddleware`
+		 * recognises it by name before `setBackground` runs, and reads that call's
+		 * arguments off the request; nothing about the controller itself is touched.
+		 */
+		abstract class UserThemeController extends \OCP\AppFramework\OCSController {
+		}
+	}
+}
+
+namespace OC\Core\Controller {
+
+	if (!class_exists(AvatarController::class)) {
+		/**
+		 * Stands in for `class AvatarController extends Controller`
+		 * (core/Controller/AvatarController.php). `AvatarMiddleware` recognises it by name
+		 * before `postAvatar` runs, and reads that call's arguments off the request; nothing
+		 * about the controller itself is touched.
+		 */
+		abstract class AvatarController extends \OCP\AppFramework\Controller {
+		}
+	}
+}
+
 namespace OCA\Text\Service {
 
 	if (!class_exists(WorkspaceService::class)) {

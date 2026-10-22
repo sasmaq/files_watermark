@@ -33,20 +33,6 @@ follows it. **Office support** and **release packaging** are what stand between 
 Not yet sorted into the sections below. Most severe first. **Confirmed** items were
 reproduced on the dev instance; the rest come from reading the code against core's.
 
-- [ ] **Theming's custom background copies any file the reader can see and serves it
-  back as stored.** *Read in NC 32's source, not reproduced.* Setting a custom background
-  from Files (`UserThemeController::setBackground`, type `custom`, `value` = a path) copies
-  `$userFolder->get($path)->fopen('r')` into the account's appdata as `background.jpg`
-  (`BackgroundService::setFileBackground`), and `GET /apps/theming/background` serves those
-  bytes unchanged. A marked JPEG or PNG comes back clean. The copy happens before the image
-  is checked, so a PDF comes back too once the account already has a custom background.
-  Refuse `setBackground` when the path is a delivery candidate.
-- [ ] **Core's avatar-from-file hands back a full-resolution copy.** *Read in NC 32's
-  source, not reproduced.* `POST /avatar/` with `path` (`AvatarController::postAvatar`)
-  reads any JPEG or PNG the user can see, up to 20 MB, and answers a non-square one with the
-  whole image re-encoded as a base64 `data:` URI in the JSON. The type check goes by the
-  cached MIME type, so by the name. Same refusal as theming; first check that a global
-  middleware reaches core's own controllers.
 - [ ] **`MeasureDeliveryJob` never measures anything.** *Confirmed.* It resolves the file
   with `IRootFolder::getById()`, which finds nothing under cron because no user filesystem
   is set up (the same CLI gotcha `Version1010` works around). `occ background-job:execute`
@@ -149,7 +135,8 @@ reproduced on the dev instance; the rest come from reading the code against core
   own controllers are not intercepted. ONLYOFFICE and Collabora opening a PDF, and Memories'
   full-size image endpoints, are the likely ones; none has been checked. At the least the
   README should name the ones known not to watermark. Core and the bundled apps were swept
-  on 2026-10-22 against NC 32; the three items above are what that turned up.
+  on 2026-10-22 against NC 32; of what that turned up, only the task-processing item above
+  is still open.
 - [ ] **The logo is re-read on every render and has no pixel ceiling.** Every download and
   every thumbnail copies the logo out of appdata to a temp file (an object GET per thumbnail
   on S3 primary storage). The upload checks type and bytes but not dimensions, so a 2 MiB

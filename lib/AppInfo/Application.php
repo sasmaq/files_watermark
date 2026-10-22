@@ -19,9 +19,11 @@ use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
 use OCA\FilesWatermark\EventListener\UserDeletedListener;
+use OCA\FilesWatermark\Middleware\AvatarMiddleware;
 use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
 use OCA\FilesWatermark\Middleware\TextAttachmentMiddleware;
 use OCA\FilesWatermark\Middleware\TextSessionMiddleware;
+use OCA\FilesWatermark\Middleware\ThemingBackgroundMiddleware;
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\PdfFontPath;
@@ -226,6 +228,12 @@ class Application extends App implements IBootstrap {
 		$context->registerMiddleware(TextAttachmentMiddleware::class, true);
 		// And its session API, whose answers carry the opened document's stored content.
 		$context->registerMiddleware(TextSessionMiddleware::class, true);
+		// Global for Theming too: a custom background is a copy of a file from Files,
+		// served back as stored, so the copy is refused before it is made.
+		$context->registerMiddleware(ThemingBackgroundMiddleware::class, true);
+		// And for core's profile picture from Files, which hands the file back re-encoded
+		// or makes it the avatar - refused before it is read.
+		$context->registerMiddleware(AvatarMiddleware::class, true);
 		// One instance per request, shared by both halves above: the middleware reads what
 		// the listener recorded, and two instances would leave it reading an empty one.
 		$context->registerService(PreviewRequestContext::class, static fn (
