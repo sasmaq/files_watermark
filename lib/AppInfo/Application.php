@@ -13,11 +13,13 @@ use OCA\FilesWatermark\EventListener\BeforePreviewFetchedListener;
 use OCA\FilesWatermark\EventListener\DirectDownloadListener;
 use OCA\FilesWatermark\EventListener\LoadAdditionalScriptsListener;
 use OCA\FilesWatermark\EventListener\NodeCopiedListener;
+use OCA\FilesWatermark\EventListener\NodeDeletedListener;
 use OCA\FilesWatermark\EventListener\NodeMovedListener;
 use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
+use OCA\FilesWatermark\EventListener\TextAttachmentCopyListener;
 use OCA\FilesWatermark\EventListener\UserDeletedListener;
 use OCA\FilesWatermark\Middleware\AvatarMiddleware;
 use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
@@ -35,10 +37,14 @@ use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\BeforeSabrePubliclyLoadedEvent;
+use OCP\Files\Events\Node\BeforeNodeDeletedEvent;
 use OCP\Files\Events\Node\BeforeNodeRenamedEvent;
 use OCP\Files\Events\Node\NodeCopiedEvent;
+use OCP\Files\Events\Node\NodeDeletedEvent;
 use OCP\Files\Events\Node\NodeRenamedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
+use OCP\Files\IRootFolder;
+use OCP\Files\Template\FileCreatedFromTemplateEvent;
 use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\Preview\BeforePreviewFetchedEvent;
@@ -171,7 +177,15 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(NodeWrittenEvent::class, NodeWrittenListener::class);
 		// A copy gets a new file id, so it lands outside every mark already placed - which
 		// made copying a shared file the way to obtain it clean. See NodeCopiedListener.
-		$context->registerEventListener(NodeCopiedEvent::class, NodeCopiedListener::class);
+		// Ahead of Text's own copy listener (priority 0), which renames the attachment folders
+		// of a copied folder's notes: the walk pairs the tree by path, as core copied it.
+		$context->registerEventListener(NodeCopiedEvent::class, NodeCopiedListener::class, 100);
+		// And after it, for a single note: Text writes the attachments' copies itself, under
+		// new ids, so they can only be paired once it has. See TextAttachmentCopyListener.
+		$context->registerEventListener(NodeCopiedEvent::class, TextAttachmentCopyListener::class, -100);
+		// "New from template" copies the template's bytes with a write, not a copy, and this is
+		// the only event that names the template - so the same listener takes it.
+		$context->registerEventListener(FileCreatedFromTemplateEvent::class, NodeCopiedListener::class);
 		// A move keeps the file id, so the mark moves with the file on its own - but a move
 		// out of a share into somebody else's storage escapes the share switch, and the rare
 		// move that cannot keep the id leaves the mark behind. Both halves of the move are
@@ -184,6 +198,19 @@ class Application extends App implements IBootstrap {
 		), true);
 		$context->registerEventListener(BeforeNodeRenamedEvent::class, NodeMovedListener::class);
 		$context->registerEventListener(NodeRenamedEvent::class, NodeMovedListener::class);
+		// A recipient's delete inside a share puts a copy in their own trash, under a new id and
+		// with no copy event. The listener decides before the delete and marks after it, so both
+		// events need the same instance; it connects that instance to the trash's own legacy
+		// hook in between - see NodeDeletedListener.
+		$context->registerService(NodeDeletedListener::class, static fn (
+			ContainerInterface $c,
+		): NodeDeletedListener => new NodeDeletedListener(
+			$c->get(IRootFolder::class),
+			$c->get(WatermarkService::class),
+			$c->get(LoggerInterface::class),
+		), true);
+		$context->registerEventListener(BeforeNodeDeletedEvent::class, NodeDeletedListener::class);
+		$context->registerEventListener(NodeDeletedEvent::class, NodeDeletedListener::class);
 		$context->registerEventListener(LoadAdditionalScriptsEvent::class, LoadAdditionalScriptsListener::class);
 		$context->registerEventListener(SabrePluginAddEvent::class, SabrePluginAddListener::class);
 		// Public links are served by a *separate* Sabre server that never fires

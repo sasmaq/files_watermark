@@ -11,6 +11,7 @@ use OCP\Files\Events\Node\NodeCopiedEvent;
 use OCP\Files\Events\Node\NodeWrittenEvent;
 use OCP\Files\File;
 use OCP\Files\Folder;
+use OCP\Files\Template\FileCreatedFromTemplateEvent;
 use OCP\IUser;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -207,6 +208,52 @@ class NodeCopiedListenerTest extends TestCase {
 			->with($foundTarget, $found);
 
 		$this->copy($sourceRoot, $targetRoot);
+	}
+
+	/**
+	 * **"New from template" is the copy that fires no copy event.**
+	 *
+	 * `templateType=user` takes any file the user can reach as the template - a received
+	 * share included - and core writes its bytes into the new file with `newFile()`. Before
+	 * this, that was a clean copy of a marked document in one request.
+	 */
+	public function testAFileMadeFromAMarkedTemplateIsMarked(): void {
+		$template = $this->file(42);
+		$target = $this->file(99, 'bob', 'new.pdf');
+		$this->watermarkService->method('isMarked')->with(42)->willReturn(true);
+
+		$this->watermarkService->expects($this->once())
+			->method('inheritMark')
+			->with($target, $template);
+
+		$this->listener->handle(new FileCreatedFromTemplateEvent($template, $target, []));
+	}
+
+	/**
+	 * And on the share rule as well: a template reached through a share, made into a file in
+	 * the recipient's own storage, has left the share exactly as a copy would have.
+	 */
+	public function testAFileMadeFromATemplateOutOfAShareIsMarked(): void {
+		$template = $this->file(42, 'alice');
+		$target = $this->file(99, 'bob', 'new.pdf');
+		$this->watermarkService->method('isMarked')->willReturn(false);
+		$this->watermarkService->method('isForcedByShare')->with($template)->willReturn(true);
+
+		$this->watermarkService->expects($this->once())
+			->method('inheritMark')
+			->with($target, $template);
+
+		$this->listener->handle(new FileCreatedFromTemplateEvent($template, $target, []));
+	}
+
+	/**
+	 * A blank file - "New" with no template picked - was copied from nothing.
+	 */
+	public function testAFileMadeFromNoTemplateIsLeftAlone(): void {
+		$this->watermarkService->expects($this->never())->method('isMarked');
+		$this->watermarkService->expects($this->never())->method('inheritMark');
+
+		$this->listener->handle(new FileCreatedFromTemplateEvent(null, $this->file(99), []));
 	}
 
 	/**

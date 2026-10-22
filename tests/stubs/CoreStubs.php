@@ -101,6 +101,36 @@ namespace OCA\Files_Trashbin\Sabre {
 	}
 }
 
+namespace OCA\Files_Trashbin {
+
+	if (!class_exists(Trashbin::class)) {
+		/**
+		 * Mirrors `class Trashbin` (files_trashbin/lib/Trashbin.php).
+		 *
+		 * Only `getTrashFilename()` is reproduced, and its body with it: `NodeDeletedListener`
+		 * names the recipient's trash copy with it, so the name the tests expect has to be the
+		 * one core would give. Transcribed from Trashbin.php:1227.
+		 */
+		class Trashbin {
+			public static function getTrashFilename(string $filename, int $timestamp): string {
+				$trashFilename = $filename . '.d' . $timestamp;
+				$length = strlen($trashFilename);
+				// oc_filecache `name` column has a limit of 250 chars
+				$maxLength = 250;
+				if ($length > $maxLength) {
+					$trashFilename = substr_replace(
+						$trashFilename,
+						'',
+						$maxLength / 2,
+						$length - $maxLength
+					);
+				}
+				return $trashFilename;
+			}
+		}
+	}
+}
+
 namespace OCA\Files_Versions\Versions {
 
 	if (!interface_exists(IVersion::class)) {

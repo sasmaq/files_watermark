@@ -77,6 +77,49 @@ namespace {
 	}
 }
 
+namespace {
+	/**
+	 * Core's legacy hook registry, which `OCP\Util::connectHook()` forwards to.
+	 *
+	 * `NodeDeletedListener` connects itself to files_trashbin's `post_moveToTrash` with it, and
+	 * its tests emit that hook the way core does. Reproduced from
+	 * `lib/private/legacy/OC_Hook.php` down to what those two need: connecting (including
+	 * core's refusal to connect the same slot twice), emitting, and clearing between tests.
+	 * Core's emit also logs and swallows a failing slot; nothing here relies on that.
+	 */
+	if (!class_exists(OC_Hook::class)) {
+		class OC_Hook {
+			/** @var array<string, array<string, list<array{class: string|object, name: string}>>> */
+			private static array $registered = [];
+
+			public static function connect($signalClass, $signalName, $slotClass, $slotName): bool {
+				foreach (self::$registered[$signalClass][$signalName] ?? [] as $hook) {
+					if ($hook['class'] === $slotClass && $hook['name'] === $slotName) {
+						return false;
+					}
+				}
+				self::$registered[$signalClass][$signalName][] = ['class' => $slotClass, 'name' => $slotName];
+
+				return true;
+			}
+
+			public static function emit($signalClass, $signalName, $params = []): bool {
+				$slots = self::$registered[$signalClass][$signalName] ?? [];
+				foreach ($slots as $slot) {
+					call_user_func([$slot['class'], $slot['name']], $params);
+				}
+
+				return $slots !== [];
+			}
+
+			/** Core's narrows by signal when asked; every caller here clears the lot. */
+			public static function clear(): void {
+				self::$registered = [];
+			}
+		}
+	}
+}
+
 namespace OC\Hooks {
 	if (!interface_exists(Emitter::class)) {
 		interface Emitter {

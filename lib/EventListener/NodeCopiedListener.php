@@ -11,6 +11,7 @@ use OCP\Files\Events\Node\NodeCopiedEvent;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\Node;
+use OCP\Files\Template\FileCreatedFromTemplateEvent;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -51,7 +52,14 @@ use Psr\Log\LoggerInterface;
  * copy that just happened - which wrote every one of those files to storage, so this is the
  * cheaper half of the operation by a wide margin.
  *
- * @template-implements IEventListener<NodeCopiedEvent>
+ * **"New from template" is a copy that does not say so.** `TemplateManager::createFromTemplate`
+ * takes a template from the user's own files when asked to (`templateType=user`) - any file,
+ * a received share included - and writes its bytes into a new file with `newFile()`. That is
+ * a write, not a copy, so `NodeCopiedEvent` never fires; the only thing that names the source
+ * is `FileCreatedFromTemplateEvent`, dispatched right after. It is handled as the file copy it
+ * is, on the same two rules.
+ *
+ * @template-implements IEventListener<NodeCopiedEvent|FileCreatedFromTemplateEvent>
  */
 class NodeCopiedListener implements IEventListener {
 
@@ -62,12 +70,19 @@ class NodeCopiedListener implements IEventListener {
 	}
 
 	public function handle(Event $event): void {
-		if (!($event instanceof NodeCopiedEvent)) {
+		if ($event instanceof FileCreatedFromTemplateEvent) {
+			// No template means an empty file: there are no bytes to have carried anything.
+			$source = $event->getTemplate();
+			if ($source === null) {
+				return;
+			}
+			$target = $event->getTarget();
+		} elseif ($event instanceof NodeCopiedEvent) {
+			$source = $event->getSource();
+			$target = $event->getTarget();
+		} else {
 			return;
 		}
-
-		$source = $event->getSource();
-		$target = $event->getTarget();
 
 		try {
 			if ($source instanceof File && $target instanceof File) {

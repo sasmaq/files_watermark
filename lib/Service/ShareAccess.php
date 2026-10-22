@@ -95,6 +95,29 @@ class ShareAccess {
 		$this->indirectShare = true;
 	}
 
+	/**
+	 * Answer $question as if the reader had reached the file through such a share, then put
+	 * the flag back as it was.
+	 *
+	 * For a caller that serves nothing but has to know what serving the file would have meant:
+	 * a copy, in a request that may go on to copy other files. {@see noteIndirectShareAccess}
+	 * holds for the rest of the request, which is right for a fetch and wrong there.
+	 *
+	 * @template T
+	 * @param callable(): T $question
+	 * @return T
+	 */
+	public function asIndirectShareAccess(callable $question): mixed {
+		$noted = $this->indirectShare;
+		$this->indirectShare = true;
+
+		try {
+			return $question();
+		} finally {
+			$this->indirectShare = $noted;
+		}
+	}
+
 	/** Whether this fetch is an external one: a public link, or nobody at all. */
 	public function isExternalShareAccess(): bool {
 		return $this->publicRequest || $this->userSession->getUser() === null;
