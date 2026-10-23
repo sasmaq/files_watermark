@@ -152,8 +152,14 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		$archiveName = $wholeFolder ? $folder->getName() : 'download';
 		$rootPath = $wholeFolder ? dirname($folder->getPath()) : $folder->getPath();
 
+		// **One walk, read by both passes.** The stream used to list each subfolder again
+		// with fresh getDirectoryListing() calls, so a protected file that landed in a
+		// subfolder while the members were rendering - seconds, for a real folder - was in
+		// the archive without ever having been asked about, and went out clean.
+		$entries = $this->walk($content);
+
 		try {
-			$rendered = $this->preRender($content);
+			$rendered = $this->preRender($entries);
 		} catch (WatermarkRequiredException $e) {
 			// A marked member could not be watermarked - a failed render, or one the caps
 			// refused to attempt. Nothing has been written yet, so this is a clean denial
@@ -187,8 +193,8 @@ class ZipInterceptorPlugin extends ServerPlugin {
 			if ($wholeFolder) {
 				$streamer->addEmptyDir($archiveName);
 			}
-			foreach ($content as $member) {
-				$this->streamNode($streamer, $member, $rootPath, $rendered);
+			foreach ($entries as $entry) {
+				$this->streamNode($streamer, $entry, $rootPath, $rendered);
 			}
 			$streamer->finalize();
 		} finally {
@@ -287,12 +293,12 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	 * Doing this up front is what makes a clean 403 possible; streaming lazily would only
 	 * ever produce a truncated archive once the headers were out.
 	 *
-	 * @param Node[] $content
+	 * @param list<Node> $entries the archive's entries, from {@see walk}
 	 * @return array<int, string> file id → path of the watermarked temp copy
 	 * @throws WatermarkRequiredException a marked member could not be watermarked, or the
 	 *                                    caps refused to render it
 	 */
-	private function preRender(array $content): array {
+	private function preRender(array $entries): array {
 		$rendered = [];
 		$count = 0;
 		$bytes = 0;
@@ -303,7 +309,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		$maxMembers = $this->limits->maxMembers();
 		$maxBytes = $this->limits->maxBytes();
 
-		$members = $this->deliveryMembers($content);
+		$members = $this->deliveryMembers($entries);
 		if ($members !== []) {
 			// One charge for the archive, not one per member: its own cost is already bounded
 			// by the caps below, and charging per member would turn an ordinary folder download
@@ -361,13 +367,15 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	 * resolved and the policy is memoised - and then one short read only for a member whose
 	 * name says it is nothing renderable.
 	 *
-	 * @param Node[] $content
+	 * @param list<Node> $entries
 	 * @return File[]
 	 */
-	private function deliveryMembers(array $content): array {
+	private function deliveryMembers(array $entries): array {
 		$candidates = [];
-		foreach ($this->flatten($content) as $file) {
-			$candidates[$file->getId()] = $file;
+		foreach ($entries as $entry) {
+			if ($entry instanceof File) {
+				$candidates[$entry->getId()] = $entry;
+			}
 		}
 
 		if ($candidates === []) {
@@ -408,23 +416,39 @@ class ZipInterceptorPlugin extends ServerPlugin {
 	}
 
 	/**
-	 * Depth-first walk of every File under the given nodes, matching the order and reach
-	 * of the archive itself so the pre-render pass and the stream agree on the member set.
+	 * Every entry the archive will hold, folders included, in the order core's
+	 * `streamNode()` would write them: depth-first, a folder ahead of its contents.
+	 *
+	 * This is the only listing the archive is built from. The render pass picks its members
+	 * out of it and the stream writes it as it stands, so a file that appears in a subfolder
+	 * after this walk is simply not in the archive.
 	 *
 	 * @param Node[] $nodes
-	 * @return \Generator<File>
+	 * @return list<Node>
 	 */
-	private function flatten(array $nodes): \Generator {
+	private function walk(array $nodes): array {
+		return iterator_to_array($this->entries($nodes), false);
+	}
+
+	/**
+	 * @param Node[] $nodes
+	 * @return \Generator<Node>
+	 */
+	private function entries(array $nodes): \Generator {
 		foreach ($nodes as $node) {
 			if ($node instanceof File) {
 				yield $node;
 			} elseif ($node instanceof Folder) {
-				yield from $this->flatten($node->getDirectoryListing());
+				yield $node;
+				yield from $this->entries($node->getDirectoryListing());
 			}
 		}
 	}
 
 	/**
+	 * Write one entry from {@see walk}. A folder is its own directory record only; its
+	 * contents follow as entries of their own.
+	 *
 	 * @param array<int, string> $rendered
 	 */
 	private function streamNode(Streamer $streamer, Node $node, string $rootPath, array $rendered): void {
@@ -433,9 +457,6 @@ class ZipInterceptorPlugin extends ServerPlugin {
 
 		if ($node instanceof Folder) {
 			$streamer->addEmptyDir($filename, $mtime);
-			foreach ($node->getDirectoryListing() as $child) {
-				$this->streamNode($streamer, $child, $rootPath, $rendered);
-			}
 			return;
 		}
 
@@ -451,6 +472,7 @@ class ZipInterceptorPlugin extends ServerPlugin {
 			// be the *watermarked* length or the archive is corrupt.
 			$size = filesize($tmpPath);
 		} else {
+			$this->refuseIfProtectedSinceRender($node);
 			$stream = $node->fopen('rb');
 			$size = $node->getSize();
 		}
@@ -470,6 +492,36 @@ class ZipInterceptorPlugin extends ServerPlugin {
 		}
 
 		$streamer->addFileFromStream($stream, $filename, $size, $mtime);
+	}
+
+	/**
+	 * Refuse a member about to go out as stored if it has become protected since the render
+	 * pass looked at it.
+	 *
+	 * The single walk fixes *which* files are in the archive, not what is true of them by
+	 * the time each one is written, and rendering is slow enough for that to change: a mark
+	 * applied, or a folder-tag job reaching the file, while earlier members render. Asked
+	 * per member just before its bytes are opened, which is one indexed lookup each, plus a
+	 * second 1 KiB sniff for a member a share switch claims under a name that says nothing
+	 * renderable - and only in an archive this plugin claimed, so an archive with nothing
+	 * marked still costs none.
+	 *
+	 * Headers and earlier members are already out by now, so this cannot be a clean 403.
+	 * Throwing leaves an archive with no central directory, which no tool will open. That is
+	 * the denial that is still available, and it beats an archive that opens with a clean
+	 * protected file in it.
+	 *
+	 * @throws Forbidden
+	 */
+	private function refuseIfProtectedSinceRender(File $file): void {
+		if (!$this->watermarkService->isDeliveryCandidate($file)) {
+			return;
+		}
+
+		$this->logger->warning('files_watermark: aborting archive stream, a member became protected after the render pass', [
+			'path' => $file->getPath(),
+		]);
+		throw new Forbidden('A file in this folder was watermarked while the archive was being built. Download it again.');
 	}
 
 	private function cleanup(): void {

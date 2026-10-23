@@ -21,14 +21,6 @@ reading this app's own code.
 The app exists to stop these. Each one is a route by which a file the policy covers
 reaches a reader unwatermarked.
 
-- [ ] **An archive lists the folder twice, and only the first listing is checked.**
-  `ZipInterceptorPlugin::preRender()` decides which members to render from one walk.
-  `streamNode()` then walks the subfolders again with fresh `getDirectoryListing()` calls and
-  streams anything missing from `$rendered` with `$node->fopen()`. A protected file that
-  lands in a subfolder between the two walks goes into the archive clean, and since rendering
-  is slow, that window is seconds long. Stream from the list `preRender()` built, and fail
-  closed on any member that is missing from `$rendered` but is marked or share-forced when it
-  is streamed.
 - [ ] **`on_upload` only sees writes made through Nextcloud.** Files that reach external
   storage some other way (SMB, local, S3 buckets fed by other systems) and are picked up by
   a scan or `occ files:scan` fire no `NodeWrittenEvent`, so they are never marked. A file
@@ -230,7 +222,8 @@ These affect every reader of a marked PDF, the owner included.
 
 ## On every Nextcloud upgrade
 
-- [ ] **Re-diff `ZipInterceptorPlugin::streamNode` against core.** It duplicates core's,
+- [ ] **Re-diff `ZipInterceptorPlugin::walk()` and `streamNode()` against core's
+  `streamNode()`.** Between them they duplicate it, split into one walk and a per-entry write,
   and the stubs cannot catch it drifting.
 - [ ] **Recheck Tar archives** (`Accept: application/x-tar`). They are broken in core
   itself, so automating the check would pin core's bug.
@@ -256,7 +249,7 @@ These affect every reader of a marked PDF, the owner included.
 | Model | Built. The stored file is never modified. A mark is a row, and every fetch renders against the reader's identity, previews included | Per-fetch render cost unmeasured |
 | Triggers | On demand and on upload, scoped by type and by a folder tag at any depth. On upload marks a file written, moved or renamed into scope, and a whole tree when it is tagged or moved inside a tagged folder | Writes from outside Nextcloud |
 | Share switches | Internal shares and public links watermarked per fetch, whether or not the file is marked | Team folders, moves without a session |
-| Egress routes | Every core and bundled-app route found in the 2026-10-22 sweep is intercepted or refused | Archive re-walk, task processing, third-party apps |
+| Egress routes | Every core and bundled-app route found in the 2026-10-22 sweep is intercepted or refused | Task processing, third-party apps |
 | Renderers | PDF and images in pure PHP. PDF 1.5+ and empty-password encryption are read natively. Office not started | Office, PDF links/outline/labels, `/P` flags |
 | Watermark content | Visible text and logo, Arabic shaped and reordered | Default template, invisible metadata watermark, `{date}` localisation |
 | Admin UI and file actions | Complete | Read-only Apply, Remove after rename, stale list thumbnail |
@@ -264,5 +257,5 @@ These affect every reader of a marked PDF, the owner included.
 | Storage backends | S3 verified end to end with no S3-specific code | Cypress on S3 |
 | External binaries | One deliberate exception: `PdfFlattener` runs `pdftoppm` for the optional flattening setting, probed, with a fallback | A rule that keeps it to one |
 | Data model | The schema carries every implemented feature | `metadata` type, cross-database run |
-| Testing | 1322 PHPUnit, 163 Jest, 92 Cypress cases. Psalm level 3 clean | Cypress rerun, S3, Psalm level 2 |
+| Testing | 1325 PHPUnit, 163 Jest, 92 Cypress cases. Psalm level 3 clean | Cypress rerun, S3, Psalm level 2 |
 | Docs and release | README covers install, Docker and S3 | API reference, changelog, packaging |
