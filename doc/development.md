@@ -914,6 +914,33 @@ every `on_share` deny goes through a failed render.
 - `*_src`, any partial output, and the temp dir are cleaned up when a render throws
 - `WatermarkServiceTest` pins it - neither the source copy nor its directory survives
 
+### The archive listed each subfolder twice {#archive-single-walk}
+
+The render pass walked the tree to decide which members to render, and the stream then
+called `getDirectoryListing()` on every subfolder again, writing whatever it found and
+reading anything the render pass had not seen from its stored bytes. Rendering takes
+seconds, so any protected file that showed up in a subfolder during that window went out
+clean. *Confirmed* on the dev instance: a marked PDF copied into a subfolder 0.8 s into the
+download was in the archive, byte-identical to storage.
+
+- `walk()` lists the tree once, folders included, in core's order. `preRender()` picks its
+  members from that list, and the stream writes the same list. A file that arrives after
+  the walk is not in the archive
+- One walk fixes *which* files go in, not what is true of them when each one is written.
+  So a member about to be streamed as stored is asked `isDeliveryCandidate()` once more,
+  just before `fopen()`. That costs one indexed lookup per such member, plus a second 1 KiB
+  sniff when a share switch claims the fetch and the name says nothing renderable (an extra
+  ranged GET per such member on S3). It applies only in an archive this plugin claimed
+- **The refusal is an aborted archive, not a 403.** By then the headers and earlier members
+  are out. The client gets HTTP 200 and a zip with no central directory, which nothing will
+  open. That was preferred to skipping the member and finishing a valid archive with a file
+  silently missing
+- **Reproducing it through Apply proves nothing.** On-demand `mark()` renders the file to
+  measure it *before* it inserts the row, so a mark started mid-download lands after the
+  archive has finished, on the old code as well as the new. The confirming run inserted the
+  mark row directly, 0.8 s in: the old plugin shipped the member clean, and the new one
+  aborted after the member before it
+
 ### The response described the stored file, not the one that went out {#sync-client-metadata}
 
 Reported as: the **Windows desktop client with VFS enabled cannot download a watermarked

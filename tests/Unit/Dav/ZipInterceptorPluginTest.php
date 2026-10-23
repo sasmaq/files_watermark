@@ -801,6 +801,111 @@ class ZipInterceptorPluginTest extends TestCase {
 		$members = Streamer::members();
 		$this->assertSame('WATERMARKED', $members['/Shared/sub/deep.pdf']['contents']);
 		$this->assertSame('WATERMARKED', $members['/Shared/top.pdf']['contents']);
+		// A folder's record still comes ahead of its contents, as core writes it.
+		$this->assertSame(['Shared', '/Shared/sub'], Streamer::dirs());
+	}
+
+	// ---------------------------------------------------------------------
+	// Between the render pass and the stream
+	// ---------------------------------------------------------------------
+
+	/**
+	 * **The archive used to list every subfolder twice**, and only the first listing was
+	 * asked about. The render pass walked the tree to decide what to render; the stream then
+	 * called `getDirectoryListing()` on each subfolder again and wrote whatever it found,
+	 * from its stored bytes when the render pass had not seen it. A protected file that
+	 * landed in a subfolder while the members were rendering - seconds, for a real folder -
+	 * went into the archive clean.
+	 *
+	 * The second listing here holds a file the first did not. Built from one walk, the
+	 * archive does not contain it at all.
+	 */
+	public function testAFileThatAppearsAfterTheWalkIsNotStreamed(): void {
+		$early = $this->file(2, '/bob/files/Shared/sub/early.pdf', 'early.pdf');
+		$late = $this->file(3, '/bob/files/Shared/sub/late.pdf', 'late.pdf', 'LATE-ORIGINAL');
+		$sub = $this->createMock(Folder::class);
+		$sub->method('getPath')->willReturn('/bob/files/Shared/sub');
+		$sub->method('getName')->willReturn('sub');
+		$sub->method('getMTime')->willReturn(1700000000);
+		$sub->method('getDirectoryListing')->willReturnOnConsecutiveCalls([$early], [$early, $late]);
+		$top = $this->file(1, '/bob/files/Shared/top.pdf', 'top.pdf');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$top, $sub]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		// Every file is marked, the late one included - the walk that would have rendered
+		// it is the one that never saw it.
+		$this->marked();
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(fn () => $this->renderedCopy());
+
+		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
+
+		$members = Streamer::members();
+		$this->assertArrayNotHasKey('/Shared/sub/late.pdf', $members, 'a file the render pass never saw was streamed');
+		$this->assertSame('WATERMARKED', $members['/Shared/sub/early.pdf']['contents']);
+		$this->assertSame('WATERMARKED', $members['/Shared/top.pdf']['contents']);
+	}
+
+	/**
+	 * One walk fixes which files are in the archive, not what is true of them when each is
+	 * written. A member the render pass found unprotected, and that was marked while earlier
+	 * members rendered, must not go out as stored.
+	 *
+	 * The headers are already out by then, so the denial is an aborted archive. What
+	 * matters is that the member's clean bytes never reach the stream, and that the copies
+	 * already rendered are still swept.
+	 */
+	public function testAMemberProtectedAfterTheRenderPassAbortsTheArchive(): void {
+		$marked = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$markedLate = $this->file(2, '/bob/files/Shared/b.pdf', 'b.pdf', 'B-ORIGINAL');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$marked, $markedLate]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		// What the render pass saw: only the first member is marked.
+		$this->marked([1]);
+		$tmp = $this->renderedCopy();
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(static fn (File $file): ?string => $file->getId() === 1 ? $tmp : null);
+		// What is true by the time the second member is written.
+		$this->watermarkService->method('isDeliveryCandidate')
+			->willReturnCallback(static fn (File $file): bool => $file->getId() === 2);
+		$markedLate->expects($this->never())->method('fopen');
+
+		try {
+			$this->plugin()->httpGet($this->zipRequest(), new Response());
+			$this->fail('a member protected after the render pass was streamed as stored');
+		} catch (Forbidden) {
+			// expected
+		}
+
+		$this->assertArrayNotHasKey('/Shared/b.pdf', Streamer::members());
+		$this->assertFileDoesNotExist($tmp, 'the rendered copy outlived the aborted archive');
+	}
+
+	/**
+	 * The control for the test above: the stream-time question is asked, and an answer of
+	 * "still unprotected" streams the member as stored, exactly as before.
+	 */
+	public function testAMemberStillUnprotectedAtStreamTimeGoesOutAsStored(): void {
+		$marked = $this->file(1, '/bob/files/Shared/a.pdf', 'a.pdf');
+		$plain = $this->file(2, '/bob/files/Shared/b.pdf', 'b.pdf', 'B-ORIGINAL');
+		$folder = $this->folder('/bob/files/Shared', 'Shared', [$marked, $plain]);
+
+		$this->tree->method('getNodeForPath')->willReturn($this->davDirectory($folder));
+		$this->marked([1]);
+		$this->watermarkService->method('watermarkForDownload')
+			->willReturnCallback(fn (File $file): ?string => $file->getId() === 1 ? $this->renderedCopy() : null);
+		// Asked of the stored member only: a rendered copy needs no second look.
+		$this->watermarkService->expects($this->once())
+			->method('isDeliveryCandidate')
+			->with($plain)
+			->willReturn(false);
+
+		$this->assertFalse($this->plugin()->httpGet($this->zipRequest(), new Response()));
+
+		$members = Streamer::members();
+		$this->assertSame('WATERMARKED', $members['/Shared/a.pdf']['contents']);
+		$this->assertSame('B-ORIGINAL', $members['/Shared/b.pdf']['contents']);
 	}
 
 	public function testTempCopiesAreCleanedUpAfterStreaming(): void {
