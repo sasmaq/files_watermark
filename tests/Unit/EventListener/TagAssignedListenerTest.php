@@ -11,7 +11,7 @@ use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\Files\Folder;
 use OCP\IUser;
 use OCP\IUserSession;
-use OCP\SystemTag\TagAssignedEvent;
+use OCP\SystemTag\MapperEvent;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -58,11 +58,13 @@ class TagAssignedListenerTest extends TestCase {
 	}
 
 	/**
+	 * Nextcloud 31's assignment event: one object per event, by name.
+	 *
 	 * @param list<int|string> $tags
-	 * @param list<string> $objectIds
 	 */
-	private function tagged(array $tags = [3], array $objectIds = ['7'], string $objectType = 'files'): TagAssignedEvent {
-		return new TagAssignedEvent($objectType, $objectIds, $tags);
+	private function tagged(array $tags = [3], string $objectId = '7', string $objectType = 'files',
+		string $name = MapperEvent::EVENT_ASSIGN): MapperEvent {
+		return new MapperEvent($name, $objectType, $objectId, $tags);
 	}
 
 	private function loginAlice(): IUser&MockObject {
@@ -87,8 +89,8 @@ class TagAssignedListenerTest extends TestCase {
 	}
 
 	/**
-	 * A bulk assignment names several objects in one event; each folder is walked. `occ`
-	 * has no session, so the marks name nobody.
+	 * A bulk assignment is one event per object on Nextcloud 31; each folder is walked.
+	 * `occ` has no session, so the marks name nobody.
 	 */
 	public function testEveryFolderOfABulkAssignmentIsMarkedEvenWithoutASession(): void {
 		$this->userSession->method('getUser')->willReturn(null);
@@ -101,7 +103,15 @@ class TagAssignedListenerTest extends TestCase {
 			->method('markTreeOrQueue')
 			->with($this->anything(), null, 'tag');
 
-		$this->listener->handle($this->tagged(objectIds: ['7', '8']));
+		$this->listener->handle($this->tagged(objectId: '7'));
+		$this->listener->handle($this->tagged(objectId: '8'));
+	}
+
+	/** Core sends unassignments as the same class; taking the tag off marks nothing. */
+	public function testAnUnassignmentIsIgnored(): void {
+		$this->watermarkService->expects($this->never())->method('resolveConfig');
+
+		$this->listener->handle($this->tagged(name: MapperEvent::EVENT_UNASSIGN));
 	}
 
 	/** The event's tag ids are integers and the stored policy tag is a string. */
@@ -174,7 +184,8 @@ class TagAssignedListenerTest extends TestCase {
 			->with($this->stringContains('tagged folder'), $this->anything());
 		$this->folderMarker->expects($this->once())->method('markTreeOrQueue');
 
-		$this->listener->handle($this->tagged(objectIds: ['7', '8']));
+		$this->listener->handle($this->tagged(objectId: '7'));
+		$this->listener->handle($this->tagged(objectId: '8'));
 	}
 
 	public function testAnUnrelatedEventIsIgnored(): void {

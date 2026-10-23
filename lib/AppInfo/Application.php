@@ -51,7 +51,7 @@ use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\Preview\BeforePreviewFetchedEvent;
 use OCP\Share\IManager as IShareManager;
-use OCP\SystemTag\TagAssignedEvent;
+use OCP\SystemTag\MapperEvent;
 use OCP\User\Events\UserDeletedEvent;
 use OCP\Util;
 use Psr\Container\ContainerInterface;
@@ -207,7 +207,7 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(NodeRenamedEvent::class, NodeWrittenListener::class, -100);
 		// Tagging a folder brings the files already in it into scope and writes nothing either.
 		// See TagAssignedListener.
-		$context->registerEventListener(TagAssignedEvent::class, TagAssignedListener::class);
+		$context->registerEventListener(MapperEvent::EVENT_ASSIGN, TagAssignedListener::class);
 		// A recipient's delete inside a share puts a copy in their own trash, under a new id and
 		// with no copy event. The listener decides before the delete and marks after it, so both
 		// events need the same instance; it connects that instance to the trash's own legacy

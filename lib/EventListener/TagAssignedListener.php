@@ -9,7 +9,7 @@ use OCA\FilesWatermark\Service\WatermarkService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\IUserSession;
-use OCP\SystemTag\TagAssignedEvent;
+use OCP\SystemTag\MapperEvent;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -36,7 +36,11 @@ use Psr\Log\LoggerInterface;
  * Never throws: the tag is already saved when this runs, and failing the request would
  * report an assignment that happened as one that did not.
  *
- * @template-implements IEventListener<TagAssignedEvent>
+ * Nextcloud 31 has no typed `TagAssignedEvent` (added in 32): it dispatches the legacy
+ * `MapperEvent::EVENT_ASSIGN` by name, after the commit, one event per object - a bulk
+ * assignment is one event per folder.
+ *
+ * @template-implements IEventListener<MapperEvent>
  */
 class TagAssignedListener implements IEventListener {
 
@@ -49,7 +53,8 @@ class TagAssignedListener implements IEventListener {
 	}
 
 	public function handle(Event $event): void {
-		if (!($event instanceof TagAssignedEvent) || $event->getObjectType() !== 'files') {
+		if (!($event instanceof MapperEvent) || $event->getEvent() !== MapperEvent::EVENT_ASSIGN
+			|| $event->getObjectType() !== 'files') {
 			return;
 		}
 
@@ -65,19 +70,18 @@ class TagAssignedListener implements IEventListener {
 			return;
 		}
 
-		foreach ($event->getObjectIds() as $objectId) {
-			try {
-				$folder = $this->folderMarker->folderById((int)$objectId);
-				if ($folder !== null) {
-					$this->folderMarker->markTreeOrQueue($folder, $this->userSession->getUser(), 'tag');
-				}
-			} catch (\Throwable $e) {
-				$this->logger->warning('files_watermark: could not mark the files of tagged folder {fileId}: {reason}', [
-					'fileId' => $objectId,
-					'reason' => $e->getMessage(),
-					'exception' => $e,
-				]);
+		$objectId = $event->getObjectId();
+		try {
+			$folder = $this->folderMarker->folderById((int)$objectId);
+			if ($folder !== null) {
+				$this->folderMarker->markTreeOrQueue($folder, $this->userSession->getUser(), 'tag');
 			}
+		} catch (\Throwable $e) {
+			$this->logger->warning('files_watermark: could not mark the files of tagged folder {fileId}: {reason}', [
+				'fileId' => $objectId,
+				'reason' => $e->getMessage(),
+				'exception' => $e,
+			]);
 		}
 	}
 }
