@@ -8,6 +8,7 @@ use OCA\Files_Versions\Controller\PreviewController as VersionsPreviewController
 use OCA\FilesWatermark\Middleware\WatermarkPreviewMiddleware;
 use OCA\FilesWatermark\Preview\PreviewRequestContext;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataDisplayResponse;
@@ -60,6 +61,7 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 			$this->preview,
 			$this->createMock(LoggerInterface::class),
 			$request,
+			new FakeTempManager(sys_get_temp_dir()),
 		);
 	}
 
@@ -178,6 +180,7 @@ class WatermarkPreviewMiddlewareTest extends TestCase {
 			$this->preview,
 			$this->createMock(LoggerInterface::class),
 			$request,
+			new FakeTempManager(sys_get_temp_dir()),
 			$rootFolder,
 			$session,
 		);

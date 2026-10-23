@@ -216,11 +216,12 @@ final class ShapedText {
 	 * provably the same glyphs stamped into a PDF, which two copies of the file could not
 	 * guarantee for long.
 	 *
-	 * Cached in the system temp directory, keyed by a hash of the archive, so the inflate
-	 * happens once per host rather than once per watermark - the delivery triggers render on
-	 * every fetch. A stale cache cannot be read: change the font and the key changes with it.
+	 * Cached in `$cacheDir` - Nextcloud's temp base directory, from `ITempManager` - keyed by a
+	 * hash of the archive, so the inflate happens once per host rather than once per watermark
+	 * - the delivery triggers render on every fetch. A stale cache cannot be read: change the
+	 * font and the key changes with it. A cache somebody deleted is simply inflated again.
 	 */
-	public static function bundledFontPath(): ?string {
+	public static function bundledFontPath(string $cacheDir): ?string {
 		$archive = PdfFontPath::directory() . DIRECTORY_SEPARATOR . self::FONT_ARCHIVE;
 		if (!is_readable($archive)) {
 			return null;
@@ -234,7 +235,7 @@ final class ShapedText {
 			return null;
 		}
 
-		$cached = sys_get_temp_dir() . DIRECTORY_SEPARATOR
+		$cached = $cacheDir . DIRECTORY_SEPARATOR
 			. 'files_watermark_font_' . substr($key, 0, 16) . '.ttf';
 		if (is_readable($cached) && filesize($cached) > 0) {
 			return $cached;

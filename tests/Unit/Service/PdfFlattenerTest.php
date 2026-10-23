@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Service\PdfFlattener;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
@@ -31,12 +32,16 @@ class PdfFlattenerTest extends TestCase {
 	use PdfFixtures;
 
 	private string $tmpDir;
+	/** The temp manager's base directory, so a leftover can be told from anybody else's. */
+	private string $tempBase;
 	private string|false $originalPath;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->tmpDir = sys_get_temp_dir() . '/wm_flat_test_' . bin2hex(random_bytes(6));
 		mkdir($this->tmpDir, 0700, true);
+		$this->tempBase = $this->tmpDir . '/temp';
+		mkdir($this->tempBase, 0700);
 		$this->originalPath = getenv('PATH');
 	}
 
@@ -84,7 +89,7 @@ class PdfFlattenerTest extends TestCase {
 			->with($this->anything(), $this->callback(
 				static fn (array $context): bool => str_contains($context['reason'], 'pdftoppm'),
 			));
-		$flattener = new PdfFlattener($logger);
+		$flattener = new PdfFlattener($logger, new FakeTempManager($this->tempBase));
 
 		$flattener->isAvailable();
 		$flattener->isAvailable();
@@ -226,7 +231,11 @@ class PdfFlattenerTest extends TestCase {
 		chmod($bin . '/pdftoppm', 0o755);
 		putenv('PATH=' . $bin);
 
-		$flattener = new PdfFlattener($this->createMock(LoggerInterface::class), pageTimeout: 1);
+		$flattener = new PdfFlattener(
+			$this->createMock(LoggerInterface::class),
+			new FakeTempManager($this->tempBase),
+			pageTimeout: 1,
+		);
 		$dest = $this->tmpDir . '/hung.pdf';
 		$started = microtime(true);
 
@@ -308,7 +317,7 @@ class PdfFlattenerTest extends TestCase {
 		foreach ($this->rendererCalls() as $call) {
 			$prefix = trim((string)strrchr($call, ' '));
 			$this->assertNotSame(
-				realpath(sys_get_temp_dir()),
+				realpath($this->tempBase),
 				realpath(dirname($prefix)),
 				'page bitmaps must not be written straight into the shared temp directory',
 			);
@@ -317,9 +326,8 @@ class PdfFlattenerTest extends TestCase {
 
 	public function testTheWorkDirectoryIsRemovedAfterAFailedRender(): void {
 		// Not just the bitmaps - the directory holding them goes too, so a server that
-		// flattens on every download does not accumulate empty directories in /tmp.
+		// flattens on every download does not accumulate empty directories in its temp dir.
 		$this->fakeRenderer(exitStatus: 1);
-		$before = glob(sys_get_temp_dir() . '/wm_flat_*') ?: [];
 
 		try {
 			$this->flattener()->flatten($this->sourcePdf(['One']), $this->tmpDir . '/x.pdf', 72);
@@ -327,7 +335,7 @@ class PdfFlattenerTest extends TestCase {
 			// The subject of this test is what is left on disk, not the message.
 		}
 
-		$this->assertSame($before, glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);
+		$this->assertSame([], glob($this->tempBase . '/*') ?: []);
 	}
 
 	/**
@@ -383,17 +391,15 @@ class PdfFlattenerTest extends TestCase {
 
 	public function testNoPageBitmapsAreLeftBehind(): void {
 		$this->fakeRenderer();
-		$before = count(glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);
 		$source = $this->sourcePdf(['One', 'Two']);
 
 		$this->flattener()->flatten($source, $this->tmpDir . '/clean.pdf', 72);
 
-		$this->assertSame($before, count(glob(sys_get_temp_dir() . '/wm_flat_*') ?: []));
+		$this->assertSame([], glob($this->tempBase . '/*') ?: []);
 	}
 
 	public function testNoBitmapSurvivesAFailedRender(): void {
 		$this->fakeRenderer(exitStatus: 1);
-		$before = count(glob(sys_get_temp_dir() . '/wm_flat_*') ?: []);
 
 		try {
 			$this->flattener()->flatten($this->sourcePdf(['One']), $this->tmpDir . '/x.pdf', 72);
@@ -401,7 +407,7 @@ class PdfFlattenerTest extends TestCase {
 			// The subject of this test is what is left on disk, not the message.
 		}
 
-		$this->assertSame($before, count(glob(sys_get_temp_dir() . '/wm_flat_*') ?: []));
+		$this->assertSame([], glob($this->tempBase . '/*') ?: []);
 	}
 
 	// -----------------------------------------------------------------------
@@ -435,7 +441,7 @@ class PdfFlattenerTest extends TestCase {
 		// A fresh one per call: the availability probe is memoised for the life of the
 		// instance, which is a request in production and would otherwise carry one test's
 		// PATH into the next assertion here.
-		return new PdfFlattener($this->createMock(LoggerInterface::class));
+		return new PdfFlattener($this->createMock(LoggerInterface::class), new FakeTempManager($this->tempBase));
 	}
 
 	/**
