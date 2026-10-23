@@ -1448,9 +1448,9 @@ class WatermarkService {
 			return;
 		}
 
-		$user = $actor ?? $this->userSession->getUser();
+		// The reader the watermark names, so the row and the copy agree on who it went to.
 		$this->logMapper->insertLog(
-			$user?->getUID() ?? $this->readerIdentity($file)?->getUID() ?? 'system',
+			($actor ?? $this->readerIdentity($file))?->getUID() ?? 'system',
 			$file->getId(),
 			$file->getPath(),
 			$trigger,
@@ -1762,9 +1762,12 @@ class WatermarkService {
 	 *
 	 * The same fallback covers server-side fetches with no session (preview pre-generation,
 	 * background jobs), where naming the owner is both true and harmless.
+	 *
+	 * A route that reads for somebody other than the session says who, and that person comes
+	 * first - see {@see ShareAccess::noteReader}.
 	 */
 	private function readerIdentity(File $file): ?IUser {
-		$user = $this->userSession->getUser();
+		$user = $this->shareAccess->notedReader() ?? $this->userSession->getUser();
 		if ($user !== null) {
 			return $user;
 		}
