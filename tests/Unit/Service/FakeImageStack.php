@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Tests\Unit\Service;
 
 use OCA\FilesWatermark\Service\ImageWatermarker;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 
 /**
  * An {@see ImageWatermarker} whose extension availability is dictated rather than probed.
@@ -25,7 +26,7 @@ class FakeImageStack extends ImageWatermarker {
 		private bool $imagick,
 		?string $preferredEngine = null,
 	) {
-		parent::__construct($preferredEngine);
+		parent::__construct(new FakeTempManager(sys_get_temp_dir()), $preferredEngine);
 	}
 
 	protected function hasGd(): bool {

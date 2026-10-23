@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Service;
 
 use Com\Tecnick\Pdf\Tcpdf;
+use OCP\ITempManager;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -102,6 +103,7 @@ class PdfFlattener {
 	 */
 	public function __construct(
 		private LoggerInterface $logger,
+		private ITempManager $tempManager,
 		private int $pageTimeout = self::PAGE_TIMEOUT_SECONDS,
 	) {
 	}
@@ -232,18 +234,19 @@ class PdfFlattener {
 	/**
 	 * A private directory for this flatten's page bitmaps.
 	 *
-	 * 0700 and a random name, the same shape {@see WatermarkService} uses for its render
-	 * temps. The mode is what matters: the renderer is a separate process writing files we
-	 * then read back, and every other local account has to be unable to reach or replace
+	 * 0700 and a random name from core's temp manager, the same as {@see WatermarkService}'s
+	 * render temps. The mode is what matters: the renderer is a separate process writing files
+	 * we then read back, and every other local account has to be unable to reach or replace
 	 * them in between.
 	 */
 	private function createWorkDir(): string {
-		$dir = sys_get_temp_dir() . '/wm_flat_' . bin2hex(random_bytes(8));
-		if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
+		$dir = $this->tempManager->getTemporaryFolder();
+		if ($dir === false) {
 			throw new \RuntimeException('Cannot flatten PDF: no temp directory available for the page renders.');
 		}
 
-		return $dir;
+		// Core hands a folder back with a trailing slash.
+		return rtrim($dir, '/');
 	}
 
 	/** Remove the work directory and anything a failed render left in it. */
@@ -262,7 +265,7 @@ class PdfFlattener {
 	 * @return list<string>
 	 */
 	private function allowedPaths(string $sourcePath, ?string $workDir = null): array {
-		$paths = [PdfFontPath::directory(), sys_get_temp_dir(), dirname($sourcePath)];
+		$paths = [PdfFontPath::directory(), $this->tempManager->getTempBaseDir(), dirname($sourcePath)];
 		if ($workDir !== null) {
 			$paths[] = $workDir;
 		}

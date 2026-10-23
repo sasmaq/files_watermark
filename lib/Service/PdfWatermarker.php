@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Service;
 use Com\Tecnick\Pdf\Import\PageTemplateInterface;
 use Com\Tecnick\Pdf\Tcpdf;
 use OCA\FilesWatermark\Db\WatermarkConfig;
+use OCP\ITempManager;
 
 /**
  * Draws the watermark over every page of a PDF, keeping the original pages as real
@@ -66,7 +67,9 @@ class PdfWatermarker {
 	private const FONT_FAMILY = 'ibmplexsansarabic';
 	private const FONT_STYLE = 'B';
 
-	public function __construct() {
+	public function __construct(
+		private ITempManager $tempManager,
+	) {
 		// Before any font call. Also claimed at app bootstrap; see PdfFontPath for why
 		// this is a global constant rather than an injected path.
 		PdfFontPath::register();
@@ -216,7 +219,7 @@ class PdfWatermarker {
 	 * @return list<string>
 	 */
 	private function allowedPaths(string $sourcePath, WatermarkConfig $config): array {
-		$paths = [PdfFontPath::directory(), sys_get_temp_dir(), dirname($sourcePath)];
+		$paths = [PdfFontPath::directory(), $this->tempManager->getTempBaseDir(), dirname($sourcePath)];
 
 		$imagePath = $config->getImagePath();
 		if ($imagePath && file_exists($imagePath)) {

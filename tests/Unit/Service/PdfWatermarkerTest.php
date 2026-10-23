@@ -7,6 +7,7 @@ namespace OCA\FilesWatermark\Tests\Unit\Service;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Service\PdfWatermarker;
 use OCA\FilesWatermark\Service\ShapedText;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -31,7 +32,7 @@ class PdfWatermarkerTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		$this->watermarker = new PdfWatermarker();
+		$this->watermarker = new PdfWatermarker(new FakeTempManager(sys_get_temp_dir()));
 		$this->tmpDir = sys_get_temp_dir() . '/wm_pdf_test_' . bin2hex(random_bytes(6));
 		mkdir($this->tmpDir, 0700, true);
 	}

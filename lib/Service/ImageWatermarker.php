@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\FilesWatermark\Service;
 
 use OCA\FilesWatermark\Db\WatermarkConfig;
+use OCP\ITempManager;
 
 /**
  * Watermarks JPEG, PNG and WEBP.
@@ -38,6 +39,7 @@ class ImageWatermarker {
 	public const ENGINE_IMAGICK = 'imagick';
 
 	/**
+	 * @param ITempManager $tempManager whose base directory holds the inflated bundled font
 	 * @param ?string $preferredEngine `gd`, `imagick`, or null to select per file. Nextcloud's
 	 *                                 container cannot resolve a scalar and falls back to the
 	 *                                 default, so in production this is always null; it exists
@@ -51,6 +53,7 @@ class ImageWatermarker {
 	 *                                means the shipped default.
 	 */
 	public function __construct(
+		private ITempManager $tempManager,
 		private ?string $preferredEngine = null,
 		private ?ArabicShaping $shaping = null,
 	) {
@@ -413,7 +416,7 @@ class ImageWatermarker {
 	 * `on_share`, a named error for an on-demand apply.
 	 */
 	private function fontFor(string $text): string {
-		$bundled = ShapedText::bundledFontPath();
+		$bundled = ShapedText::bundledFontPath($this->tempManager->getTempBaseDir());
 		if ($bundled === null) {
 			throw new \RuntimeException(
 				'Cannot draw this watermark: the bundled font (resources/fonts) could not be read. '

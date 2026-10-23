@@ -8,6 +8,7 @@ use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Service\ArabicShaping;
 use OCA\FilesWatermark\Service\ImageWatermarker;
 use OCA\FilesWatermark\Service\ShapedText;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 use OCP\IAppConfig;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -37,7 +38,7 @@ class ImageWatermarkerTest extends TestCase {
 		if (!extension_loaded('gd') && !class_exists('Imagick')) {
 			$this->markTestSkipped('Neither GD nor Imagick is available.');
 		}
-		$this->watermarker = new ImageWatermarker();
+		$this->watermarker = new ImageWatermarker(new FakeTempManager(sys_get_temp_dir()));
 		$this->tmpDir = sys_get_temp_dir() . '/wm_img_test_' . bin2hex(random_bytes(6));
 		mkdir($this->tmpDir, 0700, true);
 	}
@@ -390,9 +391,9 @@ class ImageWatermarkerTest extends TestCase {
 
 		$auto = $this->tmpDir . '/ar_auto.png';
 		$always = $this->tmpDir . '/ar_always.png';
-		(new ImageWatermarker())
+		(new ImageWatermarker(new FakeTempManager(sys_get_temp_dir())))
 			->apply($base, $auto, $this->arabicConfig($fromWindows), []);
-		(new ImageWatermarker(null, $this->shapingMode(ShapedText::MODE_ALWAYS)))
+		(new ImageWatermarker(new FakeTempManager(sys_get_temp_dir()), null, $this->shapingMode(ShapedText::MODE_ALWAYS)))
 			->apply($base, $always, $this->arabicConfig($fromWindows), []);
 
 		$this->assertNotSame(
@@ -447,7 +448,7 @@ class ImageWatermarkerTest extends TestCase {
 	 * the image looks plausible.
 	 */
 	public function testTheDirtyRenderIsNotTheUnshapedWidth(): void {
-		$font = ShapedText::bundledFontPath();
+		$font = ShapedText::bundledFontPath(sys_get_temp_dir());
 		$this->assertNotNull($font);
 
 		$resolved = self::ARABIC_PROBE . ' ' . "Ahmed\xD8";
@@ -470,7 +471,7 @@ class ImageWatermarkerTest extends TestCase {
 	 * produce a valid image that no one can read. The bundled face is what gets used.
 	 */
 	public function testArabicDrawsWithTheBundledFont(): void {
-		$this->assertNotNull(ShapedText::bundledFontPath());
+		$this->assertNotNull(ShapedText::bundledFontPath(sys_get_temp_dir()));
 
 		$base = $this->createImage('image/png', 'png', 500, 360);
 		$dest = $this->tmpDir . '/ar_font.png';
@@ -493,7 +494,7 @@ class ImageWatermarkerTest extends TestCase {
 		if ($font === null) {
 			$this->markTestSkipped('No TrueType font available.');
 		}
-		$bundled = ShapedText::bundledFontPath();
+		$bundled = ShapedText::bundledFontPath(sys_get_temp_dir());
 		$this->assertNotNull($bundled);
 
 		$rawBox = imagettfbbox(24, 0, $bundled, self::ARABIC_PROBE);
@@ -603,7 +604,7 @@ class ImageWatermarkerTest extends TestCase {
 
 		foreach ($engines as $engine) {
 			$dest = $this->tmpDir . "/engine_$engine.png";
-			(new ImageWatermarker($engine))->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
+			(new ImageWatermarker(new FakeTempManager(sys_get_temp_dir()), $engine))->apply($source, $dest, $this->makeConfig('text'), ['username' => 'Alice']);
 
 			$info = getimagesize($dest);
 			$this->assertNotFalse($info, "$engine produced an invalid image");
@@ -768,7 +769,7 @@ class ImageWatermarkerTest extends TestCase {
 		if (!extension_loaded('gd')) {
 			$this->markTestSkipped('GD is not available.');
 		}
-		return new ImageWatermarker('gd');
+		return new ImageWatermarker(new FakeTempManager(sys_get_temp_dir()), 'gd');
 	}
 
 	/**

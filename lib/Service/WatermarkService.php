@@ -14,6 +14,7 @@ use OCP\BackgroundJob\IJobList;
 use OCP\Files\File;
 use OCP\Files\FileInfo;
 use OCP\IL10N;
+use OCP\ITempManager;
 use OCP\IUser;
 use OCP\IUserSession;
 use OCP\SystemTag\ISystemTagObjectMapper;
@@ -135,6 +136,7 @@ class WatermarkService {
 		private ShareRecipient $shareRecipient,
 		private IL10N $l,
 		private InstanceTimeZone $timeZone,
+		private ITempManager $tempManager,
 		private ?DeliveryReservation $reservation = null,
 		private ?IJobList $jobList = null,
 		private ?AnonymousRenderLimit $renderLimit = null,
@@ -1886,11 +1888,12 @@ class WatermarkService {
 
 	/** A private 0700 directory for one render's working files. */
 	private function createTempDir(): string {
-		$dir = sys_get_temp_dir() . '/nc_watermark_' . bin2hex(random_bytes(8));
-		if (!@mkdir($dir, 0700, true) && !is_dir($dir)) {
+		$dir = $this->tempManager->getTemporaryFolder();
+		if ($dir === false) {
 			throw new \RuntimeException('no temp directory is available for the render');
 		}
 
-		return $dir;
+		// Core hands a folder back with a trailing slash.
+		return rtrim($dir, '/');
 	}
 }

@@ -214,7 +214,7 @@ class ShapedTextTest extends TestCase {
 	 * `resources/fonts` rather than committed a second time, so the two cannot drift.
 	 */
 	public function testTheBundledFontIsAUsableTrueTypeFile(): void {
-		$path = ShapedText::bundledFontPath();
+		$path = ShapedText::bundledFontPath(sys_get_temp_dir());
 
 		$this->assertNotNull($path, 'the bundled font could not be produced');
 		$this->assertFileExists($path);
@@ -234,7 +234,8 @@ class ShapedTextTest extends TestCase {
 
 	/** The cache is keyed by the archive, so asking twice gives the same file. */
 	public function testTheBundledFontIsCachedRatherThanReinflated(): void {
-		$this->assertSame(ShapedText::bundledFontPath(), ShapedText::bundledFontPath());
+		$cacheDir = sys_get_temp_dir();
+		$this->assertSame(ShapedText::bundledFontPath($cacheDir), ShapedText::bundledFontPath($cacheDir));
 	}
 
 	/*

@@ -8,6 +8,7 @@ use OCP\Files\AppData\IAppDataFactory;
 use OCP\Files\NotFoundException;
 use OCP\Files\SimpleFS\ISimpleFolder;
 use OCP\IL10N;
+use OCP\ITempManager;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -48,6 +49,7 @@ class WatermarkImageStore {
 		private IAppDataFactory $appDataFactory,
 		private LoggerInterface $logger,
 		private IL10N $l,
+		private ITempManager $tempManager,
 	) {
 	}
 
@@ -154,8 +156,13 @@ class WatermarkImageStore {
 			return null;
 		}
 
-		$tmpPath = sys_get_temp_dir() . '/nc_watermark_logo_' . bin2hex(random_bytes(8)) . '_' . $reference;
+		// The reference is the postfix so the copy keeps the stored extension.
+		$tmpPath = $this->tempManager->getTemporaryFile($reference);
+		if ($tmpPath === false) {
+			return null;
+		}
 		if (@file_put_contents($tmpPath, $content) === false) {
+			@unlink($tmpPath);
 			return null;
 		}
 

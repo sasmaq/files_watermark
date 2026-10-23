@@ -28,6 +28,7 @@ use Com\Tecnick\Pdf\Parser\Parser;
 use OCA\FilesWatermark\Db\WatermarkConfig;
 use OCA\FilesWatermark\Service\PdfDecryptor;
 use OCA\FilesWatermark\Service\PdfWatermarker;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 
 $source = $argv[1] ?? '';
 if ($source === '' || !is_file($source)) {
@@ -147,7 +148,7 @@ $config->setRotation(45);
 $dest = sys_get_temp_dir() . '/diagnose-' . bin2hex(random_bytes(4)) . '.pdf';
 
 try {
-	(new PdfWatermarker())->apply($source, $dest, $config, ['username' => 'Diagnostic']);
+	(new PdfWatermarker(new FakeTempManager(sys_get_temp_dir())))->apply($source, $dest, $config, ['username' => 'Diagnostic']);
 } catch (\Throwable $e) {
 	echo 'REFUSED: ' . get_class($e) . ': ' . $e->getMessage() . "\n";
 	echo "The file was skipped rather than blanked - this is not the reported failure.\n";

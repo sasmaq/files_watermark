@@ -27,6 +27,7 @@ use OCA\FilesWatermark\Service\ShareRecipient;
 use OCA\FilesWatermark\Service\WatermarkImageStore;
 use OCA\FilesWatermark\Service\WatermarkRequiredException;
 use OCA\FilesWatermark\Service\WatermarkService;
+use OCA\FilesWatermark\Tests\Unit\FakeTempManager;
 use OCA\FilesWatermark\Tests\Unit\L10nMock;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\BackgroundJob\IJobList;
@@ -125,6 +126,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
+			new FakeTempManager(sys_get_temp_dir()),
 			$this->reservation,
 			$this->jobList,
 		);
@@ -462,6 +464,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
+			new FakeTempManager(sys_get_temp_dir()),
 		);
 	}
 
@@ -1012,6 +1015,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->shareRecipient,
 			$this->l10n(),
 			$timeZone,
+			new FakeTempManager(sys_get_temp_dir()),
 		);
 	}
 
@@ -1443,6 +1447,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
+			new FakeTempManager(sys_get_temp_dir()),
 		);
 
 		$this->pdfWatermarker->expects($this->never())->method('apply');
@@ -2210,6 +2215,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->shareRecipient,
 			$this->l10n(),
 			$this->timeZone,
+			new FakeTempManager(sys_get_temp_dir()),
 			$this->reservation,
 			$this->jobList,
 			$limit,

@@ -16,6 +16,7 @@ use OCP\Files\File;
 use OCP\Files\IRootFolder;
 use OCP\IPreview;
 use OCP\IRequest;
+use OCP\ITempManager;
 use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
@@ -66,6 +67,7 @@ class WatermarkPreviewMiddleware extends Middleware {
 		private IPreview $preview,
 		private LoggerInterface $logger,
 		private IRequest $request,
+		private ITempManager $tempManager,
 		private ?IRootFolder $rootFolder = null,
 		private ?IUserSession $userSession = null,
 	) {
@@ -164,8 +166,12 @@ class WatermarkPreviewMiddleware extends Middleware {
 		$bytes = $preview->getContent();
 		$mime = $preview->getMimeType();
 
-		$dir = sys_get_temp_dir() . '/nc_watermark_preview_' . bin2hex(random_bytes(8));
-		mkdir($dir, 0700, true);
+		$dir = $this->tempManager->getTemporaryFolder();
+		if ($dir === false) {
+			throw new \RuntimeException('no temp directory is available for the preview');
+		}
+		// Core hands a folder back with a trailing slash.
+		$dir = rtrim($dir, '/');
 		$src = $dir . '/src';
 		$dst = $dir . '/out';
 
