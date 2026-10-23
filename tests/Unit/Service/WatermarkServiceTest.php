@@ -1113,6 +1113,36 @@ class WatermarkServiceTest extends TestCase {
 		$this->assertSame('alice', $captured['username']);
 	}
 
+	/**
+	 * Task processing hands a task's files to the ExApp running it, signed in as nobody or as
+	 * whoever the ExApp names. The task's user is the reader, and the copy and its audit row
+	 * have to say so, not name the owner or the ExApp's user.
+	 */
+	public function testANotedReaderIsNamedAheadOfTheSessionAndTheOwner(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config());
+		$this->userSession->method('getUser')->willReturn($this->user('carol', 'Carol White'));
+		$this->shareAccess->method('notedReader')->willReturn($this->user('bob', 'Bob Jones'));
+
+		$this->markMapper->method('isMarked')->willReturn(true);
+		$file = $this->file('application/pdf', 42, 'ORIGINAL', 1024, $this->user('alice', 'Alice Smith'));
+
+		$captured = [];
+		$this->pdfWatermarker->method('apply')->willReturnCallback(
+			static function ($src, $dst, $config, array $placeholders) use (&$captured): void {
+				$captured = $placeholders;
+				file_put_contents($dst, 'rendered');
+			},
+		);
+		$this->logMapper->expects($this->once())
+			->method('insertLog')
+			->with('bob', 42, $this->anything(), WatermarkService::TRIGGER_DELIVERED, $this->anything());
+
+		$this->cleanup($this->service->watermarkForDownload($file));
+
+		$this->assertSame('Bob Jones', $captured['displayname']);
+		$this->assertSame('bob', $captured['username']);
+	}
+
 	/** With no session *and* no resolvable owner there is no honest name to draw. */
 	public function testAFetchWithNoIdentityAtAllFallsBackToUnknown(): void {
 		$this->configMapper->method('findGlobal')->willReturn($this->config());

@@ -6,6 +6,7 @@ namespace OCA\FilesWatermark\Service;
 
 use OCP\Files\FileInfo;
 use OCP\Files\Storage\ISharedStorage;
+use OCP\IUser;
 use OCP\IUserSession;
 
 /**
@@ -73,6 +74,9 @@ class ShareAccess {
 	 */
 	private bool $indirectShare = false;
 
+	/** The person a route has said this request reads for. See {@see noteReader}. */
+	private ?IUser $reader = null;
+
 	public function __construct(
 		private IUserSession $userSession,
 	) {
@@ -80,6 +84,24 @@ class ShareAccess {
 
 	public function notePublicRequest(): void {
 		$this->publicRequest = true;
+	}
+
+	/**
+	 * Note that this request reads on $reader's behalf, whoever is signed in, if anyone.
+	 *
+	 * For a route that hands a file to a program working for somebody. Task processing gives
+	 * a task's input files to the provider running it, and that request is signed in as an
+	 * ExApp acting for nobody, or for whichever user the ExApp names. Read by the session,
+	 * that fetch is a public link, and its copy names the file's owner. The task's user is
+	 * the one reading, so the copy names them, and the share switches judge their fetch.
+	 */
+	public function noteReader(IUser $reader): void {
+		$this->reader = $reader;
+	}
+
+	/** The reader a route noted with {@see noteReader}, or null when none did. */
+	public function notedReader(): ?IUser {
+		return $this->reader;
 	}
 
 	/**
@@ -120,7 +142,7 @@ class ShareAccess {
 
 	/** Whether this fetch is an external one: a public link, or nobody at all. */
 	public function isExternalShareAccess(): bool {
-		return $this->publicRequest || $this->userSession->getUser() === null;
+		return $this->publicRequest || ($this->reader === null && $this->userSession->getUser() === null);
 	}
 
 	/**

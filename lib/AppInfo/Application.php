@@ -24,6 +24,7 @@ use OCA\FilesWatermark\EventListener\TextAttachmentCopyListener;
 use OCA\FilesWatermark\EventListener\UserDeletedListener;
 use OCA\FilesWatermark\Middleware\AvatarMiddleware;
 use OCA\FilesWatermark\Middleware\PublicShareContextMiddleware;
+use OCA\FilesWatermark\Middleware\TaskProcessingMiddleware;
 use OCA\FilesWatermark\Middleware\TextAttachmentMiddleware;
 use OCA\FilesWatermark\Middleware\TextSessionMiddleware;
 use OCA\FilesWatermark\Middleware\ThemingBackgroundMiddleware;
@@ -270,6 +271,9 @@ class Application extends App implements IBootstrap {
 		// And for core's profile picture from Files, which hands the file back re-encoded
 		// or makes it the avatar - refused before it is read.
 		$context->registerMiddleware(AvatarMiddleware::class, true);
+		// And for core's task processing API, which streams a task's files - to the user and
+		// to the ExApp running the task - straight from storage.
+		$context->registerMiddleware(TaskProcessingMiddleware::class, true);
 		// One instance per request, shared by both halves above: the middleware reads what
 		// the listener recorded, and two instances would leave it reading an empty one.
 		$context->registerService(PreviewRequestContext::class, static fn (

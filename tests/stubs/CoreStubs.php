@@ -272,6 +272,18 @@ namespace OC\Core\Controller {
 		abstract class AvatarController extends \OCP\AppFramework\Controller {
 		}
 	}
+
+	if (!class_exists(TaskProcessingApiController::class)) {
+		/**
+		 * Stands in for `class TaskProcessingApiController extends OCSController`
+		 * (core/Controller/TaskProcessingApiController.php). `TaskProcessingMiddleware`
+		 * recognises it by name after `getFileContents` or `getFileContentsExApp` has
+		 * answered, and reads that call's route arguments off the request; nothing about
+		 * the controller itself is touched.
+		 */
+		abstract class TaskProcessingApiController extends \OCP\AppFramework\OCSController {
+		}
+	}
 }
 
 namespace OCA\Text\Service {

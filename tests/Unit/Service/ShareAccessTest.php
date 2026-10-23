@@ -201,6 +201,41 @@ class ShareAccessTest extends TestCase {
 		$this->assertTrue($shareAccess->isInternalShareAccess($this->node(false)));
 	}
 
+	// -----------------------------------------------------------------------
+	// A reader a route names
+	// -----------------------------------------------------------------------
+
+	/**
+	 * An ExApp fetching a task's file has no session user, or one of its own choosing. The
+	 * task's user is reading, and their fetch is no public link.
+	 */
+	public function testANotedReaderMakesASessionlessRequestNoPublicLink(): void {
+		$this->userSession->method('getUser')->willReturn(null);
+		$shareAccess = $this->shareAccess();
+		$reader = $this->createMock(IUser::class);
+
+		$shareAccess->noteReader($reader);
+
+		$this->assertSame($reader, $shareAccess->notedReader());
+		$this->assertFalse($shareAccess->isExternalShareAccess());
+	}
+
+	/** The share switch is still asked of the storage, which is what the reader's own folder gives. */
+	public function testANotedReaderOnAReceivedShareMountIsInternalShareAccess(): void {
+		$this->userSession->method('getUser')->willReturn(null);
+		$shareAccess = $this->shareAccess();
+		$shareAccess->noteReader($this->createMock(IUser::class));
+
+		$this->assertTrue($shareAccess->isInternalShareAccess($this->node(true)));
+		$this->assertFalse($shareAccess->isInternalShareAccess($this->node(false)));
+	}
+
+	public function testNoReaderIsNotedByDefault(): void {
+		$this->signedIn();
+
+		$this->assertNull($this->shareAccess()->notedReader());
+	}
+
 	public function testAPublicLinkOutranksANotedIndirectShare(): void {
 		$this->signedIn();
 		$shareAccess = $this->shareAccess();

@@ -40,14 +40,6 @@ reaches a reader unwatermarked.
   nothing in the one storage shape that is multi-user by construction. `TeamFolder` closed
   this hole for the old `on_share`, and it was removed in the rework. Either bring back a
   fourth signal for Team folders, or state plainly that marking is the answer there.
-- [ ] **Task processing streams the files a task names.** *Read in NC 32's source; needs an
-  AI provider app to reproduce.*
-  `GET /ocs/v2.php/taskprocessing/tasks/{taskId}/file/{fileId}`
-  (`TaskProcessingApiController::getFileContents`) returns any file in the user's own task
-  with `fopen('rb')`, and scheduling only checks that the user has a mount for the file id.
-  With a provider for a task type that takes files, a user can name a marked file in a task
-  and fetch it clean. The ExApp route hands the same bytes to the provider. Without a
-  provider, nothing can be scheduled.
 - [ ] **Preview stamping assumes one preview per request.** `PreviewRequestContext` keeps
   only the first preview a request fetches, and the middleware replaces the whole response.
   A controller that answers with several previews at once (Memories' batch preview endpoint
@@ -57,9 +49,11 @@ reaches a reader unwatermarked.
 - [ ] **Inventory the third-party egress routes.** This app does not intercept apps that
   read file bytes through their own controllers. The likely ones are ONLYOFFICE and
   Collabora opening a PDF, and Memories' full-size image endpoints; none of them has been
-  checked. At the least, the README should name the apps known not to watermark. Core and
-  the bundled apps were swept against NC 32 on 2026-10-22, and the only open finding from
-  that sweep is task processing, above.
+  checked. Task-processing providers that run in-process (PHP `ISynchronousProvider` apps)
+  belong here too: core hands them the `File` node and they read it themselves
+  ([record](development.md#task-processing)). At the least, the README should name the apps
+  known not to watermark. Core and the bundled apps were swept against NC 32 on 2026-10-22,
+  and every finding from that sweep is closed.
 
 ## Wrong marks and wrong names
 
@@ -249,7 +243,7 @@ These affect every reader of a marked PDF, the owner included.
 | Model | Built. The stored file is never modified. A mark is a row, and every fetch renders against the reader's identity, previews included | Per-fetch render cost unmeasured |
 | Triggers | On demand and on upload, scoped by type and by a folder tag at any depth. On upload marks a file written, moved or renamed into scope, and a whole tree when it is tagged or moved inside a tagged folder | Writes from outside Nextcloud |
 | Share switches | Internal shares and public links watermarked per fetch, whether or not the file is marked | Team folders, moves without a session |
-| Egress routes | Every core and bundled-app route found in the 2026-10-22 sweep is intercepted or refused | Task processing, third-party apps |
+| Egress routes | Every core and bundled-app route found in the 2026-10-22 sweep is intercepted or refused | Third-party apps, in-process task providers |
 | Renderers | PDF and images in pure PHP. PDF 1.5+ and empty-password encryption are read natively. Office not started | Office, PDF links/outline/labels, `/P` flags |
 | Watermark content | Visible text and logo, Arabic shaped and reordered | Default template, invisible metadata watermark, `{date}` localisation |
 | Admin UI and file actions | Complete | Read-only Apply, Remove after rename, stale list thumbnail |
@@ -257,5 +251,5 @@ These affect every reader of a marked PDF, the owner included.
 | Storage backends | S3 verified end to end with no S3-specific code | Cypress on S3 |
 | External binaries | One deliberate exception: `PdfFlattener` runs `pdftoppm` for the optional flattening setting, probed, with a fallback | A rule that keeps it to one |
 | Data model | The schema carries every implemented feature | `metadata` type, cross-database run |
-| Testing | 1325 PHPUnit, 163 Jest, 92 Cypress cases. Psalm level 3 clean | Cypress rerun, S3, Psalm level 2 |
+| Testing | 1346 PHPUnit, 163 Jest, 92 Cypress cases. Psalm level 3 clean | Cypress rerun, S3, Psalm level 2 |
 | Docs and release | README covers install, Docker and S3 | API reference, changelog, packaging |

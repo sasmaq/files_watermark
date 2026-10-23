@@ -942,6 +942,51 @@ download was in the archive, byte-identical to storage.
   mark row directly, 0.8 s in: the old plugin shipped the member clean, and the new one
   aborted after the member before it
 
+### Task processing handed a task's files out as stored {#task-processing}
+
+Core's task processing API streams any file a task names with `fopen('rb')`: to the
+task's user at `GET /ocs/v2.php/taskprocessing/tasks/{taskId}/file/{fileId}`, and to the
+ExApp running the task at `/tasks_provider/{taskId}/file/{fileId}`. Scheduling only checks
+that the user has a mount for each file id. So with a provider for a task type that takes
+files, naming a marked file in a task was a way to fetch it clean. *Confirmed* on the dev
+instance with a recipient's task naming a marked PDF shared to them. Both routes returned
+the stored bytes, byte-identical to storage.
+
+- `TaskProcessingMiddleware` replaces core's stream after core has answered, as Text's
+  attachments are handled. Core has already checked the task and that it names the file,
+  so the middleware only asks whether the file is protected. A file that is not keeps
+  core's stream
+- **The reader is the task's user, on both routes.** The ExApp's request is signed in as
+  nobody, or as whichever user the ExApp names. Read by the session, that is a public link,
+  and its copy names the owner. `ShareAccess::noteReader()` says who the request is for: the
+  copy and its audit row name them, a session-less fetch is no longer external, and the file
+  is resolved through their folder so a share mounted for them is what the internal switch
+  sees. Confirmed live: the ExApp's copy named the recipient, with no user and with the
+  ExApp signed in as the owner
+- The render is not charged against the anonymous allowance. Both routes are authenticated,
+  and an ExApp working through a queue of tasks would run into it
+- **A file outside the task user's folder keeps core's answer unless it is marked.** That
+  is normally a provider's output in appdata. It is also where a revoked share lands: an
+  ExApp signed in as the owner still gets the owner's node from core. A marked file there is
+  refused, and so is any file in a task that will not load
+- The refusal is a 403 with `message`, which `OCSMiddleware` rewraps into an envelope (HTTP
+  403 on v2). On v1 every envelope is an HTTP 200, core's own 404 included, so a v1 client
+  gets the envelope where it expected the file. It never gets the file
+- **A provider reads the watermark.** The ExApp is handed the reader's copy, so image
+  analysis or a summary may mention the watermark text. That is the model working as
+  designed: every copy that leaves names its reader
+- **Not covered: providers that run in-process.** For an `ISynchronousProvider` (a PHP
+  app), core's `prepareInputData()` turns the file ids into `File` nodes and passes them to
+  `process()`, and the provider reads them itself. No route or event sits between the two,
+  so that is listed with the third-party routes
+- **Reproducing it needs a provider.** `extractFileIdsFromTask()` throws when no provider
+  serves the task type, so without one both routes answer 404. A pull-style `IProvider` for
+  `core:analyze-images` in a throwaway app is enough, and its input slot takes any file id,
+  a PDF included. An ExApp is one row in `oc_ex_apps` plus `EX-APP-ID`, `EX-APP-VERSION`
+  and `AUTHORIZATION-APP-API: base64("{user}:{secret}")`. `pdftotext` cannot read the
+  watermark text. Use `cypress/tasks/pdf.js` `probe()`, whose glyph mapping is approximate
+  but consistent, and compare its runs across readers
+
 ### The response described the stored file, not the one that went out {#sync-client-metadata}
 
 Reported as: the **Windows desktop client with VFS enabled cannot download a watermarked
