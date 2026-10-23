@@ -19,6 +19,7 @@ use OCA\FilesWatermark\EventListener\NodeWrittenListener;
 use OCA\FilesWatermark\EventListener\PublicShareScriptsListener;
 use OCA\FilesWatermark\EventListener\SabrePluginAddListener;
 use OCA\FilesWatermark\EventListener\SabrePublicPluginAddListener;
+use OCA\FilesWatermark\EventListener\TagAssignedListener;
 use OCA\FilesWatermark\EventListener\TextAttachmentCopyListener;
 use OCA\FilesWatermark\EventListener\UserDeletedListener;
 use OCA\FilesWatermark\Middleware\AvatarMiddleware;
@@ -49,6 +50,7 @@ use OCP\IRequest;
 use OCP\IUserSession;
 use OCP\Preview\BeforePreviewFetchedEvent;
 use OCP\Share\IManager as IShareManager;
+use OCP\SystemTag\TagAssignedEvent;
 use OCP\User\Events\UserDeletedEvent;
 use OCP\Util;
 use Psr\Container\ContainerInterface;
@@ -198,6 +200,13 @@ class Application extends App implements IBootstrap {
 		), true);
 		$context->registerEventListener(BeforeNodeRenamedEvent::class, NodeMovedListener::class);
 		$context->registerEventListener(NodeRenamedEvent::class, NodeMovedListener::class);
+		// A move into the policy's scope writes nothing, so the upload trigger hears the rename
+		// too. Behind NodeMovedListener: a file owed an inherited mark naming the sharer must
+		// get that one, not an ordinary mark naming whoever moved it. See NodeWrittenListener.
+		$context->registerEventListener(NodeRenamedEvent::class, NodeWrittenListener::class, -100);
+		// Tagging a folder brings the files already in it into scope and writes nothing either.
+		// See TagAssignedListener.
+		$context->registerEventListener(TagAssignedEvent::class, TagAssignedListener::class);
 		// A recipient's delete inside a share puts a copy in their own trash, under a new id and
 		// with no copy event. The listener decides before the delete and marks after it, so both
 		// events need the same instance; it connects that instance to the trash's own legacy

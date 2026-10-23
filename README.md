@@ -449,8 +449,17 @@ contract.
 - **On demand:** right-click any supported file in the Files app → **Apply Watermark**. The
   file is not modified; from then on every download and preview of it carries a watermark
 - **On upload:** set the global trigger to *On upload*, and every supported file is marked
-  as it arrives. The manual actions are hidden in this mode, since the policy already covers
+  as it arrives, and when it is moved or renamed into the policy's scope (into the tagged
+  folder, say, or from `report.bin` to `report.pdf`). Putting the tag on a folder, or
+  moving a folder inside a tagged one, marks everything already under it. A tree of more
+  than 200 entries is finished by a background job, so the rest of it is marked on the
+  next cron run rather than in the request. The manual actions are hidden in this mode, since the policy already covers
   everything, and the server refuses to remove a watermark from anyone, the owner included
+- **Limit to a tagged folder** (admin setting): the policy covers the files inside a folder
+  carrying that system tag, at any depth. "Inside" is where the file is stored, not where
+  someone's file list shows it: a recipient who was shared only a subfolder still gets the
+  owner's tag, while a share or external storage mounted *inside* a tagged folder is
+  covered only if its own location is. A tag on a file, rather than a folder, does nothing
 - **Removing a watermark:** right-click → **Remove watermark**. Instant, and complete -
   there is nothing to restore, because nothing was overwritten. **Only the file's owner can
   do this**, even on a share with edit permission - and on a copy of somebody else's
@@ -570,7 +579,8 @@ Three things to know:
   something approximate - the two candidates differ in whether every upload on the instance
   gets marked, and guessing silently is worse than stopping. Pick one of the two remaining
   triggers in the admin settings. Note that existing files are **not** retroactively
-  marked: `on_upload` covers files written from then on
+  marked: `on_upload` covers files written from then on, files moved or renamed into its
+  scope, and the files under a folder when the tag is put on it
 
 ## Storage backends
 

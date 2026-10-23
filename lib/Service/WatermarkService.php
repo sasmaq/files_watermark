@@ -13,11 +13,11 @@ use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\BackgroundJob\IJobList;
 use OCP\Files\File;
 use OCP\Files\FileInfo;
+use OCP\Files\Folder;
 use OCP\IL10N;
 use OCP\ITempManager;
 use OCP\IUser;
 use OCP\IUserSession;
-use OCP\SystemTag\ISystemTagObjectMapper;
 use OCP\SystemTag\TagNotFoundException;
 use Psr\Log\LoggerInterface;
 
@@ -127,7 +127,7 @@ class WatermarkService {
 		private PdfFlattener $pdfFlattener,
 		private ImageWatermarker $imageWatermarker,
 		private IUserSession $userSession,
-		private ISystemTagObjectMapper $tagObjectMapper,
+		private FolderTagScope $folderTagScope,
 		private LoggerInterface $logger,
 		private WatermarkImageStore $imageStore,
 		private ImageLimits $imageLimits,
@@ -638,6 +638,40 @@ class WatermarkService {
 		$this->assertFolderTagMatches($file, $config);
 		$this->assertSizeAllowed($file);
 		$this->assertPixelsAllowedFromHeader($file);
+	}
+
+	/**
+	 * Whether $file, under its current name and in its current folder, is inside the
+	 * policy's scope: the MIME whitelist and the folder tag.
+	 *
+	 * The scope half of {@see assertMarkable}, asked as a question for the upload trigger,
+	 * which hears every write and every move on the instance and for which "no" is the
+	 * ordinary answer, not a failure worth a log line. The type tested is the cached one -
+	 * the name's - as `mark()` tests it, so the two never disagree about the same file.
+	 */
+	public function isInPolicyScope(File $file): bool {
+		return $this->isInScope($file, $this->resolveConfig(), $file->getMimeType());
+	}
+
+	/**
+	 * Whether the policy has a folder tag and $folder is a folder carrying it or sits, at any
+	 * depth, inside one.
+	 *
+	 * The question that decides whether a moved folder has to be walked: when it is false, a
+	 * move cannot have changed the scope of anything below it. An unusable stored tag is
+	 * false here, as it puts every file outside the scope ({@see assertFolderTagMatches}).
+	 */
+	public function isInsidePolicyFolderTag(Folder $folder): bool {
+		$tagId = $this->resolveConfig()->getFolderTag();
+		if ($tagId === null || $tagId === '') {
+			return false;
+		}
+
+		try {
+			return $this->folderTagScope->covers($folder->getId(), $tagId);
+		} catch (TagNotFoundException|\InvalidArgumentException) {
+			return false;
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -1499,15 +1533,14 @@ class WatermarkService {
 	}
 
 	/**
-	 * Throws if the file's parent folder does not carry the required system tag.
+	 * Throws unless the file is inside a folder carrying the required system tag, at any
+	 * depth and by where it is stored - see {@see FolderTagScope}.
 	 */
 	private function assertFolderTagMatches(File $file, WatermarkConfig $config): void {
 		$tagId = $config->getFolderTag();
 		if ($tagId === null || $tagId === '') {
 			return;
 		}
-
-		$parent = $file->getParent();
 
 		// A tag that is not a numeric id raises InvalidArgumentException, and one that
 		// no longer exists raises TagNotFoundException. `saveConfig` rejects both now,
@@ -1516,11 +1549,7 @@ class WatermarkService {
 		// InvalidArgumentException is not a RuntimeException, so it sailed past every
 		// caller's handling and turned each watermark request into an HTTP 500.
 		try {
-			$taggedFileIds = $this->tagObjectMapper->getObjectIdsForTags(
-				[$tagId],
-				'files',
-				0,
-			);
+			$inside = $this->folderTagScope->covers($file->getId(), $tagId);
 		} catch (TagNotFoundException|\InvalidArgumentException $e) {
 			$this->logger->warning(
 				'files_watermark: config {config} targets system tag {tag}, which is not a usable tag id; '
@@ -1534,7 +1563,7 @@ class WatermarkService {
 			);
 		}
 
-		if (!in_array((string)$parent->getId(), $taggedFileIds, true)) {
+		if (!$inside) {
 			throw new \RuntimeException(
 				$this->l->t('This file\'s folder does not have the required system tag (id: %s).', [$tagId])
 			);

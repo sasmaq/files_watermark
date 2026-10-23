@@ -21,15 +21,6 @@ reading this app's own code.
 The app exists to stop these. Each one is a route by which a file the policy covers
 reaches a reader unwatermarked.
 
-- [ ] **Under `on_upload`, a file that comes into scope by rename or move is never
-  marked.** The policy checks type and scope only on write, and a rename fires no write
-  event (core's `View::rename` emits write hooks only for `.part` files). So `report.bin`
-  renamed to `report.pdf` stays unmarked, which is exactly the user off switch
-  `marksAreRemovable()` was written to take away. The same goes for a file moved into the
-  tagged folder, and for everything already in a folder when the tag is added (that case
-  needs a hook on tag assignment, not on rename). `NodeMovedListener` already hears
-  `NodeRenamedEvent`, but only to carry marks across owners. Re-run the policy there when
-  the target is in scope, or sniff the bytes at write time as delivery already does.
 - [ ] **An archive lists the folder twice, and only the first listing is checked.**
   `ZipInterceptorPlugin::preRender()` decides which members to render from one walk.
   `streamNode()` then walks the subfolders again with fresh `getDirectoryListing()` calls and
@@ -52,13 +43,6 @@ reaches a reader unwatermarked.
   person" problem the rework removed, and the copy carries no mark. Check what URL the
   editor loads and what `files_pdfviewer` saves back. If either one does this, mark the
   written-back file, or refuse the write when a marked file's new content matches a render.
-- [ ] **The folder-tag scope only looks at the immediate parent.**
-  `assertFolderTagMatches()` tests `$file->getParent()`, so a file one level below the
-  tagged folder is outside the policy: it is not marked on upload, it is refused on demand,
-  and it is not watermarked through a share. The form says "Limit to a tagged folder". Walk
-  the ancestors, or say "direct children only" in the UI. The same check also loads every
-  object id that carries the tag on each call, once per row of a share listing. Calling
-  `haveTag()` on the candidate ids would be one indexed query.
 - [ ] **Team folders are outside both share switches.** A Team folder is neither an
   `ISharedStorage` nor a public link, so "always watermark internal shares" watermarks
   nothing in the one storage shape that is multi-user by construction. `TeamFolder` closed
@@ -203,7 +187,9 @@ These affect every reader of a marked PDF, the owner included.
   `MetadataWatermarkerTest`.
 - [ ] **A bulk `occ files_watermark:mark <path>`.** There is no upgrade path, so an instance
   upgrading from `on_download` starts with every existing file unmarked and has no UI to
-  mark them in bulk. A first release can do without it; the first instance that migrates
+  mark them in bulk. The same goes for an admin who switches to `on_upload`, or picks a
+  folder tag that folders already carry: only tagging a folder from then on marks what is
+  in it. A first release can do without it; the first instance that migrates
   cannot.
 - [ ] **`{date}` / `{datetime}` are locale-free**: ASCII digits, Gregorian calendar. For an
   Arabic deployment, decide on Arabic-Indic digits and/or a Hijri date, and whether that
@@ -232,9 +218,9 @@ These affect every reader of a marked PDF, the owner included.
   `proc_open(`, `exec(`, `shell_exec(`, `system(` or `passthru(` outside
   `lib/Service/PdfFlattener.php`". At the moment, nothing stops a contributor from adding a
   second one.
-- [ ] **Psalm level 2: 116 findings.** 73 of them are `ClassMustBeFinal`, which is a design
-  opinion the test doubles contradict, not a type check. The rest: 13
-  `RedundantConditionGivenDocblockType`, 12 `DocblockTypeContradiction`, 5 redundant casts,
+- [ ] **Psalm level 2: 122 findings.** 77 of them are `ClassMustBeFinal`, which is a design
+  opinion the test doubles contradict, not a type check. The rest: 14
+  `RedundantConditionGivenDocblockType`, 13 `DocblockTypeContradiction`, 5 redundant casts,
   5 truthy comparisons, 5 `PropertyNotSetInConstructor`, 2 deprecations and 1 missing
   closure return type.
 - [ ] **Jest against a *loaded* Arabic catalogue.** The mock returns source strings, so the
@@ -268,7 +254,7 @@ These affect every reader of a marked PDF, the owner included.
 | Area | Position | Open |
 | --- | --- | --- |
 | Model | Built. The stored file is never modified. A mark is a row, and every fetch renders against the reader's identity, previews included | Per-fetch render cost unmeasured |
-| Triggers | On demand and on upload, scoped by type and folder tag | Rename and move into scope, writes from outside Nextcloud, tag depth |
+| Triggers | On demand and on upload, scoped by type and by a folder tag at any depth. On upload marks a file written, moved or renamed into scope, and a whole tree when it is tagged or moved inside a tagged folder | Writes from outside Nextcloud |
 | Share switches | Internal shares and public links watermarked per fetch, whether or not the file is marked | Team folders, moves without a session |
 | Egress routes | Every core and bundled-app route found in the 2026-10-22 sweep is intercepted or refused | Archive re-walk, task processing, third-party apps |
 | Renderers | PDF and images in pure PHP. PDF 1.5+ and empty-password encryption are read natively. Office not started | Office, PDF links/outline/labels, `/P` flags |
@@ -278,5 +264,5 @@ These affect every reader of a marked PDF, the owner included.
 | Storage backends | S3 verified end to end with no S3-specific code | Cypress on S3 |
 | External binaries | One deliberate exception: `PdfFlattener` runs `pdftoppm` for the optional flattening setting, probed, with a fallback | A rule that keeps it to one |
 | Data model | The schema carries every implemented feature | `metadata` type, cross-database run |
-| Testing | 1265 PHPUnit, 163 Jest, 92 Cypress cases. Psalm level 3 clean | Cypress rerun, S3, Psalm level 2 |
+| Testing | 1322 PHPUnit, 163 Jest, 92 Cypress cases. Psalm level 3 clean | Cypress rerun, S3, Psalm level 2 |
 | Docs and release | README covers install, Docker and S3 | API reference, changelog, packaging |

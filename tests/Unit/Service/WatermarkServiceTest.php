@@ -14,6 +14,7 @@ use OCA\FilesWatermark\Service\AnonymousRenderLimit;
 use OCA\FilesWatermark\Service\ApplyLimits;
 use OCA\FilesWatermark\Service\DeliveryReservation;
 use OCA\FilesWatermark\Service\FileTooLargeException;
+use OCA\FilesWatermark\Service\FolderTagScope;
 use OCA\FilesWatermark\Service\ImageLimits;
 use OCA\FilesWatermark\Service\ImageTooLargeException;
 use OCA\FilesWatermark\Service\ImageWatermarker;
@@ -35,7 +36,6 @@ use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\IUser;
 use OCP\IUserSession;
-use OCP\SystemTag\ISystemTagObjectMapper;
 use OCP\SystemTag\TagNotFoundException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -62,7 +62,7 @@ class WatermarkServiceTest extends TestCase {
 	private PdfFlattener&MockObject $pdfFlattener;
 	private ImageWatermarker&MockObject $imageWatermarker;
 	private IUserSession&MockObject $userSession;
-	private ISystemTagObjectMapper&MockObject $tagObjectMapper;
+	private FolderTagScope&MockObject $folderTagScope;
 	private LoggerInterface&MockObject $logger;
 	private WatermarkImageStore&MockObject $imageStore;
 	private ImageLimits&MockObject $imageLimits;
@@ -86,7 +86,7 @@ class WatermarkServiceTest extends TestCase {
 		$this->pdfFlattener = $this->createMock(PdfFlattener::class);
 		$this->imageWatermarker = $this->createMock(ImageWatermarker::class);
 		$this->userSession = $this->createMock(IUserSession::class);
-		$this->tagObjectMapper = $this->createMock(ISystemTagObjectMapper::class);
+		$this->folderTagScope = $this->createMock(FolderTagScope::class);
 		$this->logger = $this->createMock(LoggerInterface::class);
 		$this->imageStore = $this->createMock(WatermarkImageStore::class);
 		// The shipped defaults unless a test says otherwise: an unstubbed mock answers 0,
@@ -117,7 +117,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
-			$this->tagObjectMapper,
+			$this->folderTagScope,
 			$this->logger,
 			$this->imageStore,
 			$this->imageLimits,
@@ -455,7 +455,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
-			$this->tagObjectMapper,
+			$this->folderTagScope,
 			$this->logger,
 			$this->imageStore,
 			$limits,
@@ -472,16 +472,87 @@ class WatermarkServiceTest extends TestCase {
 		$config = $this->config();
 		$config->setFolderTag('7');
 		$this->configMapper->method('findGlobal')->willReturn($config);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn(['999']);
-
-		$parent = $this->createMock(Folder::class);
-		$parent->method('getId')->willReturn(1);
-		$file = $this->file();
-		$file->method('getParent')->willReturn($parent);
+		$this->folderTagScope->method('covers')->with(42, '7')->willReturn(false);
 
 		$this->expectException(\RuntimeException::class);
 		$this->expectExceptionMessage('required system tag');
-		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
+		$this->service->mark($this->file(), WatermarkService::TRIGGER_ON_DEMAND);
+	}
+
+	/**
+	 * The scope as a question, for the upload trigger - which asks it of every write and
+	 * every move, and for which "no" is ordinary. Both directions, because "false" is also
+	 * what a scope check that never read the tag would answer. How deep "inside" goes is
+	 * {@see FolderTagScopeTest}'s.
+	 *
+	 * @testWith [true]
+	 *           [false]
+	 */
+	public function testIsInPolicyScopeReadsTheFolderTag(bool $inside): void {
+		$config = $this->config(WatermarkService::TRIGGER_ON_UPLOAD);
+		$config->setFolderTag('7');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->folderTagScope->expects($this->once())->method('covers')->with(42, '7')->willReturn($inside);
+
+		$this->assertSame($inside, $this->service->isInPolicyScope($this->file()));
+	}
+
+	/**
+	 * Whether a moved folder has to be walked. With no folder tag, a folder move changes no
+	 * file's name and no file's folder tag, so nothing below it can have come into scope.
+	 */
+	public function testAFolderIsInsideThePolicyFolderTagOnlyWhenThereIsOne(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->folderTagScope->expects($this->never())->method('covers');
+
+		$this->assertFalse($this->service->isInsidePolicyFolderTag($this->createMock(Folder::class)));
+	}
+
+	/**
+	 * @testWith [true]
+	 *           [false]
+	 */
+	public function testAFolderIsInsideThePolicyFolderTagAsTheScopeSays(bool $inside): void {
+		$config = $this->config(WatermarkService::TRIGGER_ON_UPLOAD);
+		$config->setFolderTag('7');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getId')->willReturn(9);
+		$this->folderTagScope->method('covers')->with(9, '7')->willReturn($inside);
+
+		$this->assertSame($inside, $this->service->isInsidePolicyFolderTag($folder));
+	}
+
+	/** @dataProvider unusableTagProvider */
+	public function testAnUnusableStoredFolderTagPutsNoFolderInside(\Throwable $thrown): void {
+		$config = $this->config(WatermarkService::TRIGGER_ON_UPLOAD);
+		$config->setFolderTag('not-an-id');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+		$this->folderTagScope->method('covers')->willThrowException($thrown);
+		$folder = $this->createMock(Folder::class);
+		$folder->method('getId')->willReturn(9);
+
+		$this->assertFalse($this->service->isInsidePolicyFolderTag($folder));
+	}
+
+	/**
+	 * The type is the cached one, as `mark()` reads it: a name the whitelist excludes is out
+	 * of scope, and the answer is a bool rather than the refusal `mark()` would throw.
+	 */
+	public function testIsInPolicyScopeAppliesTheWhitelistToTheCachedType(): void {
+		$config = $this->config(WatermarkService::TRIGGER_ON_UPLOAD);
+		$config->setMimeTypes('image/png');
+		$this->configMapper->method('findGlobal')->willReturn($config);
+
+		$this->assertFalse($this->service->isInPolicyScope($this->file('application/pdf')));
+		$this->assertTrue($this->service->isInPolicyScope($this->file('image/png')));
+	}
+
+	public function testWithNoTagOrWhitelistEveryFileIsInPolicyScope(): void {
+		$this->configMapper->method('findGlobal')->willReturn($this->config(WatermarkService::TRIGGER_ON_UPLOAD));
+		$this->folderTagScope->expects($this->never())->method('covers');
+
+		$this->assertTrue($this->service->isInPolicyScope($this->file()));
 	}
 
 	/**
@@ -495,15 +566,10 @@ class WatermarkServiceTest extends TestCase {
 		$config = $this->config();
 		$config->setFolderTag('not-an-id');
 		$this->configMapper->method('findGlobal')->willReturn($config);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willThrowException($thrown);
-
-		$parent = $this->createMock(Folder::class);
-		$parent->method('getId')->willReturn(1);
-		$file = $this->file();
-		$file->method('getParent')->willReturn($parent);
+		$this->folderTagScope->method('covers')->willThrowException($thrown);
 
 		$this->expectException(\RuntimeException::class);
-		$this->service->mark($file, WatermarkService::TRIGGER_ON_DEMAND);
+		$this->service->mark($this->file(), WatermarkService::TRIGGER_ON_DEMAND);
 	}
 
 	/** @return array<string, array{\Throwable}> */
@@ -527,7 +593,7 @@ class WatermarkServiceTest extends TestCase {
 		$config->setMimeTypes('image/png');
 		$config->setFolderTag('7');
 		$this->configMapper->method('findGlobal')->willReturn($config);
-		$this->tagObjectMapper->expects($this->never())->method('getObjectIdsForTags');
+		$this->folderTagScope->expects($this->never())->method('covers');
 
 		$file = $this->markedFile('application/pdf');
 		$this->pdfWatermarker->expects($this->once())->method('apply');
@@ -1006,7 +1072,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
-			$this->tagObjectMapper,
+			$this->folderTagScope,
 			$this->logger,
 			$this->imageStore,
 			$this->imageLimits,
@@ -1391,27 +1457,21 @@ class WatermarkServiceTest extends TestCase {
 	}
 
 	/**
-	 * @testWith [5, false]
-	 *           [7, true]
+	 * @testWith [false]
+	 *           [true]
 	 *
 	 * Both directions, because "false" is the answer a scope check that never ran would
-	 * also give - the tagged case is what proves the tag is being read at all.
+	 * also give - the tagged case is what proves the tag is being read at all. The scope is
+	 * asked by file id, so a recipient whose tree stops at the share's mount point gets the
+	 * owner's answer ({@see FolderTagScope}).
 	 */
-	public function testASharedFileIsWatermarkedOnlyInsideTheTaggedFolder(
-		int $taggedFolderId,
-		bool $expected,
-	): void {
+	public function testASharedFileIsWatermarkedOnlyInsideTheTaggedFolder(bool $inside): void {
 		$config = $this->sharePolicy(internal: true);
 		$config->setFolderTag('7');
 		$this->shareAccess->method('isInternalShareAccess')->willReturn(true);
-		$this->tagObjectMapper->method('getObjectIdsForTags')->willReturn([(string)$taggedFolderId]);
+		$this->folderTagScope->method('covers')->with(42, '7')->willReturn($inside);
 
-		$file = $this->unmarkedFile();
-		$parent = $this->createMock(Folder::class);
-		$parent->method('getId')->willReturn(7);
-		$file->method('getParent')->willReturn($parent);
-
-		$this->assertSame($expected, $this->service->isDeliveryCandidate($file));
+		$this->assertSame($inside, $this->service->isDeliveryCandidate($this->unmarkedFile()));
 	}
 
 	/**
@@ -1438,7 +1498,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
-			$this->tagObjectMapper,
+			$this->folderTagScope,
 			$this->logger,
 			$this->imageStore,
 			$this->imageLimits,
@@ -2206,7 +2266,7 @@ class WatermarkServiceTest extends TestCase {
 			$this->pdfFlattener,
 			$this->imageWatermarker,
 			$this->userSession,
-			$this->tagObjectMapper,
+			$this->folderTagScope,
 			$this->logger,
 			$this->imageStore,
 			$this->imageLimits,
